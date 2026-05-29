@@ -1,0 +1,58 @@
+name: Daily News Fetch
+
+on:
+  schedule:
+    # 01:00 UTC = 08:00 CST (UTC+8) — satisfies FR-SCH-001
+    - cron: '0 1 * * *'
+  workflow_dispatch: {} # allows manual trigger for testing
+
+permissions:
+  contents: read
+
+jobs:
+  fetch-and-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20 # hard cap; agent self-limits to 15 min
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Restore deduplication cache
+        uses: actions/cache@v4
+        with:
+          path: cache/dedup.json
+          # Key includes run ID; restore-keys allow fallback to any prior cache
+          key: dedup-cache-${{ github.run_id }}
+          restore-keys: |
+            dedup-cache-
+
+      - name: Build
+        run: go build -ldflags="-X main.version=1.0.0" -o agent ./cmd/agent
+
+      - name: Run scheduled fetch
+        run: ./agent --mode=schedule
+        env:
+          DEEPSEEK_API_KEY:     ${{ secrets.DEEPSEEK_API_KEY }}
+          DEEPSEEK_MODEL_ID:    ${{ secrets.DEEPSEEK_MODEL_ID }}
+          NEWSAPI_KEY:          ${{ secrets.NEWSAPI_KEY }}
+          WEBSITE_API_BASE_URL: ${{ secrets.WEBSITE_API_BASE_URL }}
+          WEBSITE_API_TOKEN:    ${{ secrets.WEBSITE_API_TOKEN }}
+          RSSHUB_BASE_URL:      ${{ vars.RSSHUB_BASE_URL }}
+          RSS_FEEDS:            ${{ vars.RSS_FEEDS }}
+          TRUSTED_DOMAINS:      ${{ vars.TRUSTED_DOMAINS }}
+          DEFAULT_CATEGORIES:   ${{ vars.DEFAULT_CATEGORIES }}
+          LOG_LEVEL:            INFO
+
+      - name: Save deduplication cache
+        if: always() # save even if the run step fails, to preserve dedup state
+        uses: actions/cache@v4
+        with:
+          path: cache/dedup.json
+          key: dedup-cache-${{ github.run_id }}

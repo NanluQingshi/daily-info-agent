@@ -1,0 +1,198 @@
+package config
+
+import (
+	"fmt"
+	"log/slog"
+	"os"
+	"strings"
+
+	"github.com/joho/godotenv"
+	"github.com/user/daily-info-agent/pkg/models"
+)
+
+// defaultRSSFeeds is the built-in list used when RSS_FEEDS is not set.
+var defaultRSSFeeds = []string{
+	"https://feeds.reuters.com/reuters/topNews",
+	"https://feeds.bbci.co.uk/news/world/rss.xml",
+	"https://www.theverge.com/rss/index.xml",
+	"http://www.xinhuanet.com/rss/world.xml",
+	"http://www.people.com.cn/rss/finance.xml",
+}
+
+// defaultTrustedDomains is the built-in whitelist used when TRUSTED_DOMAINS is not set.
+var defaultTrustedDomains = []string{
+	"xinhua.net",
+	"people.com.cn",
+	"gov.cn",
+	"reuters.com",
+	"bbc.com",
+	"theverge.com",
+	"apnews.com",
+	"ft.com",
+	"wsj.com",
+	"economist.com",
+}
+
+// Config holds all runtime configuration loaded from environment variables.
+type Config struct {
+	// AI
+	DeepSeekAPIKey  string
+	DeepSeekModelID string
+	DeepSeekBaseURL string // default: "https://api.deepseek.com/v1"
+
+	// Data sources
+	NewsAPIKey    string
+	RSSHubBaseURL string   // default: "https://rsshub.app"
+	RSSFeeds      []string // parsed from semicolon-separated env var
+
+	// Verification
+	TrustedDomains    []string // parsed from comma-separated env var
+	SkipVerification  bool
+	DefaultCategories []models.Category
+
+	// Publishing
+	WebsiteAPIBaseURL string
+	WebsiteAPIToken   string
+
+	// HTTP server
+	BindAddr string // default: "127.0.0.1:8080"
+
+	// Observability
+	LogLevel     slog.Level
+	AgentVersion string // injected at build time via -ldflags
+
+	// Runtime
+	CacheFilePath string // default: "cache/dedup.json"
+}
+
+// MissingConfigError is returned when one or more required environment variables are absent.
+type MissingConfigError struct {
+	Vars []string
+}
+
+func (e *MissingConfigError) Error() string {
+	return fmt.Sprintf("missing required environment variables: %s", strings.Join(e.Vars, ", "))
+}
+
+// Load reads all environment variables and returns a validated Config.
+// It tries to load a .env file first (for local development); if absent, it is silently ignored.
+// Returns MissingConfigError listing all missing required variables.
+func Load() (*Config, error) {
+	// Try loading .env — ignore error if file does not exist
+	_ = godotenv.Load()
+
+	cfg := &Config{}
+	var missing []string
+
+	// Required fields
+	cfg.DeepSeekAPIKey = os.Getenv("DEEPSEEK_API_KEY")
+	if cfg.DeepSeekAPIKey == "" {
+		missing = append(missing, "DEEPSEEK_API_KEY")
+	}
+
+	cfg.DeepSeekModelID = os.Getenv("DEEPSEEK_MODEL_ID")
+	if cfg.DeepSeekModelID == "" {
+		missing = append(missing, "DEEPSEEK_MODEL_ID")
+	}
+
+	cfg.NewsAPIKey = os.Getenv("NEWSAPI_KEY")
+	if cfg.NewsAPIKey == "" {
+		missing = append(missing, "NEWSAPI_KEY")
+	}
+
+	cfg.WebsiteAPIBaseURL = os.Getenv("WEBSITE_API_BASE_URL")
+	if cfg.WebsiteAPIBaseURL == "" {
+		missing = append(missing, "WEBSITE_API_BASE_URL")
+	}
+
+	cfg.WebsiteAPIToken = os.Getenv("WEBSITE_API_TOKEN")
+	if cfg.WebsiteAPIToken == "" {
+		missing = append(missing, "WEBSITE_API_TOKEN")
+	}
+
+	if len(missing) > 0 {
+		return nil, &MissingConfigError{Vars: missing}
+	}
+
+	// Optional with defaults
+	cfg.DeepSeekBaseURL = envOr("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
+	cfg.RSSHubBaseURL = envOr("RSSHUB_BASE_URL", "https://rsshub.app")
+	cfg.BindAddr = envOr("BIND_ADDR", "127.0.0.1:8080")
+	cfg.CacheFilePath = envOr("CACHE_FILE_PATH", "cache/dedup.json")
+	cfg.AgentVersion = envOr("AGENT_VERSION", "1.0.0")
+
+	// RSS feeds
+	if raw := os.Getenv("RSS_FEEDS"); raw != "" {
+		feeds := strings.Split(raw, ";")
+		for _, f := range feeds {
+			f = strings.TrimSpace(f)
+			if f != "" {
+				cfg.RSSFeeds = append(cfg.RSSFeeds, f)
+			}
+		}
+	} else {
+		cfg.RSSFeeds = defaultRSSFeeds
+	}
+
+	// Trusted domains
+	if raw := os.Getenv("TRUSTED_DOMAINS"); raw != "" {
+		domains := strings.Split(raw, ",")
+		for _, d := range domains {
+			d = strings.TrimSpace(d)
+			if d != "" {
+				cfg.TrustedDomains = append(cfg.TrustedDomains, d)
+			}
+		}
+	} else {
+		cfg.TrustedDomains = defaultTrustedDomains
+	}
+
+	// Default categories
+	if raw := os.Getenv("DEFAULT_CATEGORIES"); raw != "" {
+		parts := strings.Split(raw, ",")
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				cfg.DefaultCategories = append(cfg.DefaultCategories, models.Category(p))
+			}
+		}
+	} else {
+		cfg.DefaultCategories = []models.Category{
+			models.CategoryFinance,
+			models.CategoryPolitics,
+			models.CategoryEconomy,
+			models.CategoryTechAI,
+			models.CategoryInternational,
+		}
+	}
+
+	// Skip verification
+	cfg.SkipVerification = strings.ToLower(os.Getenv("SKIP_VERIFICATION")) == "true"
+
+	// Log level
+	cfg.LogLevel = parseLogLevel(os.Getenv("LOG_LEVEL"))
+
+	return cfg, nil
+}
+
+// envOr returns the value of the env var name, or fallback if it is unset/empty.
+func envOr(name, fallback string) string {
+	if v := os.Getenv(name); v != "" {
+		return v
+	}
+	return fallback
+}
+
+// parseLogLevel converts a string log level to slog.Level, defaulting to INFO.
+func parseLogLevel(raw string) slog.Level {
+	switch strings.ToUpper(raw) {
+	case "DEBUG":
+		return slog.LevelDebug
+	case "WARN", "WARNING":
+		return slog.LevelWarn
+	case "ERROR":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
+}
