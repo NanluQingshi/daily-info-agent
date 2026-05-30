@@ -41,6 +41,7 @@ go run ./cmd/agent --mode=schedule # 定时抓取模式（一次性）
 | 01 | [docs/01-PRD.md](docs/01-PRD.md) | 产品需求：用户故事、功能需求、验收标准、Java 侧 API 接口规范 |
 | 02 | [docs/02-DESIGN.md](docs/02-DESIGN.md) | 技术设计：系统架构、模块接口、数据模型、错误处理策略 |
 | 03 | [docs/03-DEV-GUIDE.md](docs/03-DEV-GUIDE.md) | 开发指南：环境搭建、配置说明、启动方式、测试、常用命令 |
+| 04 | [docs/04-ROADMAP.md](docs/04-ROADMAP.md) | 项目规划：整体架构、GUI 选型、待补充 API、分阶段开发计划 |
 
 ## 项目结构
 
