@@ -1,4 +1,4 @@
-.PHONY: build test lint run-schedule run-server clean tidy
+.PHONY: build test lint run-schedule run-server clean tidy web-install web-build web-dev build-full db-create
 
 # Build flags — override version at build time
 VERSION ?= 1.0.0
@@ -28,6 +28,25 @@ run-schedule: build
 ## run-server: Build and run in HTTP server mode
 run-server: build
 	./$(BINARY) --mode=server
+
+## web-install: Install frontend npm dependencies
+web-install:
+	cd web && npm install --registry https://registry.npmjs.org
+
+## web-build: Build the React frontend for production
+web-build:
+	cd web && npm run build
+
+## web-dev: Start Vite dev server (proxies /api to localhost:8080)
+web-dev:
+	cd web && npm run dev
+
+## build-full: Build React frontend then compile Go binary (embeds web/dist)
+build-full: web-build build
+
+## db-create: Create the local PostgreSQL database
+db-create:
+	createdb daily_info
 
 ## clean: Remove build artifacts and cache
 clean:

@@ -243,9 +243,103 @@ type RunResult struct {
 	RunID          string
 	TotalFetched   int
 	TotalProcessed int
+	TotalSaved     int
 	TotalPublished int
 	TotalSkipped   int
 	TotalFailed    int
 	DurationMs     int64
 	FatalError     error // non-nil causes exit 1
+}
+
+// -----------------------------------------------------------------------
+// Database / persistence types
+// -----------------------------------------------------------------------
+
+// ArticleRow is the flat database projection of a stored article.
+type ArticleRow struct {
+	ID               int64
+	RunID            string
+	SourceURL        string
+	Title            string
+	Description      string
+	Content          string
+	Summary          string
+	Category         Category
+	SourceDomain     string
+	SourceType       string
+	CredibilityScore float64
+	Tags             []string
+	Language         string
+	DetectedLanguage string
+	AgentVersion     string
+	VerificationPass bool
+	SkipReason       SkipReason
+	DomainHit        bool
+	Status           string // "pending" | "published" | "skipped" | "failed"
+	ExternalID       *int64 // nullable; set after publishing to Java API
+	PublishedAt      *time.Time
+	FetchedAt        time.Time
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
+// ArticleFilter holds optional filter and pagination parameters for ListArticles.
+// Zero/nil values mean "no filter".
+type ArticleFilter struct {
+	Category *Category
+	Status   *string
+	DateFrom *time.Time
+	DateTo   *time.Time
+	Page     int // 1-based; defaults to 1
+	PageSize int // defaults to 20; max 100
+}
+
+// ArticleListResponse is the JSON body returned by GET /api/articles.
+type ArticleListResponse struct {
+	Articles   []ArticleRow `json:"articles"`
+	Total      int          `json:"total"`
+	Page       int          `json:"page"`
+	PageSize   int          `json:"page_size"`
+	TotalPages int          `json:"total_pages"`
+}
+
+// RunLogRow maps to the run_logs table.
+type RunLogRow struct {
+	RunID          string
+	TotalFetched   int
+	TotalProcessed int
+	TotalSaved     int
+	TotalPublished int
+	TotalSkipped   int
+	TotalFailed    int
+	DurationMs     int64
+	FatalError     string
+	StartedAt      time.Time
+	FinishedAt     time.Time
+}
+
+// StatsResult is returned by GET /api/stats.
+type StatsResult struct {
+	ByDay      []DayStat      `json:"by_day"`
+	ByCategory []CategoryStat `json:"by_category"`
+	RecentRuns []RunLogRow    `json:"recent_runs"`
+}
+
+// DayStat holds article count for a single day.
+type DayStat struct {
+	Date  string `json:"date"`  // "2026-06-01"
+	Count int    `json:"count"`
+}
+
+// CategoryStat holds article count for a single category.
+type CategoryStat struct {
+	Category Category `json:"category"`
+	Count    int      `json:"count"`
+}
+
+// FetchTriggerResponse is returned by POST /api/fetch.
+type FetchTriggerResponse struct {
+	RunID     string `json:"run_id"`
+	Triggered bool   `json:"triggered"`
+	Message   string `json:"message"`
 }

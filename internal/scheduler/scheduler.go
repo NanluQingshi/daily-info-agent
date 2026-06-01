@@ -10,6 +10,7 @@ import (
 	"github.com/user/daily-info-agent/internal/fetcher"
 	"github.com/user/daily-info-agent/internal/processor"
 	"github.com/user/daily-info-agent/internal/publisher"
+	"github.com/user/daily-info-agent/internal/store"
 	"github.com/user/daily-info-agent/internal/verifier"
 	"github.com/user/daily-info-agent/pkg/config"
 	"github.com/user/daily-info-agent/pkg/models"
@@ -20,17 +21,20 @@ type Scheduler struct {
 	mgr    *fetcher.Manager
 	proc   *processor.Processor
 	ver    *verifier.Verifier
-	pub    *publisher.Client
+	pub    *publisher.Client     // may be nil when Java API is not configured
+	st     store.ArticleStore   // may be nil when DATABASE_DSN is not set
 	cfg    *config.Config
 	logger *slog.Logger
 }
 
 // New wires all pipeline stages together.
+// pub and st may be nil; when nil those stages are skipped.
 func New(
 	mgr *fetcher.Manager,
 	proc *processor.Processor,
 	ver *verifier.Verifier,
 	pub *publisher.Client,
+	st store.ArticleStore,
 	cfg *config.Config,
 	logger *slog.Logger,
 ) *Scheduler {
@@ -39,6 +43,7 @@ func New(
 		proc:   proc,
 		ver:    ver,
 		pub:    pub,
+		st:     st,
 		cfg:    cfg,
 		logger: logger,
 	}
@@ -170,20 +175,39 @@ func (s *Scheduler) RunForCategories(ctx context.Context, categories []models.Ca
 		slog.Int("items_skipped", result.TotalSkipped),
 	)
 
-	// ---- Publish stage ----
-	pubStart := time.Now()
-	for i, article := range passing {
-		if i > 0 {
-			time.Sleep(100 * time.Millisecond) // rate-limit courtesy
+	// ---- Persist stage ----
+	if s.st != nil {
+		saved, err := s.st.SaveArticles(ctx, articles, runID)
+		if err != nil {
+			s.logger.Warn("failed to save articles to database",
+				slog.String("run_id", runID),
+				slog.String("error", err.Error()),
+			)
 		}
-		res := s.pub.Publish(ctx, article, runID)
-		switch res.Outcome {
-		case publisher.OutcomePublished:
-			result.TotalPublished++
-		case publisher.OutcomeDuplicate:
-			result.TotalSkipped++
-		default:
-			result.TotalFailed++
+		result.TotalSaved = saved
+		s.logger.Info("stage_complete",
+			slog.String("stage", "persist"),
+			slog.String("run_id", runID),
+			slog.Int("items_saved", saved),
+		)
+	}
+
+	// ---- Publish stage (optional — only when Java API is configured) ----
+	pubStart := time.Now()
+	if s.pub != nil {
+		for i, article := range passing {
+			if i > 0 {
+				time.Sleep(100 * time.Millisecond) // rate-limit courtesy
+			}
+			res := s.pub.Publish(ctx, article, runID)
+			switch res.Outcome {
+			case publisher.OutcomePublished:
+				result.TotalPublished++
+			case publisher.OutcomeDuplicate:
+				result.TotalSkipped++
+			default:
+				result.TotalFailed++
+			}
 		}
 	}
 	pubDuration := time.Since(pubStart)
@@ -197,10 +221,33 @@ func (s *Scheduler) RunForCategories(ctx context.Context, categories []models.Ca
 	)
 
 	result.DurationMs = time.Since(start).Milliseconds()
+
+	// ---- Log run summary to database ----
+	if s.st != nil {
+		fatalErrStr := ""
+		if result.FatalError != nil {
+			fatalErrStr = result.FatalError.Error()
+		}
+		_ = s.st.SaveRunLog(ctx, models.RunLogRow{
+			RunID:          runID,
+			TotalFetched:   result.TotalFetched,
+			TotalProcessed: result.TotalProcessed,
+			TotalSaved:     result.TotalSaved,
+			TotalPublished: result.TotalPublished,
+			TotalSkipped:   result.TotalSkipped,
+			TotalFailed:    result.TotalFailed,
+			DurationMs:     result.DurationMs,
+			FatalError:     fatalErrStr,
+			StartedAt:      start,
+			FinishedAt:     time.Now(),
+		})
+	}
+
 	s.logger.Info("scheduler run complete",
 		slog.String("run_id", runID),
 		slog.Int("total_fetched", result.TotalFetched),
 		slog.Int("total_processed", result.TotalProcessed),
+		slog.Int("total_saved", result.TotalSaved),
 		slog.Int("total_published", result.TotalPublished),
 		slog.Int("total_skipped", result.TotalSkipped),
 		slog.Int("total_failed", result.TotalFailed),
