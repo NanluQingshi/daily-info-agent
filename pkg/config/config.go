@@ -50,9 +50,13 @@ type Config struct {
 	SkipVerification  bool
 	DefaultCategories []models.Category
 
-	// Publishing
-	WebsiteAPIBaseURL string
-	WebsiteAPIToken   string
+	// Publishing (optional — leave blank to disable Java API publishing)
+	WebsiteAPIBaseURL    string
+	WebsiteAPIToken      string
+	DisableJavaPublisher bool // true when WebsiteAPIBaseURL or WebsiteAPIToken is empty
+
+	// Database (optional — leave blank to disable persistence)
+	DatabaseDSN string // postgres://user:pass@localhost:5432/daily_info?sslmode=disable
 
 	// HTTP server
 	BindAddr string // default: "127.0.0.1:8080"
@@ -100,19 +104,17 @@ func Load() (*Config, error) {
 		missing = append(missing, "NEWSAPI_KEY")
 	}
 
-	cfg.WebsiteAPIBaseURL = os.Getenv("WEBSITE_API_BASE_URL")
-	if cfg.WebsiteAPIBaseURL == "" {
-		missing = append(missing, "WEBSITE_API_BASE_URL")
-	}
-
-	cfg.WebsiteAPIToken = os.Getenv("WEBSITE_API_TOKEN")
-	if cfg.WebsiteAPIToken == "" {
-		missing = append(missing, "WEBSITE_API_TOKEN")
-	}
-
 	if len(missing) > 0 {
 		return nil, &MissingConfigError{Vars: missing}
 	}
+
+	// Optional publishing config
+	cfg.WebsiteAPIBaseURL = os.Getenv("WEBSITE_API_BASE_URL")
+	cfg.WebsiteAPIToken = os.Getenv("WEBSITE_API_TOKEN")
+	cfg.DisableJavaPublisher = cfg.WebsiteAPIBaseURL == "" || cfg.WebsiteAPIToken == ""
+
+	// Optional database config
+	cfg.DatabaseDSN = os.Getenv("DATABASE_DSN")
 
 	// Optional with defaults
 	cfg.DeepSeekBaseURL = envOr("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")

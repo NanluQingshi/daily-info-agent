@@ -70,7 +70,7 @@ func publishSuccessHandler(callCount *atomic.Int32) http.HandlerFunc {
 		if r.URL.Path == "/api/agent/articles" {
 			callCount.Add(1)
 			resp := models.PublishResponse{
-				ID: callCount.Load(), SourceURL: "http://example.com",
+				ID: int64(callCount.Load()), SourceURL: "http://example.com",
 				CreatedAt: time.Now().UTC().Format(time.RFC3339), Status: "published",
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -126,7 +126,7 @@ func buildTestScheduler(
 		SkipVerification: false,
 	}
 
-	return scheduler.New(mgr, proc, ver, pub, cfg,
+	return scheduler.New(mgr, proc, ver, pub, nil, cfg,
 		slog.New(slog.NewTextHandler(io.Discard, nil)), // discard logs
 	)
 }
@@ -216,7 +216,7 @@ func TestScheduler_RunDefault_AllSourcesFail_FatalErrorSet(t *testing.T) {
 		DefaultCategories: models.AllCategories,
 	}
 
-	sched := scheduler.New(mgr, proc, ver, pub, cfg, slog.Default())
+	sched := scheduler.New(mgr, proc, ver, pub, nil, cfg, slog.Default())
 	result := sched.Run(context.Background())
 
 	assert.Error(t, result.FatalError, "all sources failing should set FatalError")
@@ -328,7 +328,7 @@ func TestScheduler_RunForCategories_MixedVerification_OnlyPassingPublished(t *te
 			capturedBodies = append(capturedBodies, req)
 
 			resp := models.PublishResponse{
-				ID: publishCallCount.Load(),
+				ID: int64(publishCallCount.Load()),
 				CreatedAt: time.Now().UTC().Format(time.RFC3339), Status: "published",
 			}
 			w.WriteHeader(http.StatusCreated)

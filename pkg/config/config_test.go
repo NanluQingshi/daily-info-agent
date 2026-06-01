@@ -87,28 +87,22 @@ func TestLoad_MissingNewsAPIKey_ReturnsError(t *testing.T) {
 	assert.Contains(t, missingErr.Vars, "NEWSAPI_KEY")
 }
 
-func TestLoad_MissingWebsiteBaseURL_ReturnsError(t *testing.T) {
+func TestLoad_MissingWebsiteBaseURL_DisablesPublisher(t *testing.T) {
 	setRequiredEnvVars(t)
 	t.Setenv("WEBSITE_API_BASE_URL", "")
 
-	_, err := config.Load()
-	require.Error(t, err)
-
-	var missingErr *config.MissingConfigError
-	require.ErrorAs(t, err, &missingErr)
-	assert.Contains(t, missingErr.Vars, "WEBSITE_API_BASE_URL")
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.True(t, cfg.DisableJavaPublisher)
 }
 
-func TestLoad_MissingWebsiteToken_ReturnsError(t *testing.T) {
+func TestLoad_MissingWebsiteToken_DisablesPublisher(t *testing.T) {
 	setRequiredEnvVars(t)
 	t.Setenv("WEBSITE_API_TOKEN", "")
 
-	_, err := config.Load()
-	require.Error(t, err)
-
-	var missingErr *config.MissingConfigError
-	require.ErrorAs(t, err, &missingErr)
-	assert.Contains(t, missingErr.Vars, "WEBSITE_API_TOKEN")
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.True(t, cfg.DisableJavaPublisher)
 }
 
 func TestLoad_MultipleFieldsMissing_AllListedInError(t *testing.T) {
@@ -119,12 +113,10 @@ func TestLoad_MultipleFieldsMissing_AllListedInError(t *testing.T) {
 
 	var missingErr *config.MissingConfigError
 	require.ErrorAs(t, err, &missingErr)
-	assert.Len(t, missingErr.Vars, 5)
+	assert.Len(t, missingErr.Vars, 3)
 	assert.Contains(t, missingErr.Vars, "DEEPSEEK_API_KEY")
 	assert.Contains(t, missingErr.Vars, "DEEPSEEK_MODEL_ID")
 	assert.Contains(t, missingErr.Vars, "NEWSAPI_KEY")
-	assert.Contains(t, missingErr.Vars, "WEBSITE_API_BASE_URL")
-	assert.Contains(t, missingErr.Vars, "WEBSITE_API_TOKEN")
 }
 
 func TestLoad_MissingConfigError_ErrorMessage(t *testing.T) {
