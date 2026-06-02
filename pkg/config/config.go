@@ -58,6 +58,15 @@ type Config struct {
 	// Database (optional — leave blank to disable persistence)
 	DatabaseDSN string // postgres://user:pass@localhost:5432/daily_info?sslmode=disable
 
+	// Email notifications (optional — leave blank to disable)
+	SMTPHost        string
+	SMTPPort        int    // default: 587
+	SMTPUser        string
+	SMTPPassword    string
+	SMTPFrom        string // defaults to SMTPUser when empty
+	NotifyEmail     string
+	DisableNotifier bool // true when any required SMTP field is missing
+
 	// HTTP server
 	BindAddr string // default: "127.0.0.1:8080"
 
@@ -115,6 +124,15 @@ func Load() (*Config, error) {
 
 	// Optional database config
 	cfg.DatabaseDSN = os.Getenv("DATABASE_DSN")
+
+	// Optional email notifier config
+	cfg.SMTPHost = os.Getenv("SMTP_HOST")
+	cfg.SMTPPort = parsePort(os.Getenv("SMTP_PORT"), 587)
+	cfg.SMTPUser = os.Getenv("SMTP_USER")
+	cfg.SMTPPassword = os.Getenv("SMTP_PASSWORD")
+	cfg.SMTPFrom = os.Getenv("SMTP_FROM")
+	cfg.NotifyEmail = os.Getenv("NOTIFY_EMAIL")
+	cfg.DisableNotifier = cfg.SMTPHost == "" || cfg.SMTPUser == "" || cfg.SMTPPassword == "" || cfg.NotifyEmail == ""
 
 	// Optional with defaults
 	cfg.DeepSeekBaseURL = envOr("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
@@ -183,6 +201,18 @@ func envOr(name, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// parsePort parses a port number string, returning fallback on failure.
+func parsePort(raw string, fallback int) int {
+	if raw == "" {
+		return fallback
+	}
+	var p int
+	if _, err := fmt.Sscanf(raw, "%d", &p); err != nil || p <= 0 || p > 65535 {
+		return fallback
+	}
+	return p
 }
 
 // parseLogLevel converts a string log level to slog.Level, defaulting to INFO.
