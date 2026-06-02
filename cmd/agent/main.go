@@ -34,6 +34,7 @@ import (
 	"github.com/user/daily-info-agent/internal/api"
 	"github.com/user/daily-info-agent/internal/chat"
 	"github.com/user/daily-info-agent/internal/fetcher"
+	"github.com/user/daily-info-agent/internal/notifier"
 	"github.com/user/daily-info-agent/internal/processor"
 	"github.com/user/daily-info-agent/internal/publisher"
 	"github.com/user/daily-info-agent/internal/scheduler"
@@ -136,10 +137,24 @@ func main() {
 		logger.Info("database persistence disabled (DATABASE_DSN not set)")
 	}
 
+	// ---- Build notifier (optional — schedule mode only) ----
+	var notif *notifier.Notifier
+	if !cfg.DisableNotifier {
+		notif = notifier.New(
+			cfg.SMTPHost, cfg.SMTPPort,
+			cfg.SMTPUser, cfg.SMTPPassword, cfg.SMTPFrom,
+			cfg.NotifyEmail,
+			logger.With(slog.String("component", "notifier")),
+		)
+		logger.Info("email notifier enabled", slog.String("notify_email", cfg.NotifyEmail))
+	} else {
+		logger.Info("email notifier disabled (SMTP_HOST / SMTP_USER / SMTP_PASSWORD / NOTIFY_EMAIL not set)")
+	}
+
 	// ---- Dispatch mode ----
 	switch *modeFlag {
 	case "schedule":
-		runScheduleMode(cfg, mgr, proc, ver, pub, articleStore, logger)
+		runScheduleMode(cfg, mgr, proc, ver, pub, articleStore, notif, logger)
 	case "server":
 		runServerMode(cfg, mgr, proc, ver, pub, articleStore, logger)
 	default:
@@ -156,12 +171,16 @@ func runScheduleMode(
 	ver *verifier.Verifier,
 	pub *publisher.Client,
 	st store.ArticleStore,
+	notif *notifier.Notifier,
 	logger *slog.Logger,
 ) {
 	sched := scheduler.New(
 		mgr, proc, ver, pub, st, cfg,
 		logger.With(slog.String("component", "scheduler")),
 	)
+	if notif != nil {
+		sched.WithNotifier(notif)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()

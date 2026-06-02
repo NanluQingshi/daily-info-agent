@@ -16,13 +16,19 @@ import (
 	"github.com/user/daily-info-agent/pkg/models"
 )
 
+// DigestSender sends a post-run email digest. *notifier.Notifier implements this.
+type DigestSender interface {
+	SendDailySummary(ctx context.Context, articles []models.ProcessedArticle, result models.RunResult) error
+}
+
 // Scheduler owns the full scheduled pipeline.
 type Scheduler struct {
 	mgr    *fetcher.Manager
 	proc   *processor.Processor
 	ver    *verifier.Verifier
-	pub    *publisher.Client     // may be nil when Java API is not configured
-	st     store.ArticleStore   // may be nil when DATABASE_DSN is not set
+	pub    *publisher.Client   // may be nil when Java API is not configured
+	st     store.ArticleStore  // may be nil when DATABASE_DSN is not set
+	notif  DigestSender        // may be nil when SMTP is not configured
 	cfg    *config.Config
 	logger *slog.Logger
 }
@@ -47,6 +53,12 @@ func New(
 		cfg:    cfg,
 		logger: logger,
 	}
+}
+
+// WithNotifier sets an optional digest sender called after each scheduled run.
+func (s *Scheduler) WithNotifier(n DigestSender) *Scheduler {
+	s.notif = n
+	return s
 }
 
 // Run executes the full pipeline for the configured default categories.
@@ -253,6 +265,16 @@ func (s *Scheduler) RunForCategories(ctx context.Context, categories []models.Ca
 		slog.Int("total_failed", result.TotalFailed),
 		slog.Int64("duration_ms", result.DurationMs),
 	)
+
+	// ---- Notify stage (optional — only when notifier is configured) ----
+	if s.notif != nil && len(passing) > 0 {
+		if err := s.notif.SendDailySummary(ctx, passing, result); err != nil {
+			s.logger.Warn("failed to send daily summary email",
+				slog.String("run_id", runID),
+				slog.String("error", err.Error()),
+			)
+		}
+	}
 
 	return result
 }
