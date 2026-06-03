@@ -3,6 +3,7 @@ package scheduler
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -98,9 +99,25 @@ func (s *Scheduler) RunForCategory(ctx context.Context, category models.Category
 	return passing, nil
 }
 
-// RunForCategories executes the full fetch → process → verify → publish pipeline
-// for the given categories and returns a RunResult.
+// RunForCategories executes the full pipeline for the given categories.
 func (s *Scheduler) RunForCategories(ctx context.Context, categories []models.Category) models.RunResult {
+	return s.runPipeline(ctx, categories, nil)
+}
+
+// RunWithProgress executes the full pipeline and calls emit after each stage.
+// emit is called synchronously from the pipeline goroutine; implementations must not block.
+func (s *Scheduler) RunWithProgress(ctx context.Context, categories []models.Category, emit func(models.ProgressEvent)) models.RunResult {
+	return s.runPipeline(ctx, categories, emit)
+}
+
+// runPipeline is the shared implementation of RunForCategories and RunWithProgress.
+func (s *Scheduler) runPipeline(ctx context.Context, categories []models.Category, emit func(models.ProgressEvent)) models.RunResult {
+	fire := func(e models.ProgressEvent) {
+		if emit != nil {
+			emit(e)
+		}
+	}
+
 	runID := uuid.New().String()
 	start := time.Now()
 
@@ -112,6 +129,7 @@ func (s *Scheduler) RunForCategories(ctx context.Context, categories []models.Ca
 	result := models.RunResult{RunID: runID}
 
 	// ---- Fetch stage ----
+	fire(models.ProgressEvent{Stage: "fetch", Status: "running", Message: "正在抓取新闻…"})
 	fetchStart := time.Now()
 	cfgs := buildFetchConfigs(s.cfg, categories)
 
@@ -123,6 +141,7 @@ func (s *Scheduler) RunForCategories(ctx context.Context, categories []models.Ca
 			slog.String("run_id", runID),
 			slog.String("error", err.Error()),
 		)
+		fire(models.ProgressEvent{Stage: "error", Status: "error", Message: err.Error()})
 		result.FatalError = err
 		result.DurationMs = time.Since(start).Milliseconds()
 		return result
@@ -135,22 +154,27 @@ func (s *Scheduler) RunForCategories(ctx context.Context, categories []models.Ca
 		slog.Int64("duration_ms", fetchDuration.Milliseconds()),
 		slog.Int("items_fetched", len(items)),
 	)
+	fire(models.ProgressEvent{
+		Stage:   "fetch",
+		Status:  "done",
+		Count:   len(items),
+		Message: fmt.Sprintf("抓取完成：%d 条", len(items)),
+	})
 
 	if len(items) == 0 {
-		s.logger.Info("no new items fetched; run complete",
-			slog.String("run_id", runID),
-		)
+		s.logger.Info("no new items fetched; run complete", slog.String("run_id", runID))
 		result.DurationMs = time.Since(start).Milliseconds()
+		fire(models.ProgressEvent{Stage: "done", Status: "done", RunID: runID, Message: "任务完成（无新内容）"})
 		return result
 	}
 
 	// ---- Process stage ----
+	fire(models.ProgressEvent{Stage: "process", Status: "running", Message: "AI 处理中…"})
 	procStart := time.Now()
 	articles, procErr := s.proc.ProcessBatch(ctx, items, runID)
 	procDuration := time.Since(procStart)
 
 	if procErr != nil {
-		// Non-fatal: ProcessBatch degrades gracefully; log and continue.
 		s.logger.Warn("process batch returned error (degraded mode)",
 			slog.String("run_id", runID),
 			slog.String("error", procErr.Error()),
@@ -164,6 +188,12 @@ func (s *Scheduler) RunForCategories(ctx context.Context, categories []models.Ca
 		slog.Int64("duration_ms", procDuration.Milliseconds()),
 		slog.Int("items_processed", len(articles)),
 	)
+	fire(models.ProgressEvent{
+		Stage:   "process",
+		Status:  "done",
+		Count:   len(articles),
+		Message: fmt.Sprintf("AI 处理完成：%d 条", len(articles)),
+	})
 
 	// ---- Verify stage ----
 	verStart := time.Now()
@@ -186,6 +216,13 @@ func (s *Scheduler) RunForCategories(ctx context.Context, categories []models.Ca
 		slog.Int("items_passed", len(passing)),
 		slog.Int("items_skipped", result.TotalSkipped),
 	)
+	fire(models.ProgressEvent{
+		Stage:   "verify",
+		Status:  "done",
+		Passed:  len(passing),
+		Skipped: result.TotalSkipped,
+		Message: fmt.Sprintf("验证完成：%d 通过，%d 跳过", len(passing), result.TotalSkipped),
+	})
 
 	// ---- Persist stage ----
 	if s.st != nil {
@@ -205,11 +242,12 @@ func (s *Scheduler) RunForCategories(ctx context.Context, categories []models.Ca
 	}
 
 	// ---- Publish stage (optional — only when Java API is configured) ----
+	fire(models.ProgressEvent{Stage: "publish", Status: "running", Message: "正在发布…"})
 	pubStart := time.Now()
 	if s.pub != nil {
 		for i, article := range passing {
 			if i > 0 {
-				time.Sleep(100 * time.Millisecond) // rate-limit courtesy
+				time.Sleep(100 * time.Millisecond)
 			}
 			res := s.pub.Publish(ctx, article, runID)
 			switch res.Outcome {
@@ -231,6 +269,13 @@ func (s *Scheduler) RunForCategories(ctx context.Context, categories []models.Ca
 		slog.Int("items_published", result.TotalPublished),
 		slog.Int("items_failed", result.TotalFailed),
 	)
+	fire(models.ProgressEvent{
+		Stage:   "publish",
+		Status:  "done",
+		Count:   result.TotalPublished,
+		Failed:  result.TotalFailed,
+		Message: fmt.Sprintf("发布完成：%d 篇", result.TotalPublished),
+	})
 
 	result.DurationMs = time.Since(start).Milliseconds()
 
@@ -265,6 +310,8 @@ func (s *Scheduler) RunForCategories(ctx context.Context, categories []models.Ca
 		slog.Int("total_failed", result.TotalFailed),
 		slog.Int64("duration_ms", result.DurationMs),
 	)
+
+	fire(models.ProgressEvent{Stage: "done", Status: "done", RunID: runID, Message: "任务完成"})
 
 	// ---- Notify stage (optional — only when notifier is configured) ----
 	if s.notif != nil && len(passing) > 0 {
