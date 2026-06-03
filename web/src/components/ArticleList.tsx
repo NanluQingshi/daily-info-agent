@@ -101,7 +101,12 @@ export function ArticleList() {
       )}
 
       {selected && (
-        <ArticleDetail article={selected} onClose={() => setSelected(null)} />
+        <ArticleDetail
+          article={selected}
+          onClose={() => setSelected(null)}
+          onPublished={handlePublished}
+          onDeleted={handleDeleted}
+        />
       )}
     </div>
   );
