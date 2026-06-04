@@ -343,3 +343,17 @@ type FetchTriggerResponse struct {
 	Triggered bool   `json:"triggered"`
 	Message   string `json:"message"`
 }
+
+// ProgressEvent is an SSE event streamed to the client during a pipeline run.
+// Stage values: fetch | process | verify | publish | done | error
+// Status values: running | done | error
+type ProgressEvent struct {
+	Stage   string `json:"stage"`
+	Status  string `json:"status"`
+	Message string `json:"message"`
+	Count   int    `json:"count,omitempty"`
+	Passed  int    `json:"passed,omitempty"`
+	Skipped int    `json:"skipped,omitempty"`
+	Failed  int    `json:"failed,omitempty"`
+	RunID   string `json:"run_id,omitempty"`
+}

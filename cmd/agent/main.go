@@ -228,6 +228,9 @@ func runServerMode(
 	e.Use(middleware.RequestID())
 	e.Use(middleware.TimeoutWithConfig(middleware.TimeoutConfig{
 		Timeout: 30 * time.Second,
+		Skipper: func(c echo.Context) bool {
+			return strings.HasSuffix(c.Path(), "/stream")
+		},
 	}))
 	e.Use(slogMiddleware(logger))
 	e.Use(middleware.Recover())

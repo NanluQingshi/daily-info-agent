@@ -3,7 +3,9 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -55,6 +57,7 @@ func (h *Handler) Register(g *echo.Group) {
 	g.POST("/articles/:id/publish", h.PublishArticle)
 	g.DELETE("/articles/:id", h.DeleteArticle)
 	g.POST("/fetch", h.TriggerFetch)
+	g.GET("/fetch/stream", h.StreamFetch)
 	g.GET("/stats", h.GetStats)
 }
 
@@ -235,6 +238,73 @@ func (h *Handler) TriggerFetch(c echo.Context) error {
 		Triggered: true,
 		Message:   "pipeline started",
 	})
+}
+
+// StreamFetch handles GET /api/fetch/stream — starts a pipeline run and streams
+// progress as SSE events until the run finishes or the client disconnects.
+func (h *Handler) StreamFetch(c echo.Context) error {
+	w := c.Response().Writer
+	c.Response().Header().Set("Content-Type", "text/event-stream")
+	c.Response().Header().Set("Cache-Control", "no-cache")
+	c.Response().Header().Set("Connection", "keep-alive")
+	c.Response().Header().Set("X-Accel-Buffering", "no")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		return echo.ErrInternalServerError
+	}
+
+	writeEvent := func(e models.ProgressEvent) bool {
+		data, _ := json.Marshal(e)
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+			return false
+		}
+		flusher.Flush()
+		return true
+	}
+
+	h.pipelineMu.Lock()
+	if h.pipelineRunning {
+		h.pipelineMu.Unlock()
+		writeEvent(models.ProgressEvent{Stage: "error", Status: "error", Message: "pipeline already running"})
+		return nil
+	}
+	h.pipelineRunning = true
+	h.pipelineMu.Unlock()
+
+	defer func() {
+		h.pipelineMu.Lock()
+		h.pipelineRunning = false
+		h.pipelineMu.Unlock()
+	}()
+
+	eventCh := make(chan models.ProgressEvent, 8)
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 15*time.Minute)
+	defer cancel()
+
+	go func() {
+		defer close(eventCh)
+		h.scheduler.RunWithProgress(ctx, h.cfg.DefaultCategories, func(e models.ProgressEvent) {
+			select {
+			case eventCh <- e:
+			case <-ctx.Done():
+			}
+		})
+	}()
+
+	for {
+		select {
+		case event, ok := <-eventCh:
+			if !ok {
+				return nil
+			}
+			if !writeEvent(event) {
+				return nil // client disconnected
+			}
+		case <-c.Request().Context().Done():
+			return nil
+		}
+	}
 }
 
 // GetStats handles GET /api/stats?since=YYYY-MM-DD (default: 30 days ago)
