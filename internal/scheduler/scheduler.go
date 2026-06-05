@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/user/daily-info-agent/internal/dedup"
 	"github.com/user/daily-info-agent/internal/fetcher"
 	"github.com/user/daily-info-agent/internal/processor"
 	"github.com/user/daily-info-agent/internal/publisher"
@@ -154,11 +155,27 @@ func (s *Scheduler) runPipeline(ctx context.Context, categories []models.Categor
 		slog.Int64("duration_ms", fetchDuration.Milliseconds()),
 		slog.Int("items_fetched", len(items)),
 	)
+	// ---- Dedup stage (title-similarity deduplication) ----
+	dedupedItems, dedupRemoved := dedup.ByTitle(items, s.cfg.TrustedDomains)
+	if dedupRemoved > 0 {
+		s.logger.Info("stage_complete",
+			slog.String("stage", "dedup"),
+			slog.String("run_id", runID),
+			slog.Int("items_removed", dedupRemoved),
+			slog.Int("items_remaining", len(dedupedItems)),
+		)
+	}
+	items = dedupedItems
+
+	fetchMsg := fmt.Sprintf("抓取完成：%d 条", len(items))
+	if dedupRemoved > 0 {
+		fetchMsg = fmt.Sprintf("抓取完成：%d 条（去重移除 %d 条）", len(items), dedupRemoved)
+	}
 	fire(models.ProgressEvent{
 		Stage:   "fetch",
 		Status:  "done",
 		Count:   len(items),
-		Message: fmt.Sprintf("抓取完成：%d 条", len(items)),
+		Message: fetchMsg,
 	})
 
 	if len(items) == 0 {
