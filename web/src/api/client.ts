@@ -44,6 +44,10 @@ export function deleteArticle(id: number): Promise<void> {
   return request(`/articles/${id}`, { method: "DELETE" });
 }
 
+export function retryArticle(id: number): Promise<{ retried: boolean; id: number }> {
+  return request(`/articles/${id}/retry`, { method: "POST" });
+}
+
 export function triggerFetch(): Promise<FetchTriggerResponse> {
   return request("/fetch", { method: "POST" });
 }

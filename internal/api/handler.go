@@ -55,6 +55,7 @@ func (h *Handler) Register(g *echo.Group) {
 	g.GET("/articles", h.ListArticles)
 	g.GET("/articles/:id", h.GetArticle)
 	g.POST("/articles/:id/publish", h.PublishArticle)
+	g.POST("/articles/:id/retry", h.RetryArticle)
 	g.DELETE("/articles/:id", h.DeleteArticle)
 	g.POST("/fetch", h.TriggerFetch)
 	g.GET("/fetch/stream", h.StreamFetch)
@@ -101,6 +102,7 @@ func (h *Handler) ListArticles(c echo.Context) error {
 		}
 		f.PageSize = n
 	}
+	f.Query = c.QueryParam("q")
 
 	articles, total, err := h.store.ListArticles(c.Request().Context(), f)
 	if err != nil {
@@ -183,6 +185,33 @@ func (h *Handler) PublishArticle(c echo.Context) error {
 		msg = result.Err.Error()
 	}
 	return errJSON(c, http.StatusBadGateway, string(result.Outcome), msg)
+}
+
+// RetryArticle handles POST /api/articles/:id/retry — resets a failed article
+// to 'pending' so it can be published again.
+func (h *Handler) RetryArticle(c echo.Context) error {
+	id, err := parseID(c)
+	if err != nil {
+		return errJSON(c, http.StatusBadRequest, "invalid_id", "id must be a positive integer")
+	}
+
+	row, err := h.store.GetArticle(c.Request().Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		return errJSON(c, http.StatusNotFound, "not_found", "article not found")
+	}
+	if err != nil {
+		return errJSON(c, http.StatusInternalServerError, "db_error", "failed to get article")
+	}
+	if row.Status != "failed" {
+		return errJSON(c, http.StatusConflict, "invalid_status",
+			"only articles with status 'failed' can be retried")
+	}
+
+	if err := h.store.MarkPending(c.Request().Context(), id); err != nil {
+		return errJSON(c, http.StatusInternalServerError, "db_error", "failed to reset article status")
+	}
+
+	return c.JSON(http.StatusOK, map[string]any{"retried": true, "id": id})
 }
 
 // DeleteArticle handles DELETE /api/articles/:id
