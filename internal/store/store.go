@@ -23,6 +23,7 @@ type ArticleStore interface {
 	DeleteArticle(ctx context.Context, id int64) error
 	MarkPublished(ctx context.Context, id int64, externalID int64) error
 	MarkFailed(ctx context.Context, id int64) error
+	MarkPending(ctx context.Context, id int64) error
 	GetStats(ctx context.Context, since time.Time) (models.StatsResult, error)
 	Ping(ctx context.Context) error
 }
@@ -144,12 +145,17 @@ func (s *PostgresStore) ListArticles(ctx context.Context, f models.ArticleFilter
 		v := string(*f.Category)
 		catParam = &v
 	}
+	var queryParam *string
+	if f.Query != "" {
+		queryParam = &f.Query
+	}
 
 	rows, err := s.pool.Query(ctx, sqlListArticles,
 		catParam,
 		f.Status,
 		f.DateFrom,
 		f.DateTo,
+		queryParam,
 		pageSize,
 		offset,
 	)
@@ -171,7 +177,7 @@ func (s *PostgresStore) ListArticles(ctx context.Context, f models.ArticleFilter
 	}
 
 	var total int
-	err = s.pool.QueryRow(ctx, sqlCountArticles, catParam, f.Status, f.DateFrom, f.DateTo).Scan(&total)
+	err = s.pool.QueryRow(ctx, sqlCountArticles, catParam, f.Status, f.DateFrom, f.DateTo, queryParam).Scan(&total)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -217,6 +223,13 @@ func (s *PostgresStore) MarkPublished(ctx context.Context, id int64, externalID 
 // MarkFailed updates status to 'failed'.
 func (s *PostgresStore) MarkFailed(ctx context.Context, id int64) error {
 	_, err := s.pool.Exec(ctx, sqlMarkFailed, id)
+	return err
+}
+
+// MarkPending resets status to 'pending' and clears the external_id,
+// allowing a failed article to be retried.
+func (s *PostgresStore) MarkPending(ctx context.Context, id int64) error {
+	_, err := s.pool.Exec(ctx, sqlMarkPending, id)
 	return err
 }
 

@@ -90,6 +90,7 @@ export interface ArticleFilter {
   status?: string;
   date_from?: string;
   date_to?: string;
+  q?: string;
   page?: number;
   page_size?: number;
 }
