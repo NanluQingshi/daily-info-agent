@@ -290,7 +290,7 @@ type ArticleFilter struct {
 	Status   *string
 	DateFrom *time.Time
 	DateTo   *time.Time
-	Query    string // full-text search on title and summary (ILIKE); empty means no filter
+	Query    string // ILIKE search on title and summary; empty means no filter
 	Page     int    // 1-based; defaults to 1
 	PageSize int    // defaults to 20; max 100
 }

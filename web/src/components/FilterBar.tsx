@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import type { ArticleFilter } from "../types";
 import { CATEGORIES, STATUSES } from "../types";
 
@@ -18,14 +18,8 @@ export function FilterBar({ filter, onChange }: Props) {
   const set = (patch: Partial<ArticleFilter>) =>
     onChange({ ...filter, ...patch, page: 1 });
 
-  // Local input value for search — debounced before committing to filter
   const [searchInput, setSearchInput] = useState(filter.q ?? "");
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Sync if filter.q is cleared externally (e.g. "清除筛选")
-  useEffect(() => {
-    if (!filter.q) setSearchInput("");
-  }, [filter.q]);
 
   const handleSearchChange = (value: string) => {
     setSearchInput(value);
@@ -37,7 +31,6 @@ export function FilterBar({ filter, onChange }: Props) {
 
   return (
     <div className="flex flex-wrap gap-3 p-4 bg-white border border-slate-200 rounded-xl">
-      {/* Keyword search */}
       <div className="flex items-center gap-2 flex-1 min-w-40">
         <label className="text-sm text-slate-500 whitespace-nowrap">搜索</label>
         <div className="relative flex-1">
