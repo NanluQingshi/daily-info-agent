@@ -39,6 +39,14 @@ export function ArticleList() {
     );
   };
 
+  const handleRetried = (id: number) => {
+    setData((prev) =>
+      prev
+        ? { ...prev, articles: prev.articles.map((a) => a.id === id ? { ...a, status: "pending" as const } : a) }
+        : prev
+    );
+  };
+
   const totalPages = data?.total_pages ?? 1;
   const currentPage = filter.page ?? 1;
 
@@ -72,6 +80,7 @@ export function ArticleList() {
               article={a}
               onDeleted={handleDeleted}
               onPublished={handlePublished}
+              onRetried={handleRetried}
               onClick={setSelected}
             />
           ))}
@@ -106,6 +115,7 @@ export function ArticleList() {
           onClose={() => setSelected(null)}
           onPublished={handlePublished}
           onDeleted={handleDeleted}
+          onRetried={handleRetried}
         />
       )}
     </div>

@@ -30,6 +30,10 @@ const sqlMarkFailed = `
 UPDATE articles SET status = 'failed', updated_at = NOW()
 WHERE id = $1`
 
+const sqlMarkPending = `
+UPDATE articles SET status = 'pending', external_id = NULL, updated_at = NOW()
+WHERE id = $1`
+
 // sqlListArticles uses nullable parameters so filters are optional.
 // $5 is an optional keyword matched case-insensitively against title and summary.
 const sqlListArticles = `

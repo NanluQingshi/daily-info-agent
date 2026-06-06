@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { deleteArticle, publishArticle } from "../api/client";
+import { deleteArticle, publishArticle, retryArticle } from "../api/client";
 import type { ArticleRow } from "../types";
 
 interface Props {
   article: ArticleRow;
   onDeleted: (id: number) => void;
   onPublished: (id: number) => void;
+  onRetried: (id: number) => void;
   onClick: (article: ArticleRow) => void;
 }
 
@@ -23,8 +24,21 @@ const STATUS_LABELS: Record<string, string> = {
   failed: "失败",
 };
 
-export function ArticleCard({ article, onDeleted, onPublished, onClick }: Props) {
+export function ArticleCard({ article, onDeleted, onPublished, onRetried, onClick }: Props) {
   const [busy, setBusy] = useState(false);
+
+  const handleRetry = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setBusy(true);
+    try {
+      await retryArticle(article.id);
+      onRetried(article.id);
+    } catch (err) {
+      alert((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const handlePublish = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -91,6 +105,15 @@ export function ArticleCard({ article, onDeleted, onPublished, onClick }: Props)
             className="text-xs px-3 py-1 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 disabled:opacity-50 transition-colors"
           >
             发布
+          </button>
+        )}
+        {article.status === "failed" && (
+          <button
+            onClick={handleRetry}
+            disabled={busy}
+            className="text-xs px-3 py-1 bg-orange-50 text-orange-700 rounded-lg hover:bg-orange-100 disabled:opacity-50 transition-colors"
+          >
+            重试
           </button>
         )}
         <button
