@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import type { ArticleFilter } from "../types";
 import { CATEGORIES, STATUSES } from "../types";
 
@@ -20,10 +20,6 @@ export function FilterBar({ filter, onChange }: Props) {
 
   const [searchInput, setSearchInput] = useState(filter.q ?? "");
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    if (!filter.q) setSearchInput("");
-  }, [filter.q]);
 
   const handleSearchChange = (value: string) => {
     setSearchInput(value);
