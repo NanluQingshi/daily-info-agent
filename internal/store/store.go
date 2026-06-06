@@ -144,12 +144,17 @@ func (s *PostgresStore) ListArticles(ctx context.Context, f models.ArticleFilter
 		v := string(*f.Category)
 		catParam = &v
 	}
+	var queryParam *string
+	if f.Query != "" {
+		queryParam = &f.Query
+	}
 
 	rows, err := s.pool.Query(ctx, sqlListArticles,
 		catParam,
 		f.Status,
 		f.DateFrom,
 		f.DateTo,
+		queryParam,
 		pageSize,
 		offset,
 	)
@@ -171,7 +176,7 @@ func (s *PostgresStore) ListArticles(ctx context.Context, f models.ArticleFilter
 	}
 
 	var total int
-	err = s.pool.QueryRow(ctx, sqlCountArticles, catParam, f.Status, f.DateFrom, f.DateTo).Scan(&total)
+	err = s.pool.QueryRow(ctx, sqlCountArticles, catParam, f.Status, f.DateFrom, f.DateTo, queryParam).Scan(&total)
 	if err != nil {
 		return nil, 0, err
 	}

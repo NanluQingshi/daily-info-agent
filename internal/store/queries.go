@@ -31,6 +31,7 @@ UPDATE articles SET status = 'failed', updated_at = NOW()
 WHERE id = $1`
 
 // sqlListArticles uses nullable parameters so filters are optional.
+// $5 is an optional keyword matched case-insensitively against title and summary.
 const sqlListArticles = `
 SELECT id, run_id, source_url, title, description, content, summary,
        category, source_domain, source_type, credibility_score,
@@ -42,15 +43,19 @@ WHERE ($1::text        IS NULL OR category   = $1)
   AND ($2::text        IS NULL OR status     = $2)
   AND ($3::timestamptz IS NULL OR created_at >= $3)
   AND ($4::timestamptz IS NULL OR created_at <= $4)
+  AND ($5::text        IS NULL OR title   ILIKE '%' || $5 || '%'
+                                OR summary ILIKE '%' || $5 || '%')
 ORDER BY created_at DESC
-LIMIT $5 OFFSET $6`
+LIMIT $6 OFFSET $7`
 
 const sqlCountArticles = `
 SELECT COUNT(*) FROM articles
 WHERE ($1::text        IS NULL OR category   = $1)
   AND ($2::text        IS NULL OR status     = $2)
   AND ($3::timestamptz IS NULL OR created_at >= $3)
-  AND ($4::timestamptz IS NULL OR created_at <= $4)`
+  AND ($4::timestamptz IS NULL OR created_at <= $4)
+  AND ($5::text        IS NULL OR title   ILIKE '%' || $5 || '%'
+                                OR summary ILIKE '%' || $5 || '%')`
 
 const sqlInsertRunLog = `
 INSERT INTO run_logs (

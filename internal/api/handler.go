@@ -101,6 +101,7 @@ func (h *Handler) ListArticles(c echo.Context) error {
 		}
 		f.PageSize = n
 	}
+	f.Query = c.QueryParam("q")
 
 	articles, total, err := h.store.ListArticles(c.Request().Context(), f)
 	if err != nil {

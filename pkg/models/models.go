@@ -290,8 +290,9 @@ type ArticleFilter struct {
 	Status   *string
 	DateFrom *time.Time
 	DateTo   *time.Time
-	Page     int // 1-based; defaults to 1
-	PageSize int // defaults to 20; max 100
+	Query    string // ILIKE search on title and summary; empty means no filter
+	Page     int    // 1-based; defaults to 1
+	PageSize int    // defaults to 20; max 100
 }
 
 // ArticleListResponse is the JSON body returned by GET /api/articles.
