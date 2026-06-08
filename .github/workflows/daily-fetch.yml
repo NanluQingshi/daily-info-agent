@@ -1,10 +1,14 @@
-name: Daily News Fetch
+name: 每日新闻抓取
 
 on:
   schedule:
-    # 01:00 UTC = 08:00 CST (UTC+8) — satisfies FR-SCH-001
+    # 01:00 UTC = 09:00 CST（UTC+8）
     - cron: '0 1 * * *'
-  workflow_dispatch: {} # allows manual trigger for testing
+  workflow_dispatch:
+    inputs:
+      categories:
+        description: '要抓取的分类（逗号分隔，留空使用 DEFAULT_CATEGORIES）'
+        required: false
 
 permissions:
   contents: read
@@ -12,47 +16,76 @@ permissions:
 jobs:
   fetch-and-publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 20 # hard cap; agent self-limits to 15 min
+    timeout-minutes: 20   # 硬上限；agent 自身限制 15 分钟
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Go
+      - name: 配置 Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.25'
           cache: true
 
-      - name: Restore deduplication cache
+      - name: 运行测试
+        run: go test ./...
+
+      - name: 恢复去重缓存
         uses: actions/cache@v4
         with:
           path: cache/dedup.json
-          # Key includes run ID; restore-keys allow fallback to any prior cache
           key: dedup-cache-${{ github.run_id }}
           restore-keys: |
             dedup-cache-
 
-      - name: Build
-        run: go build -ldflags="-X main.version=1.0.0" -o agent ./cmd/agent
+      - name: 编译
+        run: |
+          go build \
+            -ldflags="-X main.version=${{ github.sha }}" \
+            -o agent \
+            ./cmd/agent
 
-      - name: Run scheduled fetch
+      - name: 运行定时抓取
         run: ./agent --mode=schedule
         env:
+          # ---- 必填：AI + 数据源 ----
           DEEPSEEK_API_KEY:     ${{ secrets.DEEPSEEK_API_KEY }}
           DEEPSEEK_MODEL_ID:    ${{ secrets.DEEPSEEK_MODEL_ID }}
           NEWSAPI_KEY:          ${{ secrets.NEWSAPI_KEY }}
+          # ---- 可选：数据库持久化 ----
+          DATABASE_DSN:         ${{ secrets.DATABASE_DSN }}
+          # ---- 可选：发布到外部网站 ----
           WEBSITE_API_BASE_URL: ${{ secrets.WEBSITE_API_BASE_URL }}
           WEBSITE_API_TOKEN:    ${{ secrets.WEBSITE_API_TOKEN }}
+          # ---- 可选：邮件摘要 ----
+          SMTP_HOST:            ${{ secrets.SMTP_HOST }}
+          SMTP_PORT:            ${{ secrets.SMTP_PORT }}
+          SMTP_USER:            ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD:        ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM:            ${{ secrets.SMTP_FROM }}
+          NOTIFY_EMAIL:         ${{ secrets.NOTIFY_EMAIL }}
+          # ---- 可配置变量（Repository variables）----
           RSSHUB_BASE_URL:      ${{ vars.RSSHUB_BASE_URL }}
           RSS_FEEDS:            ${{ vars.RSS_FEEDS }}
           TRUSTED_DOMAINS:      ${{ vars.TRUSTED_DOMAINS }}
           DEFAULT_CATEGORIES:   ${{ vars.DEFAULT_CATEGORIES }}
           LOG_LEVEL:            INFO
 
-      - name: Save deduplication cache
-        if: always() # save even if the run step fails, to preserve dedup state
+      - name: 保存去重缓存
+        if: always()   # 即使抓取失败也保存，避免重复抓取已处理的 URL
         uses: actions/cache@v4
         with:
           path: cache/dedup.json
           key: dedup-cache-${{ github.run_id }}
+
+      - name: 写入运行摘要
+        if: always()
+        run: |
+          echo "## 📰 每日抓取结果" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| 字段 | 值 |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-----|" >> $GITHUB_STEP_SUMMARY
+          echo "| 触发方式 | ${{ github.event_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| 运行时间 | $(date -u '+%Y-%m-%d %H:%M UTC') |" >> $GITHUB_STEP_SUMMARY
