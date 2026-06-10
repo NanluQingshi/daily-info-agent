@@ -41,10 +41,9 @@ const validRSSFeed = `<?xml version="1.0" encoding="UTF-8"?>
 </rss>`
 
 const validAtomFeed = `<?xml version="1.0" encoding="UTF-8"?>
-<feed xmlns="http://www.w3.org/2005/Atom">
+<feed xmlns="http://www.w3.org/2005/Atom" xml:lang="zh">
   <title>Atom Test Feed</title>
   <link href="http://atomfeed.example.com"/>
-  <language>zh</language>
   <entry>
     <title>Atom Entry One</title>
     <link href="http://atomfeed.example.com/entry-1"/>

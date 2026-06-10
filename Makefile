@@ -31,7 +31,7 @@ run-server: build
 
 ## web-install: Install frontend npm dependencies
 web-install:
-	cd web && npm install --registry https://registry.npmjs.org
+	cd web && npm install
 
 ## web-build: Build the React frontend for production
 web-build:
