@@ -19,8 +19,12 @@ export function StatsPanel() {
   if (error) return <div className="bg-red-50 text-red-700 text-sm rounded-xl p-4">{error}</div>;
   if (!data) return null;
 
-  const maxDay = Math.max(1, ...data.by_day.map((d) => d.count));
-  const maxCat = Math.max(1, ...data.by_category.map((c) => c.count));
+  const byDay = data.by_day ?? [];
+  const byCategory = data.by_category ?? [];
+  const recentRuns = data.recent_runs ?? [];
+
+  const maxDay = Math.max(1, ...byDay.map((d) => d.count));
+  const maxCat = Math.max(1, ...byCategory.map((c) => c.count));
 
   return (
     <div className="space-y-6">
@@ -30,11 +34,11 @@ export function StatsPanel() {
         {/* By Day */}
         <div className="bg-white border border-slate-200 rounded-xl p-5">
           <h3 className="text-sm font-medium text-slate-600 mb-4">每日文章数（近30天）</h3>
-          {data.by_day.length === 0 ? (
+          {byDay.length === 0 ? (
             <p className="text-sm text-slate-400 text-center py-4">暂无数据</p>
           ) : (
             <div className="space-y-1.5">
-              {data.by_day.slice(0, 15).map((d) => (
+              {byDay.slice(0, 15).map((d) => (
                 <div key={d.date} className="flex items-center gap-3">
                   <span className="text-xs text-slate-400 w-24 shrink-0">{d.date}</span>
                   <div className="flex-1 bg-slate-100 rounded-full h-2">
@@ -53,11 +57,11 @@ export function StatsPanel() {
         {/* By Category */}
         <div className="bg-white border border-slate-200 rounded-xl p-5">
           <h3 className="text-sm font-medium text-slate-600 mb-4">按分类</h3>
-          {data.by_category.length === 0 ? (
+          {byCategory.length === 0 ? (
             <p className="text-sm text-slate-400 text-center py-4">暂无数据</p>
           ) : (
             <div className="space-y-2">
-              {data.by_category.map((c) => (
+              {byCategory.map((c) => (
                 <div key={c.category} className="flex items-center gap-3">
                   <span className="text-sm text-slate-600 w-20 shrink-0">{c.category}</span>
                   <div className="flex-1 bg-slate-100 rounded-full h-2">
@@ -77,7 +81,7 @@ export function StatsPanel() {
       {/* Recent Runs */}
       <div className="bg-white border border-slate-200 rounded-xl p-5 overflow-x-auto">
         <h3 className="text-sm font-medium text-slate-600 mb-4">最近运行记录</h3>
-        {data.recent_runs.length === 0 ? (
+        {recentRuns.length === 0 ? (
           <p className="text-sm text-slate-400 text-center py-4">暂无记录</p>
         ) : (
           <table className="w-full text-xs">
@@ -93,7 +97,7 @@ export function StatsPanel() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
-              {data.recent_runs.map((r) => (
+              {recentRuns.map((r) => (
                 <tr key={r.run_id} className="text-slate-600">
                   <td className="py-2 font-mono">{r.run_id.slice(0, 8)}…</td>
                   <td className="py-2">{r.total_fetched}</td>
