@@ -1,4 +1,14 @@
 import { useRef, useState } from "react";
+import { Search, X } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import type { ArticleFilter } from "../types";
 import { CATEGORIES, STATUSES } from "../types";
 
@@ -30,86 +40,85 @@ export function FilterBar({ filter, onChange }: Props) {
   };
 
   return (
-    <div className="flex flex-wrap gap-3 p-4 bg-white border border-slate-200 rounded-xl">
-      <div className="flex items-center gap-2 flex-1 min-w-40">
-        <label className="text-sm text-slate-500 whitespace-nowrap">搜索</label>
-        <div className="relative flex-1">
-          <input
-            type="text"
-            value={searchInput}
-            onChange={(e) => handleSearchChange(e.target.value)}
-            placeholder="标题或摘要关键词…"
-            className="w-full text-sm border border-slate-200 rounded-lg px-3 py-1.5 pr-7 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          {searchInput && (
-            <button
-              onClick={() => handleSearchChange("")}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-base leading-none"
-              aria-label="清除搜索"
-            >
-              ×
-            </button>
-          )}
-        </div>
+    <div className="flex flex-wrap gap-2 p-3 bg-card border rounded-xl">
+      {/* Search */}
+      <div className="relative flex-1 min-w-40">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+        <Input
+          value={searchInput}
+          onChange={(e) => handleSearchChange(e.target.value)}
+          placeholder="搜索标题或摘要…"
+          className="pl-9 pr-8 h-9"
+        />
+        {searchInput && (
+          <button
+            onClick={() => handleSearchChange("")}
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        )}
       </div>
 
-      <div className="flex items-center gap-2">
-        <label className="text-sm text-slate-500 whitespace-nowrap">分类</label>
-        <select
-          value={filter.category ?? ""}
-          onChange={(e) => set({ category: e.target.value || undefined })}
-          className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-        >
-          <option value="">全部</option>
+      {/* Category */}
+      <Select
+        value={filter.category ?? "all"}
+        onValueChange={(v) => set({ category: v === "all" ? undefined : v })}
+      >
+        <SelectTrigger className="w-32 h-9">
+          <SelectValue placeholder="全部分类" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">全部分类</SelectItem>
           {CATEGORIES.map((c) => (
-            <option key={c} value={c}>{c}</option>
+            <SelectItem key={c} value={c}>{c}</SelectItem>
           ))}
-        </select>
-      </div>
+        </SelectContent>
+      </Select>
 
-      <div className="flex items-center gap-2">
-        <label className="text-sm text-slate-500 whitespace-nowrap">状态</label>
-        <select
-          value={filter.status ?? ""}
-          onChange={(e) => set({ status: e.target.value || undefined })}
-          className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-        >
-          <option value="">全部</option>
+      {/* Status */}
+      <Select
+        value={filter.status ?? "all"}
+        onValueChange={(v) => set({ status: v === "all" ? undefined : v })}
+      >
+        <SelectTrigger className="w-28 h-9">
+          <SelectValue placeholder="全部状态" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">全部状态</SelectItem>
           {STATUSES.map((s) => (
-            <option key={s} value={s}>{STATUS_LABELS[s]}</option>
+            <SelectItem key={s} value={s}>{STATUS_LABELS[s]}</SelectItem>
           ))}
-        </select>
-      </div>
+        </SelectContent>
+      </Select>
 
-      <div className="flex items-center gap-2">
-        <label className="text-sm text-slate-500 whitespace-nowrap">从</label>
-        <input
-          type="date"
-          value={filter.date_from ?? ""}
-          onChange={(e) => set({ date_from: e.target.value || undefined })}
-          className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
-      </div>
+      {/* Date range */}
+      <Input
+        type="date"
+        value={filter.date_from ?? ""}
+        onChange={(e) => set({ date_from: e.target.value || undefined })}
+        className="w-36 h-9"
+        placeholder="开始日期"
+      />
+      <Input
+        type="date"
+        value={filter.date_to ?? ""}
+        onChange={(e) => set({ date_to: e.target.value || undefined })}
+        className="w-36 h-9"
+        placeholder="结束日期"
+      />
 
-      <div className="flex items-center gap-2">
-        <label className="text-sm text-slate-500 whitespace-nowrap">到</label>
-        <input
-          type="date"
-          value={filter.date_to ?? ""}
-          onChange={(e) => set({ date_to: e.target.value || undefined })}
-          className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
-      </div>
-
-      <button
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-9 text-muted-foreground"
         onClick={() => {
           setSearchInput("");
           onChange({ page: 1, page_size: filter.page_size });
         }}
-        className="text-sm text-slate-500 hover:text-slate-700 px-2 py-1 rounded transition-colors"
       >
-        清除筛选
-      </button>
+        清除
+      </Button>
     </div>
   );
 }
