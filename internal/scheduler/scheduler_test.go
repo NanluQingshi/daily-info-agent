@@ -105,7 +105,7 @@ func buildTestScheduler(
 	dsSrv := httptest.NewServer(dsMux)
 	t.Cleanup(dsSrv.Close)
 
-	aiClient := processor.NewDeepSeekClient("test-key", dsSrv.URL)
+	aiClient := processor.NewLLMClient("test-key", dsSrv.URL)
 	proc := processor.New(aiClient, "deepseek-chat", slog.Default())
 
 	// Mock fetcher returning predefined items.
@@ -197,7 +197,7 @@ func TestScheduler_RunDefault_AllSourcesFail_FatalErrorSet(t *testing.T) {
 	dsSrv := httptest.NewServer(dsMux)
 	defer dsSrv.Close()
 
-	aiClient := processor.NewDeepSeekClient("test-key", dsSrv.URL)
+	aiClient := processor.NewLLMClient("test-key", dsSrv.URL)
 	proc := processor.New(aiClient, "deepseek-chat", slog.Default())
 
 	// Fetcher that always returns an error.

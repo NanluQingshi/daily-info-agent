@@ -20,26 +20,26 @@ const (
 	maxContentLen     = 500 // chars sent to AI per item
 )
 
-// DeepSeekUnavailableError is returned (and logged) when all retries to DeepSeek fail.
-type DeepSeekUnavailableError struct {
+// LLMUnavailableError is returned (and logged) when all retries to DeepSeek fail.
+type LLMUnavailableError struct {
 	Cause error
 }
 
-func (e *DeepSeekUnavailableError) Error() string {
+func (e *LLMUnavailableError) Error() string {
 	return fmt.Sprintf("deepseek unavailable: %v", e.Cause)
 }
-func (e *DeepSeekUnavailableError) Unwrap() error { return e.Cause }
+func (e *LLMUnavailableError) Unwrap() error { return e.Cause }
 
-// DeepSeekParseError is returned when the AI response cannot be parsed.
-type DeepSeekParseError struct {
+// LLMParseError is returned when the AI response cannot be parsed.
+type LLMParseError struct {
 	Raw   string
 	Cause error
 }
 
-func (e *DeepSeekParseError) Error() string {
+func (e *LLMParseError) Error() string {
 	return fmt.Sprintf("parse deepseek response: %v (raw=%q)", e.Cause, e.Raw)
 }
-func (e *DeepSeekParseError) Unwrap() error { return e.Cause }
+func (e *LLMParseError) Unwrap() error { return e.Cause }
 
 // TopicResult holds the structured output of topic extraction.
 type TopicResult struct {
@@ -64,8 +64,8 @@ func New(client *openai.Client, modelID string, logger *slog.Logger) *Processor 
 	}
 }
 
-// NewDeepSeekClient creates an OpenAI-compatible client configured for DeepSeek.
-func NewDeepSeekClient(apiKey, baseURL string) *openai.Client {
+// NewLLMClient creates an OpenAI-compatible client configured for DeepSeek.
+func NewLLMClient(apiKey, baseURL string) *openai.Client {
 	cfg := openai.DefaultConfig(apiKey)
 	cfg.BaseURL = baseURL
 	return openai.NewClientWithConfig(cfg)
@@ -206,7 +206,7 @@ func (p *Processor) processBatchCall(ctx context.Context, items []models.RawItem
 		return results, nil
 	}
 
-	return nil, &DeepSeekUnavailableError{Cause: lastErr}
+	return nil, &LLMUnavailableError{Cause: lastErr}
 }
 
 // processBatchIndividually falls back to one API call per item in the batch.
@@ -276,10 +276,10 @@ func (p *Processor) ExtractTopic(ctx context.Context, message string) (TopicResu
 		},
 	})
 	if err != nil {
-		return TopicResult{}, &DeepSeekUnavailableError{Cause: fmt.Errorf("extract topic: %w", err)}
+		return TopicResult{}, &LLMUnavailableError{Cause: fmt.Errorf("extract topic: %w", err)}
 	}
 	if len(resp.Choices) == 0 {
-		return TopicResult{}, &DeepSeekUnavailableError{Cause: fmt.Errorf("empty choices")}
+		return TopicResult{}, &LLMUnavailableError{Cause: fmt.Errorf("empty choices")}
 	}
 
 	raw := resp.Choices[0].Message.Content
@@ -290,7 +290,7 @@ func (p *Processor) ExtractTopic(ctx context.Context, message string) (TopicResu
 		Summary  string   `json:"summary"`
 	}
 	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
-		return TopicResult{}, &DeepSeekParseError{Raw: raw, Cause: err}
+		return TopicResult{}, &LLMParseError{Raw: raw, Cause: err}
 	}
 
 	cat := models.Category(parsed.Category)
@@ -356,7 +356,7 @@ func parseBatchResponse(raw string) ([]models.AIItemResult, error) {
 	// Try wrapped object: {"items": [...]} or {"results": [...]}
 	var wrapper map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(raw), &wrapper); err != nil {
-		return nil, &DeepSeekParseError{Raw: raw, Cause: fmt.Errorf("not an array or object: %w", err)}
+		return nil, &LLMParseError{Raw: raw, Cause: fmt.Errorf("not an array or object: %w", err)}
 	}
 
 	for _, key := range []string{"items", "results", "data", "articles"} {
@@ -367,5 +367,5 @@ func parseBatchResponse(raw string) ([]models.AIItemResult, error) {
 		}
 	}
 
-	return nil, &DeepSeekParseError{Raw: raw, Cause: fmt.Errorf("could not locate array in response")}
+	return nil, &LLMParseError{Raw: raw, Cause: fmt.Errorf("could not locate array in response")}
 }

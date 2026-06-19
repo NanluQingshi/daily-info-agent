@@ -70,11 +70,11 @@ export function ArticleList() {
 
       {loading ? (
         <div className="text-center py-16 text-slate-400">加载中…</div>
-      ) : data?.articles.length === 0 ? (
+      ) : (data?.articles?.length ?? 0) === 0 ? (
         <div className="text-center py-16 text-slate-400">暂无文章</div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {data?.articles.map((a) => (
+          {data?.articles?.map((a) => (
             <ArticleCard
               key={a.id}
               article={a}

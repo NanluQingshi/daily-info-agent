@@ -164,7 +164,7 @@ func (s *PostgresStore) ListArticles(ctx context.Context, f models.ArticleFilter
 	}
 	defer rows.Close()
 
-	var articles []models.ArticleRow
+	articles := make([]models.ArticleRow, 0)
 	for rows.Next() {
 		a, err := scanArticle(rows)
 		if err != nil {

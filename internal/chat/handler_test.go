@@ -25,9 +25,9 @@ import (
 // Helpers
 // ---------------------------------------------------------------------------
 
-// mockDeepSeekHandler returns an HTTP handler that serves an OpenAI-compatible
+// mockLLMHandler returns an HTTP handler that serves an OpenAI-compatible
 // response with the given content string as the message content.
-func mockDeepSeekHandler(content string) http.HandlerFunc {
+func mockLLMHandler(content string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		resp := map[string]interface{}{
 			"id":      "chatcmpl-test",
@@ -53,18 +53,18 @@ func mockDeepSeekHandler(content string) http.HandlerFunc {
 	}
 }
 
-// newHandlerWithMockDeepSeek wires up a chat.Handler with a mock DeepSeek server.
+// newHandlerWithMockLLM wires up a chat.Handler with a mock DeepSeek server.
 // The mock manager has no fetchers so FetchForTopic returns empty results.
-func newHandlerWithMockDeepSeek(t *testing.T, deepSeekContent string) *chat.Handler {
+func newHandlerWithMockLLM(t *testing.T, deepSeekContent string) *chat.Handler {
 	t.Helper()
 
 	// Mock DeepSeek server.
 	mux := http.NewServeMux()
-	mux.HandleFunc("/chat/completions", mockDeepSeekHandler(deepSeekContent))
+	mux.HandleFunc("/chat/completions", mockLLMHandler(deepSeekContent))
 	dsSrv := httptest.NewServer(mux)
 	t.Cleanup(dsSrv.Close)
 
-	aiClient := processor.NewDeepSeekClient("test-key", dsSrv.URL)
+	aiClient := processor.NewLLMClient("test-key", dsSrv.URL)
 	proc := processor.New(aiClient, "deepseek-chat", slog.Default())
 
 	// Manager with no fetchers → FetchForTopic returns empty results.
@@ -87,7 +87,7 @@ func newHandlerWithMockDeepSeek(t *testing.T, deepSeekContent string) *chat.Hand
 func newMinimalHandler(t *testing.T) *chat.Handler {
 	t.Helper()
 	// Use a non-existent DeepSeek URL; if deps are called the test will fail anyway.
-	aiClient := processor.NewDeepSeekClient("", "http://invalid.deepseek.test")
+	aiClient := processor.NewLLMClient("", "http://invalid.deepseek.test")
 	proc := processor.New(aiClient, "model", slog.Default())
 	cacheFile := filepath.Join(t.TempDir(), "dedup.json")
 	mgr := fetcher.NewManager([]fetcher.Fetcher{}, cacheFile, slog.Default())
@@ -171,7 +171,7 @@ func TestHandler_Chat_MessageAtMaxLength_DoesNotReturn400(t *testing.T) {
 	body, _ := json.Marshal(models.ChatRequest{Message: exactMaxMessage})
 
 	topicJSON := `{"category":"科技/AI","keywords":["test"],"summary":"500-char message test"}`
-	h := newHandlerWithMockDeepSeek(t, topicJSON)
+	h := newHandlerWithMockLLM(t, topicJSON)
 
 	e := echo.New()
 	c, rec := echoContext(e, http.MethodPost, "/api/chat", string(body))
@@ -199,7 +199,7 @@ func TestHandler_Chat_InvalidJSONBody_Returns400(t *testing.T) {
 
 func TestHandler_Chat_ValidMessage_Returns200WithCorrectShape(t *testing.T) {
 	topicJSON := `{"category":"科技/AI","keywords":["artificial intelligence","OpenAI"],"summary":"User asks about AI news"}`
-	h := newHandlerWithMockDeepSeek(t, topicJSON)
+	h := newHandlerWithMockLLM(t, topicJSON)
 
 	e := echo.New()
 	body, _ := json.Marshal(models.ChatRequest{Message: "What is the latest AI news?"})
@@ -225,7 +225,7 @@ func TestHandler_Chat_ValidMessage_Returns200WithCorrectShape(t *testing.T) {
 
 func TestHandler_Chat_ValidMessage_CategoryEchoedFromAI(t *testing.T) {
 	topicJSON := `{"category":"金融","keywords":["stock","market"],"summary":"Stock market inquiry"}`
-	h := newHandlerWithMockDeepSeek(t, topicJSON)
+	h := newHandlerWithMockLLM(t, topicJSON)
 
 	e := echo.New()
 	body, _ := json.Marshal(models.ChatRequest{Message: "How are the stock markets doing?"})
@@ -242,7 +242,7 @@ func TestHandler_Chat_ValidMessage_CategoryEchoedFromAI(t *testing.T) {
 
 func TestHandler_Chat_NoFetchResults_SummaryContainsNoNewsMessage(t *testing.T) {
 	topicJSON := `{"category":"政治","keywords":["politics"],"summary":"Political news inquiry"}`
-	h := newHandlerWithMockDeepSeek(t, topicJSON)
+	h := newHandlerWithMockLLM(t, topicJSON)
 
 	e := echo.New()
 	body, _ := json.Marshal(models.ChatRequest{Message: "Latest politics news?"})
@@ -305,7 +305,7 @@ func TestHandler_Health_GET_MethodNotAllowed_ForPost(t *testing.T) {
 // POST /api/chat — DeepSeek failure
 // ---------------------------------------------------------------------------
 
-func TestHandler_Chat_DeepSeekUnavailable_Returns500(t *testing.T) {
+func TestHandler_Chat_LLMUnavailable_Returns500(t *testing.T) {
 	// Set up a DeepSeek server that returns a 503 error.
 	dsSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
@@ -313,7 +313,7 @@ func TestHandler_Chat_DeepSeekUnavailable_Returns500(t *testing.T) {
 	}))
 	t.Cleanup(dsSrv.Close)
 
-	aiClient := processor.NewDeepSeekClient("test-key", dsSrv.URL)
+	aiClient := processor.NewLLMClient("test-key", dsSrv.URL)
 	proc := processor.New(aiClient, "deepseek-chat", slog.Default())
 	cacheFile := filepath.Join(t.TempDir(), "dedup.json")
 	mgr := fetcher.NewManager([]fetcher.Fetcher{}, cacheFile, slog.Default())

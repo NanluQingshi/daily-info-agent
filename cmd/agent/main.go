@@ -87,13 +87,13 @@ func main() {
 	)
 
 	// ---- Build processor ----
-	openAICfg := openai.DefaultConfig(cfg.DeepSeekAPIKey)
-	openAICfg.BaseURL = cfg.DeepSeekBaseURL
+	openAICfg := openai.DefaultConfig(cfg.LLMAPIKey)
+	openAICfg.BaseURL = cfg.LLMBaseURL
 	aiClient := openai.NewClientWithConfig(openAICfg)
 
 	proc := processor.New(
 		aiClient,
-		cfg.DeepSeekModelID,
+		cfg.LLMModelID,
 		logger.With(slog.String("component", "processor")),
 	)
 
@@ -291,7 +291,13 @@ func runMigrations(dsn string, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("migrations source: %w", err)
 	}
-	m, err := migrate.NewWithSourceInstance("iofs", d, dsn)
+	// golang-migrate's pgx/v5 driver registers as "pgx5://", but users
+	// naturally write "postgres://" DSNs — rewrite the scheme here.
+	migrateDSN := strings.NewReplacer(
+		"postgres://", "pgx5://",
+		"postgresql://", "pgx5://",
+	).Replace(dsn)
+	m, err := migrate.NewWithSourceInstance("iofs", d, migrateDSN)
 	if err != nil {
 		return fmt.Errorf("migrate init: %w", err)
 	}

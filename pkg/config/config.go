@@ -35,10 +35,10 @@ var defaultTrustedDomains = []string{
 
 // Config holds all runtime configuration loaded from environment variables.
 type Config struct {
-	// AI
-	DeepSeekAPIKey  string
-	DeepSeekModelID string
-	DeepSeekBaseURL string // default: "https://api.deepseek.com/v1"
+	// LLM (OpenAI-compatible API)
+	LLMAPIKey  string
+	LLMModelID string
+	LLMBaseURL string // default: "https://api.deepseek.com/v1"
 
 	// Data sources
 	NewsAPIKey    string
@@ -98,14 +98,14 @@ func Load() (*Config, error) {
 	var missing []string
 
 	// Required fields
-	cfg.DeepSeekAPIKey = os.Getenv("DEEPSEEK_API_KEY")
-	if cfg.DeepSeekAPIKey == "" {
-		missing = append(missing, "DEEPSEEK_API_KEY")
+	cfg.LLMAPIKey = os.Getenv("LLM_API_KEY")
+	if cfg.LLMAPIKey == "" {
+		missing = append(missing, "LLM_API_KEY")
 	}
 
-	cfg.DeepSeekModelID = os.Getenv("DEEPSEEK_MODEL_ID")
-	if cfg.DeepSeekModelID == "" {
-		missing = append(missing, "DEEPSEEK_MODEL_ID")
+	cfg.LLMModelID = os.Getenv("LLM_MODEL_ID")
+	if cfg.LLMModelID == "" {
+		missing = append(missing, "LLM_MODEL_ID")
 	}
 
 	cfg.NewsAPIKey = os.Getenv("NEWSAPI_KEY")
@@ -135,7 +135,7 @@ func Load() (*Config, error) {
 	cfg.DisableNotifier = cfg.SMTPHost == "" || cfg.SMTPUser == "" || cfg.SMTPPassword == "" || cfg.NotifyEmail == ""
 
 	// Optional with defaults
-	cfg.DeepSeekBaseURL = envOr("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
+	cfg.LLMBaseURL = envOr("LLM_BASE_URL", "https://api.deepseek.com/v1")
 	cfg.RSSHubBaseURL = envOr("RSSHUB_BASE_URL", "https://rsshub.app")
 	cfg.BindAddr = envOr("BIND_ADDR", "127.0.0.1:8080")
 	cfg.CacheFilePath = envOr("CACHE_FILE_PATH", "cache/dedup.json")
