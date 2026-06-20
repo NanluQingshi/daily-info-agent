@@ -31,6 +31,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	openai "github.com/sashabaranov/go-openai"
+	"github.com/user/daily-info-agent/internal/agent"
 	"github.com/user/daily-info-agent/internal/api"
 	"github.com/user/daily-info-agent/internal/chat"
 	"github.com/user/daily-info-agent/internal/fetcher"
@@ -216,8 +217,15 @@ func runServerMode(
 	st store.ArticleStore,
 	logger *slog.Logger,
 ) {
+	agentRunner := agent.New(
+		cfg.LLMBaseURL,
+		cfg.LLMAPIKey,
+		cfg.LLMModelID,
+		mgr,
+		logger.With(slog.String("component", "agent")),
+	)
 	chatHandler := chat.New(
-		proc, mgr, ver, cfg,
+		agentRunner,
 		logger.With(slog.String("component", "chat")),
 	)
 
@@ -229,7 +237,9 @@ func runServerMode(
 	e.Use(middleware.TimeoutWithConfig(middleware.TimeoutConfig{
 		Timeout: 30 * time.Second,
 		Skipper: func(c echo.Context) bool {
-			return strings.HasSuffix(c.Path(), "/stream")
+			// /api/chat can take 30–60 s when the agent calls tools;
+			// /stream endpoints are SSE and must never be cut off.
+			return c.Path() == "/api/chat" || strings.HasSuffix(c.Path(), "/stream")
 		},
 	}))
 	e.Use(slogMiddleware(logger))

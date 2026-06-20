@@ -207,25 +207,25 @@ type PublishErrorResponse struct {
 
 // ChatRequest is the JSON body of POST /api/chat.
 type ChatRequest struct {
-	Message string `json:"message"`
+	Message   string `json:"message"`
+	SessionID string `json:"session_id,omitempty"` // empty on first turn; echoed back thereafter
 }
 
 // ChatSource is a single source article referenced in a chat response.
 type ChatSource struct {
-	URL          string  `json:"url"`
-	Title        string  `json:"title"`
-	SourceDomain string  `json:"source_domain"`
-	CredScore    float64 `json:"credibility_score"`
+	URL          string `json:"url"`
+	Title        string `json:"title"`
+	SourceDomain string `json:"source_domain"`
 }
 
 // ChatResponse is the JSON body returned by POST /api/chat.
 type ChatResponse struct {
-	ExtractedTopic string       `json:"extracted_topic"`
-	Category       string       `json:"category"`
-	Summary        string       `json:"summary"`     // AI-generated aggregate summary in Chinese
-	Sources        []ChatSource `json:"sources"`
-	FetchedAt      string       `json:"fetched_at"`  // ISO 8601
-	LatencyMs      int64        `json:"latency_ms"`
+	SessionID  string       `json:"session_id"`            // persist and send back on subsequent turns
+	Reply      string       `json:"reply"`                 // LLM-generated reply
+	Sources    []ChatSource `json:"sources"`               // articles fetched (may be empty)
+	ToolCalled bool         `json:"tool_called"`           // whether a tool was invoked
+	FetchedAt  string       `json:"fetched_at"`            // ISO 8601
+	LatencyMs  int64        `json:"latency_ms"`
 }
 
 // ChatErrorResponse is the JSON body returned on errors by POST /api/chat.

@@ -1,4 +1,4 @@
-.PHONY: build test lint run-schedule run-server clean tidy web-install web-build web-dev build-full db-create
+.PHONY: build test lint run-schedule run-server dev clean tidy web-install web-build web-dev build-full db-create
 
 # Build flags — override version at build time
 VERSION ?= 1.0.0
@@ -40,6 +40,15 @@ web-build:
 ## web-dev: Start Vite dev server (proxies /api to localhost:8080)
 web-dev:
 	cd web && npm run dev
+
+## dev: Start both Go backend (8080) and Vite dev server (5173) together
+dev: build
+	@echo "==> backend  → http://localhost:8080"
+	@echo "==> frontend → http://localhost:5173"
+	@./$(BINARY) --mode=server & \
+	  BACKEND_PID=$$!; \
+	  cd web && npm run dev; \
+	  kill $$BACKEND_PID 2>/dev/null || true
 
 ## build-full: Build React frontend then compile Go binary (embeds web/dist)
 build-full: web-build build

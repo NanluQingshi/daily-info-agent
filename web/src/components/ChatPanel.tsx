@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { Loader2, Send } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
@@ -22,6 +21,7 @@ export function ChatPanel() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [sessionId, setSessionId] = useState<string | undefined>(undefined);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -37,10 +37,12 @@ export function ChatPanel() {
     setLoading(true);
 
     try {
-      const res = await sendChat(text);
+      const res = await sendChat(text, sessionId);
+      // Persist the session_id for subsequent turns.
+      setSessionId(res.session_id);
       setMessages((prev) => [
         ...prev,
-        { id: ++nextId, role: "assistant", text: res.summary, response: res },
+        { id: ++nextId, role: "assistant", text: res.reply, response: res },
       ]);
     } catch (e: unknown) {
       setMessages((prev) => [
@@ -64,6 +66,11 @@ export function ChatPanel() {
       {/* Header */}
       <div className="h-14 shrink-0 border-b flex items-center px-6 bg-card">
         <h1 className="font-semibold text-sm">智能问答</h1>
+        {sessionId && (
+          <span className="ml-auto text-xs text-muted-foreground font-mono">
+            {sessionId.slice(0, 8)}
+          </span>
+        )}
       </div>
 
       {/* Messages */}
@@ -95,19 +102,27 @@ export function ChatPanel() {
                     </div>
                   ) : (
                     <div className="bg-card border rounded-2xl rounded-tl-sm px-4 py-4 space-y-3 shadow-sm">
-                      {msg.response && (
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <Badge variant="secondary">{msg.response.category}</Badge>
-                          <span className="text-xs text-muted-foreground">{msg.response.extracted_topic}</span>
-                          <span className="text-xs text-muted-foreground ml-auto">{msg.response.latency_ms}ms</span>
-                        </div>
-                      )}
-                      <p className="text-sm leading-relaxed">{msg.text}</p>
+                      {/* Latency badge */}
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        {msg.response?.tool_called && (
+                          <span className="px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground">
+                            🔍 已搜索新闻
+                          </span>
+                        )}
+                        <span className="ml-auto">{msg.response?.latency_ms}ms</span>
+                      </div>
+
+                      {/* Reply text */}
+                      <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.text}</p>
+
+                      {/* Sources */}
                       {(msg.response?.sources?.length ?? 0) > 0 && (
                         <>
                           <Separator />
                           <div>
-                            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">来源</p>
+                            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
+                              来源
+                            </p>
                             <div className="space-y-1.5">
                               {msg.response!.sources.map((s) => (
                                 <a
@@ -118,10 +133,7 @@ export function ChatPanel() {
                                   className="block text-xs p-2.5 border rounded-lg hover:border-primary/40 hover:bg-accent transition-colors"
                                 >
                                   <div className="font-medium line-clamp-1">{s.title}</div>
-                                  <div className="flex gap-2 mt-0.5 text-muted-foreground">
-                                    <span>{s.source_domain}</span>
-                                    <span>可信度 {s.credibility_score.toFixed(2)}</span>
-                                  </div>
+                                  <div className="text-muted-foreground mt-0.5">{s.source_domain}</div>
                                 </a>
                               ))}
                             </div>

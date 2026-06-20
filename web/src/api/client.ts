@@ -56,10 +56,10 @@ export function getStats(since?: string): Promise<StatsResult> {
   return request(`/stats${since ? `?since=${since}` : ""}`);
 }
 
-export function sendChat(message: string): Promise<ChatResponse> {
+export function sendChat(message: string, sessionId?: string): Promise<ChatResponse> {
   return request("/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ message, session_id: sessionId }),
   });
 }

@@ -176,9 +176,7 @@ func (p *Processor) processBatchCall(ctx context.Context, items []models.RawItem
 				{Role: openai.ChatMessageRoleSystem, Content: systemPrompt},
 				{Role: openai.ChatMessageRoleUser, Content: prompt},
 			},
-			ResponseFormat: &openai.ChatCompletionResponseFormat{
-				Type: openai.ChatCompletionResponseFormatTypeJSONObject,
-			},
+			// response_format omitted — not universally supported by OpenAI-compatible APIs.
 		})
 		if err != nil {
 			lastErr = err
@@ -226,9 +224,7 @@ func (p *Processor) processBatchIndividually(ctx context.Context, items []models
 				{Role: openai.ChatMessageRoleSystem, Content: systemPrompt},
 				{Role: openai.ChatMessageRoleUser, Content: prompt},
 			},
-			ResponseFormat: &openai.ChatCompletionResponseFormat{
-				Type: openai.ChatCompletionResponseFormatTypeJSONObject,
-			},
+			// response_format omitted — not universally supported by OpenAI-compatible APIs.
 		})
 		if err != nil {
 			p.logger.Warn("individual item deepseek call failed",
@@ -260,49 +256,74 @@ func (p *Processor) processBatchIndividually(ctx context.Context, items []models
 	return results, nil
 }
 
-// ExtractTopic asks DeepSeek to identify the topic and most relevant category
+// ExtractTopic asks the LLM to identify the topic and most relevant category
 // from a free-form user message (used by the chat handler).
+//
+// It retries once after deepSeekRetryWait on transport/API errors.
+// response_format is intentionally omitted: many OpenAI-compatible endpoints
+// (including the USTC LLM platform) reject that parameter with a 4xx error.
+// Instead, the prompt explicitly requests JSON, and extractJSON strips any
+// accidental markdown code-fence wrappers from the response.
 func (p *Processor) ExtractTopic(ctx context.Context, message string) (TopicResult, error) {
 	prompt := strings.Replace(topicExtractionPromptTemplate, "{{MESSAGE}}", message, 1)
 
-	resp, err := p.client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
-		Model: p.modelID,
-		Messages: []openai.ChatCompletionMessage{
-			{Role: openai.ChatMessageRoleSystem, Content: "You are a helpful assistant. Output ONLY valid JSON."},
-			{Role: openai.ChatMessageRoleUser, Content: prompt},
-		},
-		ResponseFormat: &openai.ChatCompletionResponseFormat{
-			Type: openai.ChatCompletionResponseFormatTypeJSONObject,
-		},
-	})
-	if err != nil {
-		return TopicResult{}, &LLMUnavailableError{Cause: fmt.Errorf("extract topic: %w", err)}
-	}
-	if len(resp.Choices) == 0 {
-		return TopicResult{}, &LLMUnavailableError{Cause: fmt.Errorf("empty choices")}
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return TopicResult{}, ctx.Err()
+			case <-time.After(deepSeekRetryWait):
+			}
+		}
+
+		resp, err := p.client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
+			Model: p.modelID,
+			Messages: []openai.ChatCompletionMessage{
+				{Role: openai.ChatMessageRoleSystem, Content: "You are a helpful assistant. Output ONLY valid JSON — no markdown, no explanation."},
+				{Role: openai.ChatMessageRoleUser, Content: prompt},
+			},
+			// response_format is omitted — see function comment.
+		})
+		if err != nil {
+			lastErr = err
+			p.logger.Debug("extract topic call error; will retry",
+				slog.Int("attempt", attempt+1),
+				slog.String("error", err.Error()),
+			)
+			continue
+		}
+		if len(resp.Choices) == 0 {
+			lastErr = fmt.Errorf("empty choices in response")
+			continue
+		}
+
+		raw := extractJSON(resp.Choices[0].Message.Content)
+
+		var parsed struct {
+			Category string   `json:"category"`
+			Keywords []string `json:"keywords"`
+			Summary  string   `json:"summary"`
+		}
+		if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+			// Parse errors are not retried — the same model would return the
+			// same malformed output. Return immediately.
+			return TopicResult{}, &LLMParseError{Raw: raw, Cause: err}
+		}
+
+		cat := models.Category(parsed.Category)
+		if !cat.IsValid() {
+			cat = models.CategoryTechAI // sensible default
+		}
+
+		return TopicResult{
+			Category: cat,
+			Keywords: parsed.Keywords,
+			Summary:  parsed.Summary,
+		}, nil
 	}
 
-	raw := resp.Choices[0].Message.Content
-
-	var parsed struct {
-		Category string   `json:"category"`
-		Keywords []string `json:"keywords"`
-		Summary  string   `json:"summary"`
-	}
-	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
-		return TopicResult{}, &LLMParseError{Raw: raw, Cause: err}
-	}
-
-	cat := models.Category(parsed.Category)
-	if !cat.IsValid() {
-		cat = models.CategoryTechAI // sensible default
-	}
-
-	return TopicResult{
-		Category: cat,
-		Keywords: parsed.Keywords,
-		Summary:  parsed.Summary,
-	}, nil
+	return TopicResult{}, &LLMUnavailableError{Cause: lastErr}
 }
 
 // -----------------------------------------------------------------------
@@ -342,10 +363,42 @@ func buildBatchInput(items []models.RawItem) (string, error) {
 	return string(data), nil
 }
 
+// extractJSON strips markdown code fences and advances to the first JSON
+// container character ({ or [) so that callers can pass the raw LLM response
+// directly to json.Unmarshal even when the model wraps its output in
+// ```json ... ``` blocks or adds leading prose.
+func extractJSON(raw string) string {
+	raw = strings.TrimSpace(raw)
+
+	// Strip opening ``` fence (with optional language tag, e.g. ```json).
+	if strings.HasPrefix(raw, "```") {
+		if idx := strings.Index(raw, "\n"); idx != -1 {
+			raw = raw[idx+1:]
+		}
+		// Strip trailing ``` fence.
+		if idx := strings.LastIndex(raw, "```"); idx != -1 {
+			raw = strings.TrimSpace(raw[:idx])
+		}
+	}
+
+	// Advance to the first JSON container character.
+	if start := strings.IndexAny(raw, "{["); start > 0 {
+		raw = raw[start:]
+	}
+
+	// Trim any trailing garbage after the last closing character.
+	if end := strings.LastIndexAny(raw, "]}"); end != -1 && end < len(raw)-1 {
+		raw = raw[:end+1]
+	}
+
+	return strings.TrimSpace(raw)
+}
+
 // parseBatchResponse parses the AI JSON response into []AIItemResult.
 // The response may be a JSON array directly, or a JSON object wrapping an array.
+// Markdown code fences and leading/trailing prose are stripped via extractJSON.
 func parseBatchResponse(raw string) ([]models.AIItemResult, error) {
-	raw = strings.TrimSpace(raw)
+	raw = extractJSON(strings.TrimSpace(raw))
 
 	// Try direct array first
 	var results []models.AIItemResult
