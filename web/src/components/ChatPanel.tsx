@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Loader2, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { sendChat } from "../api/client";
@@ -73,8 +72,8 @@ export function ChatPanel() {
         )}
       </div>
 
-      {/* Messages */}
-      <ScrollArea className="flex-1 px-6 py-6">
+      {/* Messages — flex-1 min-h-0 是关键：让 flex item 可以收缩，overflow-y-auto 才能生效 */}
+      <div className="flex-1 min-h-0 overflow-y-auto px-6 py-6">
         {messages.length === 0 && (
           <div className="h-[calc(100vh-220px)] flex flex-col items-center justify-center text-center select-none">
             <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-4">
@@ -165,7 +164,7 @@ export function ChatPanel() {
 
           <div ref={bottomRef} />
         </div>
-      </ScrollArea>
+      </div>
 
       {/* Input bar */}
       <div className="shrink-0 border-t bg-card px-6 py-4">
