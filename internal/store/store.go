@@ -164,7 +164,7 @@ func (s *PostgresStore) ListArticles(ctx context.Context, f models.ArticleFilter
 	}
 	defer rows.Close()
 
-	var articles []models.ArticleRow
+	articles := make([]models.ArticleRow, 0)
 	for rows.Next() {
 		a, err := scanArticle(rows)
 		if err != nil {
@@ -235,7 +235,11 @@ func (s *PostgresStore) MarkPending(ctx context.Context, id int64) error {
 
 // GetStats returns aggregate stats since the given time.
 func (s *PostgresStore) GetStats(ctx context.Context, since time.Time) (models.StatsResult, error) {
-	var result models.StatsResult
+	result := models.StatsResult{
+		ByDay:      make([]models.DayStat, 0),
+		ByCategory: make([]models.CategoryStat, 0),
+		RecentRuns: make([]models.RunLogRow, 0),
+	}
 
 	// By day
 	rows, err := s.pool.Query(ctx, sqlStatsByDay, since)

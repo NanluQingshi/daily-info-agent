@@ -1,4 +1,9 @@
 import { useEffect, useState } from "react";
+import { ExternalLink, X } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
 import { deleteArticle, publishArticle, retryArticle } from "../api/client";
 import type { ArticleRow } from "../types";
 
@@ -10,18 +15,18 @@ interface Props {
   onRetried: (id: number) => void;
 }
 
-const STATUS_COLORS: Record<string, string> = {
-  pending: "bg-yellow-100 text-yellow-800",
-  published: "bg-green-100 text-green-800",
-  skipped: "bg-slate-100 text-slate-600",
-  failed: "bg-red-100 text-red-700",
-};
-
 const STATUS_LABELS: Record<string, string> = {
   pending: "待发布",
   published: "已发布",
   skipped: "已跳过",
   failed: "失败",
+};
+
+const STATUS_VARIANT: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
+  pending: "outline",
+  published: "default",
+  skipped: "secondary",
+  failed: "destructive",
 };
 
 export function ArticleDetail({ article, onClose, onPublished, onDeleted, onRetried }: Props) {
@@ -75,163 +80,115 @@ export function ArticleDetail({ article, onClose, onPublished, onDeleted, onRetr
 
   const score = article.credibility_score;
   const scorePct = Math.round(score * 100);
-  const scoreColor =
-    score >= 0.8 ? "bg-green-500" : score >= 0.5 ? "bg-yellow-400" : "bg-red-400";
-  const scoreTextColor =
-    score >= 0.8 ? "text-green-700" : score >= 0.5 ? "text-yellow-700" : "text-red-600";
-
-  const showDescription =
-    article.description &&
-    article.description.trim() !== article.summary?.trim();
+  const scoreColor = score >= 0.8 ? "bg-green-500" : score >= 0.5 ? "bg-yellow-400" : "bg-red-400";
+  const scoreTextColor = score >= 0.8 ? "text-green-600" : score >= 0.5 ? "text-yellow-600" : "text-red-500";
+  const showDescription = article.description && article.description.trim() !== article.summary?.trim();
 
   return (
     <div
-      className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-2xl max-w-2xl w-full max-h-[88vh] flex flex-col shadow-2xl"
+        className="bg-card rounded-2xl max-w-2xl w-full max-h-[88vh] flex flex-col shadow-2xl border"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Sticky header */}
-        <div className="sticky top-0 bg-white border-b border-slate-100 px-6 py-4 flex items-start justify-between gap-3 rounded-t-2xl shrink-0">
-          <h2 className="text-base font-semibold text-slate-900 leading-snug">
-            {article.title || "(无标题)"}
-          </h2>
-          <button
-            onClick={onClose}
-            className="text-slate-400 hover:text-slate-600 shrink-0 text-xl leading-none mt-0.5"
-            aria-label="关闭"
-          >
-            ×
-          </button>
+        {/* Header */}
+        <div className="shrink-0 px-6 py-4 flex items-start justify-between gap-3 border-b">
+          <h2 className="text-sm font-semibold leading-snug">{article.title || "(无标题)"}</h2>
+          <Button variant="ghost" size="icon" onClick={onClose} className="w-7 h-7 shrink-0 -mt-0.5">
+            <X className="w-4 h-4" />
+          </Button>
         </div>
 
-        {/* Scrollable body */}
-        <div className="overflow-y-auto flex-1 px-6 py-5 space-y-5">
-
-          {/* Meta badges */}
-          <div className="flex flex-wrap gap-2 text-xs">
-            <span className="bg-blue-50 text-blue-700 px-2.5 py-1 rounded-lg font-medium">
-              {article.category}
-            </span>
-            <span className="bg-slate-100 text-slate-600 px-2.5 py-1 rounded-lg">
-              {article.source_domain}
-            </span>
-            <span
-              className={`px-2.5 py-1 rounded-lg font-medium ${STATUS_COLORS[status] ?? "bg-slate-100 text-slate-600"}`}
-            >
-              {STATUS_LABELS[status] ?? status}
-            </span>
-            {article.domain_hit && (
-              <span className="bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded-lg">
-                白名单来源
-              </span>
-            )}
-          </div>
-
-          {/* Credibility score bar */}
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">可信度</p>
-              <span className={`text-xs font-semibold ${scoreTextColor}`}>{scorePct}%</span>
+        {/* Body */}
+        <ScrollArea className="flex-1 px-6 py-5">
+          <div className="space-y-5">
+            {/* Badges */}
+            <div className="flex flex-wrap gap-2">
+              <Badge variant="secondary">{article.category}</Badge>
+              <Badge variant="outline">{article.source_domain}</Badge>
+              <Badge variant={STATUS_VARIANT[status] ?? "outline"}>
+                {STATUS_LABELS[status] ?? status}
+              </Badge>
+              {article.domain_hit && <Badge variant="outline" className="text-green-700 border-green-200 bg-green-50">白名单</Badge>}
             </div>
-            <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-              <div
-                className={`h-full rounded-full transition-all ${scoreColor}`}
-                style={{ width: `${scorePct}%` }}
-              />
-            </div>
-          </div>
 
-          {/* AI summary */}
-          {article.summary && (
+            {/* Credibility */}
             <div>
-              <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">
-                AI 摘要
-              </p>
-              <p className="text-sm text-slate-700 leading-relaxed">{article.summary}</p>
-            </div>
-          )}
-
-          {/* Raw description (only when different from summary) */}
-          {showDescription && (
-            <div>
-              <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">
-                原文摘要
-              </p>
-              <p className="text-sm text-slate-500 leading-relaxed">{article.description}</p>
-            </div>
-          )}
-
-          {/* Tags */}
-          {article.tags?.length > 0 && (
-            <div>
-              <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-2">
-                标签
-              </p>
-              <div className="flex flex-wrap gap-1.5">
-                {article.tags.map((t) => (
-                  <span
-                    key={t}
-                    className="text-xs bg-slate-100 text-slate-600 px-2.5 py-0.5 rounded-full"
-                  >
-                    {t}
-                  </span>
-                ))}
+              <div className="flex items-center justify-between mb-1.5">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">可信度</p>
+                <span className={`text-xs font-semibold ${scoreTextColor}`}>{scorePct}%</span>
+              </div>
+              <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                <div className={`h-full rounded-full ${scoreColor}`} style={{ width: `${scorePct}%` }} />
               </div>
             </div>
-          )}
 
-          {/* Metadata footer */}
-          <div className="text-xs text-slate-400 space-y-1 pt-4 border-t border-slate-100">
-            <div>
-              来源:{" "}
-              <a
-                href={article.source_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-blue-600 hover:underline break-all"
-              >
-                {article.source_url}
-              </a>
-            </div>
-            {article.published_at && (
-              <div>发布时间: {new Date(article.published_at).toLocaleString("zh-CN")}</div>
+            {/* AI summary */}
+            {article.summary && (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5">AI 摘要</p>
+                <p className="text-sm leading-relaxed">{article.summary}</p>
+              </div>
             )}
-            <div>抓取时间: {new Date(article.fetched_at).toLocaleString("zh-CN")}</div>
-            <div>
-              run_id: <span className="font-mono text-slate-500">{article.run_id}</span>
+
+            {/* Raw description */}
+            {showDescription && (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5">原文摘要</p>
+                <p className="text-sm text-muted-foreground leading-relaxed">{article.description}</p>
+              </div>
+            )}
+
+            {/* Tags */}
+            {article.tags?.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">标签</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {article.tags.map((t) => <Badge key={t} variant="secondary" className="text-xs font-normal">{t}</Badge>)}
+                </div>
+              </div>
+            )}
+
+            <Separator />
+
+            {/* Metadata */}
+            <div className="text-xs text-muted-foreground space-y-1.5">
+              <div className="flex items-center gap-1.5">
+                <span>来源:</span>
+                <a
+                  href={article.source_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary hover:underline truncate flex items-center gap-1"
+                >
+                  {article.source_url}
+                  <ExternalLink className="w-3 h-3 shrink-0" />
+                </a>
+              </div>
+              {article.published_at && <div>发布时间: {new Date(article.published_at).toLocaleString("zh-CN")}</div>}
+              <div>抓取时间: {new Date(article.fetched_at).toLocaleString("zh-CN")}</div>
+              <div>run_id: <span className="font-mono">{article.run_id}</span></div>
             </div>
           </div>
-        </div>
+        </ScrollArea>
 
         {/* Action bar */}
-        <div className="shrink-0 border-t border-slate-100 px-6 py-4 flex items-center justify-end gap-2 rounded-b-2xl bg-slate-50">
-          <button
-            onClick={handleDelete}
-            disabled={busy}
-            className="text-sm px-4 py-1.5 border border-slate-200 text-slate-500 rounded-lg hover:bg-red-50 hover:text-red-600 hover:border-red-200 disabled:opacity-40 transition-colors"
-          >
+        <div className="shrink-0 border-t px-6 py-3 flex items-center justify-end gap-2 bg-muted/30 rounded-b-2xl">
+          <Button variant="outline" size="sm" onClick={handleDelete} disabled={busy}
+            className="text-muted-foreground hover:text-destructive hover:border-destructive">
             删除
-          </button>
+          </Button>
           {status === "failed" && (
-            <button
-              onClick={handleRetry}
-              disabled={busy}
-              className="text-sm px-4 py-1.5 bg-orange-500 text-white rounded-lg hover:bg-orange-600 disabled:opacity-40 transition-colors"
-            >
+            <Button variant="outline" size="sm" onClick={handleRetry} disabled={busy}>
               {busy ? "重置中…" : "重试"}
-            </button>
+            </Button>
           )}
           {status === "pending" && (
-            <button
-              onClick={handlePublish}
-              disabled={busy}
-              className="text-sm px-4 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-40 transition-colors"
-            >
+            <Button size="sm" onClick={handlePublish} disabled={busy}>
               {busy ? "发布中…" : "发布"}
-            </button>
+            </Button>
           )}
         </div>
       </div>

@@ -31,6 +31,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	openai "github.com/sashabaranov/go-openai"
+	"github.com/user/daily-info-agent/internal/agent"
 	"github.com/user/daily-info-agent/internal/api"
 	"github.com/user/daily-info-agent/internal/chat"
 	"github.com/user/daily-info-agent/internal/fetcher"
@@ -82,18 +83,19 @@ func main() {
 
 	mgr := fetcher.NewManager(
 		[]fetcher.Fetcher{rssFetcher, newsAPIFetcher, rssHubFetcher},
+		cfg.RSSFeeds,
 		cfg.CacheFilePath,
 		logger.With(slog.String("component", "fetcher")),
 	)
 
 	// ---- Build processor ----
-	openAICfg := openai.DefaultConfig(cfg.DeepSeekAPIKey)
-	openAICfg.BaseURL = cfg.DeepSeekBaseURL
+	openAICfg := openai.DefaultConfig(cfg.LLMAPIKey)
+	openAICfg.BaseURL = cfg.LLMBaseURL
 	aiClient := openai.NewClientWithConfig(openAICfg)
 
 	proc := processor.New(
 		aiClient,
-		cfg.DeepSeekModelID,
+		cfg.LLMModelID,
 		logger.With(slog.String("component", "processor")),
 	)
 
@@ -216,8 +218,15 @@ func runServerMode(
 	st store.ArticleStore,
 	logger *slog.Logger,
 ) {
+	agentRunner := agent.New(
+		cfg.LLMBaseURL,
+		cfg.LLMAPIKey,
+		cfg.LLMModelID,
+		mgr,
+		logger.With(slog.String("component", "agent")),
+	)
 	chatHandler := chat.New(
-		proc, mgr, ver, cfg,
+		agentRunner,
 		logger.With(slog.String("component", "chat")),
 	)
 
@@ -229,7 +238,9 @@ func runServerMode(
 	e.Use(middleware.TimeoutWithConfig(middleware.TimeoutConfig{
 		Timeout: 30 * time.Second,
 		Skipper: func(c echo.Context) bool {
-			return strings.HasSuffix(c.Path(), "/stream")
+			// /api/chat can take 30–60 s when the agent calls tools;
+			// /stream endpoints are SSE and must never be cut off.
+			return c.Path() == "/api/chat" || strings.HasSuffix(c.Path(), "/stream")
 		},
 	}))
 	e.Use(slogMiddleware(logger))
@@ -291,7 +302,13 @@ func runMigrations(dsn string, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("migrations source: %w", err)
 	}
-	m, err := migrate.NewWithSourceInstance("iofs", d, dsn)
+	// golang-migrate's pgx/v5 driver registers as "pgx5://", but users
+	// naturally write "postgres://" DSNs — rewrite the scheme here.
+	migrateDSN := strings.NewReplacer(
+		"postgres://", "pgx5://",
+		"postgresql://", "pgx5://",
+	).Replace(dsn)
+	m, err := migrate.NewWithSourceInstance("iofs", d, migrateDSN)
 	if err != nil {
 		return fmt.Errorf("migrate init: %w", err)
 	}

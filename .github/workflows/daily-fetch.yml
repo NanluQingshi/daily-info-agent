@@ -50,8 +50,8 @@ jobs:
         run: ./agent --mode=schedule
         env:
           # ---- 必填：AI + 数据源 ----
-          DEEPSEEK_API_KEY:     ${{ secrets.DEEPSEEK_API_KEY }}
-          DEEPSEEK_MODEL_ID:    ${{ secrets.DEEPSEEK_MODEL_ID }}
+          LLM_API_KEY:     ${{ secrets.LLM_API_KEY }}
+          LLM_MODEL_ID:    ${{ secrets.LLM_MODEL_ID }}
           NEWSAPI_KEY:          ${{ secrets.NEWSAPI_KEY }}
           # ---- 可选：数据库持久化 ----
           DATABASE_DSN:         ${{ secrets.DATABASE_DSN }}

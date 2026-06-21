@@ -212,6 +212,7 @@ func buildIntegrationScheduler(trustedDomains []string) *scheduler.Scheduler {
 	cacheFile := filepath.Join(testCacheDir, fmt.Sprintf("dedup-%d.json", time.Now().UnixNano()))
 	mgr := fetcher.NewManager(
 		[]fetcher.Fetcher{rssFetcher},
+		nil,
 		cacheFile,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
@@ -338,6 +339,7 @@ func TestIntegration_FullPipeline_BothDomainsUntrustedLowScore_NothingPublished(
 	cacheFile := filepath.Join(testCacheDir, fmt.Sprintf("dedup-lowscore-%d.json", time.Now().UnixNano()))
 	mgr := fetcher.NewManager(
 		[]fetcher.Fetcher{rssFetcher},
+		nil,
 		cacheFile,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)

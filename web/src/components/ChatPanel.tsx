@@ -1,90 +1,191 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Loader2, Send } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
+import { Textarea } from "@/components/ui/textarea";
 import { sendChat } from "../api/client";
 import type { ChatResponse } from "../types";
 
+interface Message {
+  id: number;
+  role: "user" | "assistant";
+  text: string;
+  response?: ChatResponse;
+  error?: string;
+}
+
+let nextId = 0;
+
 export function ChatPanel() {
-  const [message, setMessage] = useState("");
-  const [result, setResult] = useState<ChatResponse | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | undefined>(undefined);
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, loading]);
 
   const handleSend = async () => {
-    if (!message.trim()) return;
+    const text = input.trim();
+    if (!text || loading) return;
+
+    setMessages((prev) => [...prev, { id: ++nextId, role: "user", text }]);
+    setInput("");
     setLoading(true);
-    setError(null);
-    setResult(null);
+
     try {
-      const res = await sendChat(message.trim());
-      setResult(res);
+      const res = await sendChat(text, sessionId);
+      // Persist the session_id for subsequent turns.
+      setSessionId(res.session_id);
+      setMessages((prev) => [
+        ...prev,
+        { id: ++nextId, role: "assistant", text: res.reply, response: res },
+      ]);
     } catch (e: unknown) {
-      setError((e as Error).message);
+      setMessages((prev) => [
+        ...prev,
+        { id: ++nextId, role: "assistant", text: "", error: (e as Error).message },
+      ]);
     } finally {
       setLoading(false);
     }
   };
 
-  return (
-    <div className="space-y-4 max-w-2xl mx-auto">
-      <h2 className="text-lg font-semibold text-slate-900">智能问答</h2>
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  };
 
-      <div className="flex gap-2">
-        <input
-          type="text"
-          value={message}
-          onChange={(e) => setMessage(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && !loading && handleSend()}
-          placeholder="输入问题，例如：最新科技AI新闻"
-          className="flex-1 border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
-        <button
-          onClick={handleSend}
-          disabled={loading || !message.trim()}
-          className="px-5 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-        >
-          {loading ? "查询中…" : "查询"}
-        </button>
+  return (
+    <div className="flex flex-col h-full">
+      {/* Header */}
+      <div className="h-14 shrink-0 border-b flex items-center px-6 bg-card">
+        <h1 className="font-semibold text-sm">智能问答</h1>
+        {sessionId && (
+          <span className="ml-auto text-xs text-muted-foreground font-mono">
+            {sessionId.slice(0, 8)}
+          </span>
+        )}
       </div>
 
-      {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl p-4">
-          {error}
-        </div>
-      )}
-
-      {result && (
-        <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs bg-blue-50 text-blue-700 px-2 py-1 rounded-lg">{result.category}</span>
-            <span className="text-xs text-slate-400">{result.extracted_topic}</span>
-            <span className="text-xs text-slate-300 ml-auto">{result.latency_ms}ms</span>
+      {/* Messages — flex-1 min-h-0 是关键：让 flex item 可以收缩，overflow-y-auto 才能生效 */}
+      <div className="flex-1 min-h-0 overflow-y-auto px-6 py-6">
+        {messages.length === 0 && (
+          <div className="h-[calc(100vh-220px)] flex flex-col items-center justify-center text-center select-none">
+            <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-4">
+              <span className="text-2xl">💬</span>
+            </div>
+            <p className="text-sm font-medium text-foreground">问我任何新闻话题</p>
+            <p className="text-xs text-muted-foreground mt-1">例如：今天有什么 AI 新闻？</p>
           </div>
+        )}
 
-          <p className="text-sm text-slate-700 leading-relaxed">{result.summary}</p>
-
-          {result.sources.length > 0 && (
-            <div>
-              <p className="text-xs font-medium text-slate-400 uppercase mb-2">来源</p>
-              <div className="space-y-2">
-                {result.sources.map((s) => (
-                  <a
-                    key={s.url}
-                    href={s.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="block text-sm p-3 border border-slate-100 rounded-lg hover:border-blue-200 hover:bg-blue-50 transition-colors"
-                  >
-                    <div className="font-medium text-slate-800 text-xs line-clamp-1">{s.title}</div>
-                    <div className="flex gap-2 mt-1 text-xs text-slate-400">
-                      <span>{s.source_domain}</span>
-                      <span>可信度 {s.credibility_score.toFixed(2)}</span>
+        <div className="space-y-6">
+          {messages.map((msg) =>
+            msg.role === "user" ? (
+              <div key={msg.id} className="flex justify-end">
+                <div className="max-w-md bg-primary text-primary-foreground text-sm px-4 py-2.5 rounded-2xl rounded-tr-sm leading-relaxed">
+                  {msg.text}
+                </div>
+              </div>
+            ) : (
+              <div key={msg.id} className="flex justify-start">
+                <div className="max-w-2xl w-full">
+                  {msg.error ? (
+                    <div className="bg-destructive/10 border border-destructive/20 text-destructive text-sm rounded-2xl rounded-tl-sm px-4 py-3">
+                      {msg.error}
                     </div>
-                  </a>
-                ))}
+                  ) : (
+                    <div className="bg-card border rounded-2xl rounded-tl-sm px-4 py-4 space-y-3 shadow-sm">
+                      {/* Latency badge */}
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        {msg.response?.tool_called && (
+                          <span className="px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground">
+                            🔍 已搜索新闻
+                          </span>
+                        )}
+                        <span className="ml-auto">{msg.response?.latency_ms}ms</span>
+                      </div>
+
+                      {/* Reply text */}
+                      <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.text}</p>
+
+                      {/* Sources */}
+                      {(msg.response?.sources?.length ?? 0) > 0 && (
+                        <>
+                          <Separator />
+                          <div>
+                            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
+                              来源
+                            </p>
+                            <div className="space-y-1.5">
+                              {msg.response!.sources.map((s) => (
+                                <a
+                                  key={s.url}
+                                  href={s.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="block text-xs p-2.5 border rounded-lg hover:border-primary/40 hover:bg-accent transition-colors"
+                                >
+                                  <div className="font-medium line-clamp-1">{s.title}</div>
+                                  <div className="text-muted-foreground mt-0.5">{s.source_domain}</div>
+                                </a>
+                              ))}
+                            </div>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )
+          )}
+
+          {loading && (
+            <div className="flex justify-start">
+              <div className="bg-card border rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm">
+                <div className="flex gap-1.5 items-center h-5">
+                  {[0, 150, 300].map((delay) => (
+                    <span
+                      key={delay}
+                      className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce"
+                      style={{ animationDelay: `${delay}ms` }}
+                    />
+                  ))}
+                </div>
               </div>
             </div>
           )}
+
+          <div ref={bottomRef} />
         </div>
-      )}
+      </div>
+
+      {/* Input bar */}
+      <div className="shrink-0 border-t bg-card px-6 py-4">
+        <div className="flex gap-3 items-end max-w-3xl mx-auto">
+          <Textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="输入问题… (Enter 发送，Shift+Enter 换行)"
+            rows={1}
+            className="flex-1 resize-none min-h-[42px] max-h-32"
+          />
+          <Button
+            onClick={handleSend}
+            disabled={loading || !input.trim()}
+            size="default"
+          >
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -13,8 +13,8 @@ import (
 // function that is not needed — callers use t.Setenv which auto-restores.
 func setRequiredEnvVars(t *testing.T) {
 	t.Helper()
-	t.Setenv("DEEPSEEK_API_KEY", "sk-test-key")
-	t.Setenv("DEEPSEEK_MODEL_ID", "deepseek-chat")
+	t.Setenv("LLM_API_KEY", "sk-test-key")
+	t.Setenv("LLM_MODEL_ID", "deepseek-chat")
 	t.Setenv("NEWSAPI_KEY", "newsapi-test-key")
 	t.Setenv("WEBSITE_API_BASE_URL", "http://localhost:8081")
 	t.Setenv("WEBSITE_API_TOKEN", "website-token")
@@ -22,8 +22,8 @@ func setRequiredEnvVars(t *testing.T) {
 
 func clearRequiredEnvVars(t *testing.T) {
 	t.Helper()
-	t.Setenv("DEEPSEEK_API_KEY", "")
-	t.Setenv("DEEPSEEK_MODEL_ID", "")
+	t.Setenv("LLM_API_KEY", "")
+	t.Setenv("LLM_MODEL_ID", "")
 	t.Setenv("NEWSAPI_KEY", "")
 	t.Setenv("WEBSITE_API_BASE_URL", "")
 	t.Setenv("WEBSITE_API_TOKEN", "")
@@ -40,8 +40,8 @@ func TestLoad_AllRequiredEnvVars_Succeeds(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 
-	assert.Equal(t, "sk-test-key", cfg.DeepSeekAPIKey)
-	assert.Equal(t, "deepseek-chat", cfg.DeepSeekModelID)
+	assert.Equal(t, "sk-test-key", cfg.LLMAPIKey)
+	assert.Equal(t, "deepseek-chat", cfg.LLMModelID)
 	assert.Equal(t, "newsapi-test-key", cfg.NewsAPIKey)
 	assert.Equal(t, "http://localhost:8081", cfg.WebsiteAPIBaseURL)
 	assert.Equal(t, "website-token", cfg.WebsiteAPIToken)
@@ -51,28 +51,28 @@ func TestLoad_AllRequiredEnvVars_Succeeds(t *testing.T) {
 // Missing required fields
 // ---------------------------------------------------------------------------
 
-func TestLoad_MissingDeepSeekAPIKey_ReturnsError(t *testing.T) {
+func TestLoad_MissingLLMAPIKey_ReturnsError(t *testing.T) {
 	setRequiredEnvVars(t)
-	t.Setenv("DEEPSEEK_API_KEY", "")
+	t.Setenv("LLM_API_KEY", "")
 
 	_, err := config.Load()
 	require.Error(t, err)
 
 	var missingErr *config.MissingConfigError
 	require.ErrorAs(t, err, &missingErr)
-	assert.Contains(t, missingErr.Vars, "DEEPSEEK_API_KEY")
+	assert.Contains(t, missingErr.Vars, "LLM_API_KEY")
 }
 
-func TestLoad_MissingDeepSeekModelID_ReturnsError(t *testing.T) {
+func TestLoad_MissingLLMModelID_ReturnsError(t *testing.T) {
 	setRequiredEnvVars(t)
-	t.Setenv("DEEPSEEK_MODEL_ID", "")
+	t.Setenv("LLM_MODEL_ID", "")
 
 	_, err := config.Load()
 	require.Error(t, err)
 
 	var missingErr *config.MissingConfigError
 	require.ErrorAs(t, err, &missingErr)
-	assert.Contains(t, missingErr.Vars, "DEEPSEEK_MODEL_ID")
+	assert.Contains(t, missingErr.Vars, "LLM_MODEL_ID")
 }
 
 func TestLoad_MissingNewsAPIKey_ReturnsError(t *testing.T) {
@@ -114,8 +114,8 @@ func TestLoad_MultipleFieldsMissing_AllListedInError(t *testing.T) {
 	var missingErr *config.MissingConfigError
 	require.ErrorAs(t, err, &missingErr)
 	assert.Len(t, missingErr.Vars, 3)
-	assert.Contains(t, missingErr.Vars, "DEEPSEEK_API_KEY")
-	assert.Contains(t, missingErr.Vars, "DEEPSEEK_MODEL_ID")
+	assert.Contains(t, missingErr.Vars, "LLM_API_KEY")
+	assert.Contains(t, missingErr.Vars, "LLM_MODEL_ID")
 	assert.Contains(t, missingErr.Vars, "NEWSAPI_KEY")
 }
 
@@ -131,13 +131,13 @@ func TestLoad_MissingConfigError_ErrorMessage(t *testing.T) {
 // Default values
 // ---------------------------------------------------------------------------
 
-func TestLoad_DefaultDeepSeekBaseURL(t *testing.T) {
+func TestLoad_DefaultLLMBaseURL(t *testing.T) {
 	setRequiredEnvVars(t)
-	t.Setenv("DEEPSEEK_BASE_URL", "")
+	t.Setenv("LLM_BASE_URL", "")
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
-	assert.Equal(t, "https://api.deepseek.com/v1", cfg.DeepSeekBaseURL)
+	assert.Equal(t, "https://api.deepseek.com/v1", cfg.LLMBaseURL)
 }
 
 func TestLoad_DefaultRSSHubBaseURL(t *testing.T) {
@@ -217,13 +217,13 @@ func TestLoad_DefaultCategories_AllFive(t *testing.T) {
 // Custom / overridden values
 // ---------------------------------------------------------------------------
 
-func TestLoad_CustomDeepSeekBaseURL(t *testing.T) {
+func TestLoad_CustomLLMBaseURL(t *testing.T) {
 	setRequiredEnvVars(t)
-	t.Setenv("DEEPSEEK_BASE_URL", "http://my-proxy.example.com/v1")
+	t.Setenv("LLM_BASE_URL", "http://my-proxy.example.com/v1")
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
-	assert.Equal(t, "http://my-proxy.example.com/v1", cfg.DeepSeekBaseURL)
+	assert.Equal(t, "http://my-proxy.example.com/v1", cfg.LLMBaseURL)
 }
 
 func TestLoad_CustomRSSFeeds_SemicolonSeparated(t *testing.T) {

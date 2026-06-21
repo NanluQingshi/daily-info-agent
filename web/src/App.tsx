@@ -1,47 +1,70 @@
 import { useState } from "react";
+import { BarChart2, MessageSquare, Newspaper } from "lucide-react";
+import { Separator } from "@/components/ui/separator";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 import { ArticleList } from "./components/ArticleList";
 import { ChatPanel } from "./components/ChatPanel";
 import { StatsPanel } from "./components/StatsPanel";
 
-type Tab = "articles" | "chat" | "stats";
+type Tab = "chat" | "articles" | "stats";
 
-const TABS: { id: Tab; label: string }[] = [
-  { id: "articles", label: "文章管理" },
-  { id: "chat", label: "智能问答" },
-  { id: "stats", label: "统计" },
+const NAV: { id: Tab; label: string; Icon: React.ElementType }[] = [
+  { id: "chat",     label: "智能问答", Icon: MessageSquare },
+  { id: "articles", label: "文章管理", Icon: Newspaper },
+  { id: "stats",    label: "统计",     Icon: BarChart2 },
 ];
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>("articles");
+  const [tab, setTab] = useState<Tab>("chat");
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      <header className="bg-white border-b border-slate-200">
-        <div className="max-w-5xl mx-auto px-4 flex items-center gap-6 h-14">
-          <span className="font-semibold text-slate-900 text-sm">Daily Info Agent</span>
-          <nav className="flex gap-1">
-            {TABS.map((t) => (
+    <TooltipProvider>
+      <div className="flex h-screen overflow-hidden bg-background">
+        {/* Sidebar */}
+        <aside className="w-56 shrink-0 border-r flex flex-col bg-card">
+          <div className="h-14 flex items-center px-5 shrink-0">
+            <span className="font-semibold text-sm tracking-tight">Daily Info Agent</span>
+          </div>
+          <Separator />
+          <nav className="flex-1 p-3 space-y-1">
+            {NAV.map(({ id, label, Icon }) => (
               <button
-                key={t.id}
-                onClick={() => setTab(t.id)}
-                className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
-                  tab === t.id
-                    ? "bg-blue-50 text-blue-700 font-medium"
-                    : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
-                }`}
+                key={id}
+                onClick={() => setTab(id)}
+                className={cn(
+                  "w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors",
+                  tab === id
+                    ? "bg-accent text-accent-foreground font-medium"
+                    : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                )}
               >
-                {t.label}
+                <Icon className="w-4 h-4 shrink-0" />
+                {label}
               </button>
             ))}
           </nav>
-        </div>
-      </header>
+        </aside>
 
-      <main className="max-w-5xl mx-auto px-4 py-6">
-        {tab === "articles" && <ArticleList />}
-        {tab === "chat" && <ChatPanel />}
-        {tab === "stats" && <StatsPanel />}
-      </main>
-    </div>
+        {/* Main content */}
+        <main className="flex-1 overflow-hidden">
+          {tab === "chat" && <ChatPanel />}
+          {tab === "articles" && (
+            <div className="h-full overflow-y-auto">
+              <div className="max-w-5xl mx-auto px-6 py-6">
+                <ArticleList />
+              </div>
+            </div>
+          )}
+          {tab === "stats" && (
+            <div className="h-full overflow-y-auto">
+              <div className="max-w-4xl mx-auto px-6 py-6">
+                <StatsPanel />
+              </div>
+            </div>
+          )}
+        </main>
+      </div>
+    </TooltipProvider>
   );
 }

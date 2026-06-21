@@ -73,14 +73,13 @@ export interface ChatSource {
   url: string;
   title: string;
   source_domain: string;
-  credibility_score: number;
 }
 
 export interface ChatResponse {
-  extracted_topic: string;
-  category: string;
-  summary: string;
+  session_id: string;
+  reply: string;
   sources: ChatSource[];
+  tool_called: boolean;
   fetched_at: string;
   latency_ms: number;
 }

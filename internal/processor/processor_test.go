@@ -79,9 +79,9 @@ func buildAIResults(items []models.RawItem) string {
 	return string(data)
 }
 
-// newMockDeepSeekServer creates an httptest.Server that handles /chat/completions.
+// newMockLLMServer creates an httptest.Server that handles /chat/completions.
 // The handler function receives the request and writes the response.
-func newMockDeepSeekServer(t *testing.T, handler http.HandlerFunc) *httptest.Server {
+func newMockLLMServer(t *testing.T, handler http.HandlerFunc) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/chat/completions", handler)
@@ -93,7 +93,7 @@ func newMockDeepSeekServer(t *testing.T, handler http.HandlerFunc) *httptest.Ser
 // newProcessor creates a Processor pointed at the given base URL.
 func newProcessor(t *testing.T, baseURL string) *processor.Processor {
 	t.Helper()
-	client := processor.NewDeepSeekClient("test-api-key", baseURL)
+	client := processor.NewLLMClient("test-api-key", baseURL)
 	return processor.New(client, "deepseek-chat", slog.Default())
 }
 
@@ -120,7 +120,7 @@ func TestProcessor_ProcessBatch_SuccessfulCategorisationAndSummarisation(t *test
 		makeRawItem("http://bbc.com/finance/1", "Markets hit record high", "bbc.com"),
 	}
 
-	srv := newMockDeepSeekServer(t, func(w http.ResponseWriter, r *http.Request) {
+	srv := newMockLLMServer(t, func(w http.ResponseWriter, r *http.Request) {
 		aiJSON := buildAIResults(items)
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(chatCompletionResponse(aiJSON))
@@ -150,7 +150,7 @@ func TestProcessor_ProcessBatch_CorrectURLCorrelation(t *testing.T) {
 	}
 
 	// Return results with explicit category per URL.
-	srv := newMockDeepSeekServer(t, func(w http.ResponseWriter, r *http.Request) {
+	srv := newMockLLMServer(t, func(w http.ResponseWriter, r *http.Request) {
 		content := `[
 			{"url":"http://example.com/a","category":"金融","summary":"金融摘要","credibility_score":0.9,"tags":["finance"],"language":"en"},
 			{"url":"http://example.com/b","category":"科技/AI","summary":"科技摘要","credibility_score":0.7,"tags":["tech"],"language":"en"}
@@ -179,7 +179,7 @@ func TestProcessor_ProcessBatch_WrappedResponseObject_ParsedSuccessfully(t *test
 		makeRawItem("http://example.com/wrapped", "Wrapped Response Test", "example.com"),
 	}
 
-	srv := newMockDeepSeekServer(t, func(w http.ResponseWriter, r *http.Request) {
+	srv := newMockLLMServer(t, func(w http.ResponseWriter, r *http.Request) {
 		// AI returns a {"results": [...]} wrapper instead of a bare array.
 		content := `{"results":[{"url":"http://example.com/wrapped","category":"经济","summary":"经济摘要","credibility_score":0.75,"tags":["economy"],"language":"en"}]}`
 		w.Header().Set("Content-Type", "application/json")
@@ -204,7 +204,7 @@ func TestProcessor_ProcessBatch_EmptyItems_ReturnsNil(t *testing.T) {
 func TestProcessor_ProcessBatch_RawItemPreservedInResult(t *testing.T) {
 	item := makeRawItem("http://source.example.com/item", "Source Item", "source.example.com")
 
-	srv := newMockDeepSeekServer(t, func(w http.ResponseWriter, r *http.Request) {
+	srv := newMockLLMServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(chatCompletionResponse(buildAIResults([]models.RawItem{item})))
 	})
@@ -231,7 +231,7 @@ func TestProcessor_ProcessBatch_ServerError500_DegradeGracefully(t *testing.T) {
 		makeRawItem("http://example.com/error-item", "Error Item", "example.com"),
 	}
 
-	srv := newMockDeepSeekServer(t, func(w http.ResponseWriter, r *http.Request) {
+	srv := newMockLLMServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write(openAIErrorResponse("internal server error"))
@@ -259,7 +259,7 @@ func TestProcessor_ProcessBatch_MalformedJSONContent_DegradeGracefully(t *testin
 		makeRawItem("http://example.com/malformed", "Malformed JSON Item", "example.com"),
 	}
 
-	srv := newMockDeepSeekServer(t, func(w http.ResponseWriter, r *http.Request) {
+	srv := newMockLLMServer(t, func(w http.ResponseWriter, r *http.Request) {
 		// Return a valid HTTP 200 with valid OpenAI structure, but the content
 		// field itself is not parseable as AIItemResult.
 		w.Header().Set("Content-Type", "application/json")
@@ -283,7 +283,7 @@ func TestProcessor_ProcessBatch_MalformedJSONContent_DegradeGracefully(t *testin
 func TestProcessor_ExtractTopic_ValidResponse(t *testing.T) {
 	topicJSON := `{"category":"科技/AI","keywords":["artificial intelligence","large language model","OpenAI"],"summary":"User wants the latest news about AI developments"}`
 
-	srv := newMockDeepSeekServer(t, func(w http.ResponseWriter, r *http.Request) {
+	srv := newMockLLMServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(chatCompletionResponse(topicJSON))
 	})
@@ -301,7 +301,7 @@ func TestProcessor_ExtractTopic_ValidResponse(t *testing.T) {
 func TestProcessor_ExtractTopic_InvalidCategory_DefaultsToTechAI(t *testing.T) {
 	topicJSON := `{"category":"unknown_category","keywords":["test"],"summary":"Test summary"}`
 
-	srv := newMockDeepSeekServer(t, func(w http.ResponseWriter, r *http.Request) {
+	srv := newMockLLMServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(chatCompletionResponse(topicJSON))
 	})
@@ -316,7 +316,7 @@ func TestProcessor_ExtractTopic_InvalidCategory_DefaultsToTechAI(t *testing.T) {
 
 func TestProcessor_ExtractTopic_ServerUnavailable_ReturnsError(t *testing.T) {
 	var callCount atomic.Int32
-	srv := newMockDeepSeekServer(t, func(w http.ResponseWriter, r *http.Request) {
+	srv := newMockLLMServer(t, func(w http.ResponseWriter, r *http.Request) {
 		callCount.Add(1)
 		w.WriteHeader(http.StatusServiceUnavailable)
 		w.Write(openAIErrorResponse("service unavailable"))
@@ -326,12 +326,12 @@ func TestProcessor_ExtractTopic_ServerUnavailable_ReturnsError(t *testing.T) {
 	_, err := proc.ExtractTopic(context.Background(), "test message")
 
 	require.Error(t, err)
-	var unavailErr *processor.DeepSeekUnavailableError
+	var unavailErr *processor.LLMUnavailableError
 	assert.ErrorAs(t, err, &unavailErr)
 }
 
 func TestProcessor_ExtractTopic_MalformedJSONContent_ReturnsParseError(t *testing.T) {
-	srv := newMockDeepSeekServer(t, func(w http.ResponseWriter, r *http.Request) {
+	srv := newMockLLMServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(chatCompletionResponse("{not valid json"))
 	})
@@ -340,16 +340,123 @@ func TestProcessor_ExtractTopic_MalformedJSONContent_ReturnsParseError(t *testin
 	_, err := proc.ExtractTopic(context.Background(), "test message")
 
 	require.Error(t, err)
-	var parseErr *processor.DeepSeekParseError
+	var parseErr *processor.LLMParseError
 	assert.ErrorAs(t, err, &parseErr)
 }
 
 // ---------------------------------------------------------------------------
-// NewDeepSeekClient smoke test
+// NewLLMClient smoke test
 // ---------------------------------------------------------------------------
 
-func TestProcessor_NewDeepSeekClient_CreatesValidClient(t *testing.T) {
-	client := processor.NewDeepSeekClient("sk-test", "https://api.deepseek.com/v1")
+func TestProcessor_NewLLMClient_CreatesValidClient(t *testing.T) {
+	client := processor.NewLLMClient("sk-test", "https://api.deepseek.com/v1")
 	assert.NotNil(t, client)
 	assert.IsType(t, &openai.Client{}, client)
+}
+
+// ---------------------------------------------------------------------------
+// ExtractTopic — code-fence stripping (real LLM platforms often ignore
+// "output only JSON" instructions and wrap their output in ```json...```)
+// ---------------------------------------------------------------------------
+
+func TestProcessor_ExtractTopic_CodeFencedJSON_ParsedSuccessfully(t *testing.T) {
+	// Many models return ```json\n{...}\n``` even when instructed not to.
+	fenced := "```json\n{\"category\":\"金融\",\"keywords\":[\"stock\",\"market\"],\"summary\":\"Stock market inquiry\"}\n```"
+
+	srv := newMockLLMServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(chatCompletionResponse(fenced))
+	})
+
+	proc := newProcessor(t, srv.URL)
+	result, err := proc.ExtractTopic(context.Background(), "How are the stock markets?")
+
+	require.NoError(t, err)
+	assert.Equal(t, models.CategoryFinance, result.Category)
+	assert.NotEmpty(t, result.Keywords)
+	assert.NotEmpty(t, result.Summary)
+}
+
+func TestProcessor_ExtractTopic_CodeFenceWithoutLanguageTag_ParsedSuccessfully(t *testing.T) {
+	// Some models use ``` without the json language tag.
+	fenced := "```\n{\"category\":\"政治\",\"keywords\":[\"government\",\"policy\"],\"summary\":\"Political news\"}\n```"
+
+	srv := newMockLLMServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(chatCompletionResponse(fenced))
+	})
+
+	proc := newProcessor(t, srv.URL)
+	result, err := proc.ExtractTopic(context.Background(), "Any politics news?")
+
+	require.NoError(t, err)
+	assert.Equal(t, models.CategoryPolitics, result.Category)
+}
+
+func TestProcessor_ExtractTopic_LeadingProseBeforeJSON_ParsedSuccessfully(t *testing.T) {
+	// Some models add a preamble before the JSON.
+	withProse := "Sure, here is the JSON output:\n{\"category\":\"科技/AI\",\"keywords\":[\"AI\",\"LLM\"],\"summary\":\"AI news\"}"
+
+	srv := newMockLLMServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(chatCompletionResponse(withProse))
+	})
+
+	proc := newProcessor(t, srv.URL)
+	result, err := proc.ExtractTopic(context.Background(), "What's new in AI?")
+
+	require.NoError(t, err)
+	assert.Equal(t, models.CategoryTechAI, result.Category)
+}
+
+func TestProcessor_ExtractTopic_RetriesToLLMOnTransportError(t *testing.T) {
+	// First call returns 503; second call succeeds.
+	// Verifies that ExtractTopic retries once after a transport/API error.
+	var callCount atomic.Int32
+	topicJSON := `{"category":"国际","keywords":["international","world"],"summary":"International news"}`
+
+	srv := newMockLLMServer(t, func(w http.ResponseWriter, r *http.Request) {
+		call := callCount.Add(1)
+		if call == 1 {
+			// First attempt fails.
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write(openAIErrorResponse("service unavailable"))
+			return
+		}
+		// Second attempt succeeds.
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(chatCompletionResponse(topicJSON))
+	})
+
+	proc := newProcessor(t, srv.URL)
+	result, err := proc.ExtractTopic(context.Background(), "World news?")
+
+	require.NoError(t, err, "should succeed on the second attempt")
+	assert.Equal(t, models.CategoryInternational, result.Category)
+	assert.Equal(t, int32(2), callCount.Load(), "expected exactly 2 LLM calls")
+}
+
+// ---------------------------------------------------------------------------
+// ProcessBatch — code-fence stripping
+// ---------------------------------------------------------------------------
+
+func TestProcessor_ProcessBatch_CodeFencedJSONArray_ParsedSuccessfully(t *testing.T) {
+	items := []models.RawItem{
+		makeRawItem("http://example.com/fenced", "Code Fence Article", "example.com"),
+	}
+
+	srv := newMockLLMServer(t, func(w http.ResponseWriter, r *http.Request) {
+		// The LLM wraps the JSON array in a markdown code fence.
+		content := "```json\n[{\"url\":\"http://example.com/fenced\",\"category\":\"经济\",\"summary\":\"Economy summary\",\"credibility_score\":0.8,\"tags\":[\"economy\"],\"language\":\"en\"}]\n```"
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(chatCompletionResponse(content))
+	})
+
+	proc := newProcessor(t, srv.URL)
+	articles, err := proc.ProcessBatch(context.Background(), items, "run-fenced")
+
+	require.NoError(t, err)
+	require.Len(t, articles, 1)
+	assert.Equal(t, models.CategoryEconomy, articles[0].Category)
+	assert.Equal(t, "Economy summary", articles[0].Summary)
 }

@@ -105,13 +105,13 @@ func buildTestScheduler(
 	dsSrv := httptest.NewServer(dsMux)
 	t.Cleanup(dsSrv.Close)
 
-	aiClient := processor.NewDeepSeekClient("test-key", dsSrv.URL)
+	aiClient := processor.NewLLMClient("test-key", dsSrv.URL)
 	proc := processor.New(aiClient, "deepseek-chat", slog.Default())
 
 	// Mock fetcher returning predefined items.
 	rssMock := &mockFetcher{name: "rss", items: items}
 	cacheFile := filepath.Join(t.TempDir(), "dedup.json")
-	mgr := fetcher.NewManager([]fetcher.Fetcher{rssMock}, cacheFile, slog.Default())
+	mgr := fetcher.NewManager([]fetcher.Fetcher{rssMock}, nil, cacheFile, slog.Default())
 
 	// Verifier.
 	ver := verifier.New(trustedDomains, false, slog.Default())
@@ -197,7 +197,7 @@ func TestScheduler_RunDefault_AllSourcesFail_FatalErrorSet(t *testing.T) {
 	dsSrv := httptest.NewServer(dsMux)
 	defer dsSrv.Close()
 
-	aiClient := processor.NewDeepSeekClient("test-key", dsSrv.URL)
+	aiClient := processor.NewLLMClient("test-key", dsSrv.URL)
 	proc := processor.New(aiClient, "deepseek-chat", slog.Default())
 
 	// Fetcher that always returns an error.
@@ -206,7 +206,7 @@ func TestScheduler_RunDefault_AllSourcesFail_FatalErrorSet(t *testing.T) {
 		err:  &fetcher.FetchError{Source: "rss", URL: "http://bad-feed", Wrapped: nil},
 	}
 	cacheFile := filepath.Join(t.TempDir(), "dedup.json")
-	mgr := fetcher.NewManager([]fetcher.Fetcher{errFetcher}, cacheFile, slog.Default())
+	mgr := fetcher.NewManager([]fetcher.Fetcher{errFetcher}, nil, cacheFile, slog.Default())
 
 	ver := verifier.New(nil, false, slog.Default())
 	pub := publisher.New(pubSrv.URL, "token", pubSrv.Client(), slog.Default())

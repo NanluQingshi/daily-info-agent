@@ -40,7 +40,7 @@ func (m *mockFetcher) Fetch(_ context.Context, _ models.FetchConfig) ([]models.R
 func newTestManager(t *testing.T, fetchers []fetcher.Fetcher) *fetcher.Manager {
 	t.Helper()
 	cacheFile := filepath.Join(t.TempDir(), "dedup.json")
-	return fetcher.NewManager(fetchers, cacheFile, slog.Default())
+	return fetcher.NewManager(fetchers, nil, cacheFile, slog.Default())
 }
 
 func makeItem(url, domain string, sourceType models.SourceType) models.RawItem {

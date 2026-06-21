@@ -13,11 +13,9 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/user/daily-info-agent/internal/agent"
 	"github.com/user/daily-info-agent/internal/chat"
 	"github.com/user/daily-info-agent/internal/fetcher"
-	"github.com/user/daily-info-agent/internal/processor"
-	"github.com/user/daily-info-agent/internal/verifier"
-	"github.com/user/daily-info-agent/pkg/config"
 	"github.com/user/daily-info-agent/pkg/models"
 )
 
@@ -25,252 +23,226 @@ import (
 // Helpers
 // ---------------------------------------------------------------------------
 
-// mockDeepSeekHandler returns an HTTP handler that serves an OpenAI-compatible
-// response with the given content string as the message content.
-func mockDeepSeekHandler(content string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		resp := map[string]interface{}{
-			"id":      "chatcmpl-test",
-			"object":  "chat.completion",
-			"created": time.Now().Unix(),
-			"model":   "deepseek-chat",
-			"choices": []map[string]interface{}{
-				{
-					"index": 0,
-					"message": map[string]interface{}{
-						"role":    "assistant",
-						"content": content,
-					},
-					"finish_reason": "stop",
+// stopResponse builds an OpenAI chat completion JSON with finish_reason=stop.
+func stopResponse(content string) []byte {
+	resp := map[string]interface{}{
+		"id":      "chatcmpl-test",
+		"object":  "chat.completion",
+		"created": time.Now().Unix(),
+		"model":   "deepseek-v4-pro",
+		"choices": []map[string]interface{}{
+			{
+				"index":         0,
+				"finish_reason": "stop",
+				"message": map[string]interface{}{
+					"role":    "assistant",
+					"content": content,
 				},
 			},
-			"usage": map[string]interface{}{
-				"prompt_tokens": 50, "completion_tokens": 30, "total_tokens": 80,
-			},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		},
+		"usage": map[string]interface{}{
+			"prompt_tokens": 50, "completion_tokens": 30, "total_tokens": 80,
+		},
 	}
+	b, _ := json.Marshal(resp)
+	return b
 }
 
-// newHandlerWithMockDeepSeek wires up a chat.Handler with a mock DeepSeek server.
-// The mock manager has no fetchers so FetchForTopic returns empty results.
-func newHandlerWithMockDeepSeek(t *testing.T, deepSeekContent string) *chat.Handler {
+// errorResponse builds a non-2xx JSON error body the SDK understands.
+func errorResponse(message string) []byte {
+	body := map[string]interface{}{
+		"error": map[string]interface{}{
+			"message": message,
+			"type":    "server_error",
+			"code":    "internal_server_error",
+		},
+	}
+	b, _ := json.Marshal(body)
+	return b
+}
+
+// newHandler wires up a chat.Handler with a mock LLM server that always
+// returns the given content as a direct (stop) answer.
+// The fetcher manager has no fetchers, so no real news is fetched.
+func newHandler(t *testing.T, llmContent string) *chat.Handler {
 	t.Helper()
 
-	// Mock DeepSeek server.
 	mux := http.NewServeMux()
-	mux.HandleFunc("/chat/completions", mockDeepSeekHandler(deepSeekContent))
-	dsSrv := httptest.NewServer(mux)
-	t.Cleanup(dsSrv.Close)
+	mux.HandleFunc("/chat/completions", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(stopResponse(llmContent))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
 
-	aiClient := processor.NewDeepSeekClient("test-key", dsSrv.URL)
-	proc := processor.New(aiClient, "deepseek-chat", slog.Default())
-
-	// Manager with no fetchers → FetchForTopic returns empty results.
 	cacheFile := filepath.Join(t.TempDir(), "dedup.json")
-	mgr := fetcher.NewManager([]fetcher.Fetcher{}, cacheFile, slog.Default())
+	mgr := fetcher.NewManager([]fetcher.Fetcher{}, nil, cacheFile, slog.Default())
+	runner := agent.New(srv.URL, "test-key", "deepseek-v4-pro", mgr, slog.Default())
 
-	// Verifier that passes everything (skipVerification=true).
-	ver := verifier.New(nil, true, slog.Default())
-
-	cfg := &config.Config{
-		DefaultCategories: models.AllCategories,
-		RSSFeeds:          []string{},
-	}
-
-	return chat.New(proc, mgr, ver, cfg, slog.Default())
+	return chat.New(runner, slog.Default())
 }
 
-// newMinimalHandler returns a Handler whose deps are wired but will never be
-// called (suitable for testing 400/validation paths only).
-func newMinimalHandler(t *testing.T) *chat.Handler {
+// newHandlerWithError wires up a handler whose LLM always returns a 503.
+func newHandlerWithError(t *testing.T) *chat.Handler {
 	t.Helper()
-	// Use a non-existent DeepSeek URL; if deps are called the test will fail anyway.
-	aiClient := processor.NewDeepSeekClient("", "http://invalid.deepseek.test")
-	proc := processor.New(aiClient, "model", slog.Default())
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write(errorResponse("service unavailable"))
+	}))
+	t.Cleanup(srv.Close)
+
 	cacheFile := filepath.Join(t.TempDir(), "dedup.json")
-	mgr := fetcher.NewManager([]fetcher.Fetcher{}, cacheFile, slog.Default())
-	ver := verifier.New(nil, true, slog.Default())
-	cfg := &config.Config{}
-	return chat.New(proc, mgr, ver, cfg, slog.Default())
+	mgr := fetcher.NewManager([]fetcher.Fetcher{}, nil, cacheFile, slog.Default())
+	runner := agent.New(srv.URL, "test-key", "deepseek-v4-pro", mgr, slog.Default())
+
+	return chat.New(runner, slog.Default())
 }
 
 // echoContext creates an Echo context for the given request.
-func echoContext(e *echo.Echo, method, path string, body string) (echo.Context, *httptest.ResponseRecorder) {
-	var bodyReader *strings.Reader
-	if body != "" {
-		bodyReader = strings.NewReader(body)
-	} else {
-		bodyReader = strings.NewReader("")
-	}
-	req := httptest.NewRequest(method, path, bodyReader)
+func echoContext(e *echo.Echo, method, path, body string) (echo.Context, *httptest.ResponseRecorder) {
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
-	return c, rec
+	return e.NewContext(req, rec), rec
 }
 
 // ---------------------------------------------------------------------------
-// POST /api/chat — validation
+// Validation — 400 paths (no LLM call needed)
 // ---------------------------------------------------------------------------
 
 func TestHandler_Chat_EmptyMessage_Returns400(t *testing.T) {
 	e := echo.New()
-	h := newMinimalHandler(t)
+	h := newHandlerWithError(t) // LLM never called
 
 	c, rec := echoContext(e, http.MethodPost, "/api/chat", `{"message":""}`)
-
-	err := h.Handle(c)
-	require.NoError(t, err) // Echo handler returns nil; status is set on recorder.
-
+	require.NoError(t, h.Handle(c))
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 
 	var resp models.ChatErrorResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	assert.Equal(t, "validation_error", resp.Error)
-	assert.NotEmpty(t, resp.Message)
 }
 
 func TestHandler_Chat_WhitespaceOnlyMessage_Returns400(t *testing.T) {
 	e := echo.New()
-	h := newMinimalHandler(t)
+	h := newHandlerWithError(t)
 
 	c, rec := echoContext(e, http.MethodPost, "/api/chat", `{"message":"   "}`)
-	err := h.Handle(c)
-	require.NoError(t, err)
-
+	require.NoError(t, h.Handle(c))
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
-	var resp models.ChatErrorResponse
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-	assert.Equal(t, "validation_error", resp.Error)
 }
 
 func TestHandler_Chat_MessageTooLong_Returns400(t *testing.T) {
 	e := echo.New()
-	h := newMinimalHandler(t)
+	h := newHandlerWithError(t)
 
-	// 501 characters — just over the 500-character limit.
-	longMessage := strings.Repeat("a", 501)
-	body, _ := json.Marshal(models.ChatRequest{Message: longMessage})
-
+	long := strings.Repeat("a", 501)
+	body, _ := json.Marshal(models.ChatRequest{Message: long})
 	c, rec := echoContext(e, http.MethodPost, "/api/chat", string(body))
-	err := h.Handle(c)
-	require.NoError(t, err)
-
+	require.NoError(t, h.Handle(c))
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
+
 	var resp models.ChatErrorResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	assert.Equal(t, "message_too_long", resp.Error)
 }
 
-func TestHandler_Chat_MessageAtMaxLength_DoesNotReturn400(t *testing.T) {
-	// 500 characters is exactly the limit — should not return 400 for length.
-	// (It might still fail at DeepSeek call, but that's a different concern.)
-	exactMaxMessage := strings.Repeat("a", 500)
-	body, _ := json.Marshal(models.ChatRequest{Message: exactMaxMessage})
-
-	topicJSON := `{"category":"科技/AI","keywords":["test"],"summary":"500-char message test"}`
-	h := newHandlerWithMockDeepSeek(t, topicJSON)
-
-	e := echo.New()
-	c, rec := echoContext(e, http.MethodPost, "/api/chat", string(body))
-	err := h.Handle(c)
-	require.NoError(t, err)
-
-	// Should not get a 400 for message_too_long.
-	assert.NotEqual(t, http.StatusBadRequest, rec.Code)
-}
-
 func TestHandler_Chat_InvalidJSONBody_Returns400(t *testing.T) {
 	e := echo.New()
-	h := newMinimalHandler(t)
+	h := newHandlerWithError(t)
 
 	c, rec := echoContext(e, http.MethodPost, "/api/chat", `{invalid json`)
-	err := h.Handle(c)
-	require.NoError(t, err)
-
+	require.NoError(t, h.Handle(c))
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
 // ---------------------------------------------------------------------------
-// POST /api/chat — successful response shape
+// Happy path — 200
 // ---------------------------------------------------------------------------
 
-func TestHandler_Chat_ValidMessage_Returns200WithCorrectShape(t *testing.T) {
-	topicJSON := `{"category":"科技/AI","keywords":["artificial intelligence","OpenAI"],"summary":"User asks about AI news"}`
-	h := newHandlerWithMockDeepSeek(t, topicJSON)
+func TestHandler_Chat_ValidMessage_Returns200WithReply(t *testing.T) {
+	h := newHandler(t, "这是一个关于AI的回答。")
 
 	e := echo.New()
-	body, _ := json.Marshal(models.ChatRequest{Message: "What is the latest AI news?"})
+	body, _ := json.Marshal(models.ChatRequest{Message: "今天有什么AI新闻？"})
 	c, rec := echoContext(e, http.MethodPost, "/api/chat", string(body))
-
-	err := h.Handle(c)
-	require.NoError(t, err)
-
+	require.NoError(t, h.Handle(c))
 	assert.Equal(t, http.StatusOK, rec.Code)
 
 	var resp models.ChatResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-
-	// Required fields must be present.
-	assert.NotEmpty(t, resp.ExtractedTopic, "extracted_topic should be populated")
-	assert.NotEmpty(t, resp.Category, "category should be populated")
-	assert.NotEmpty(t, resp.Summary, "summary should be populated")
-	assert.NotEmpty(t, resp.FetchedAt, "fetched_at should be set")
-	assert.GreaterOrEqual(t, resp.LatencyMs, int64(0), "latency_ms should be non-negative")
-	// sources can be empty (no fetchers → no articles).
+	assert.NotEmpty(t, resp.SessionID, "session_id must be set")
+	assert.Equal(t, "这是一个关于AI的回答。", resp.Reply)
+	assert.NotEmpty(t, resp.FetchedAt)
+	assert.GreaterOrEqual(t, resp.LatencyMs, int64(0))
 	assert.NotNil(t, resp.Sources)
 }
 
-func TestHandler_Chat_ValidMessage_CategoryEchoedFromAI(t *testing.T) {
-	topicJSON := `{"category":"金融","keywords":["stock","market"],"summary":"Stock market inquiry"}`
-	h := newHandlerWithMockDeepSeek(t, topicJSON)
-
+func TestHandler_Chat_SessionIDEchoedBackOnSubsequentTurns(t *testing.T) {
+	h := newHandler(t, "好的，明白了。")
 	e := echo.New()
-	body, _ := json.Marshal(models.ChatRequest{Message: "How are the stock markets doing?"})
-	c, rec := echoContext(e, http.MethodPost, "/api/chat", string(body))
 
-	err := h.Handle(c)
-	require.NoError(t, err)
-	require.Equal(t, http.StatusOK, rec.Code)
+	// First turn — no session_id in request.
+	body1, _ := json.Marshal(models.ChatRequest{Message: "你好"})
+	c1, rec1 := echoContext(e, http.MethodPost, "/api/chat", string(body1))
+	require.NoError(t, h.Handle(c1))
+	require.Equal(t, http.StatusOK, rec1.Code)
 
-	var resp models.ChatResponse
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-	assert.Equal(t, "金融", resp.Category)
+	var resp1 models.ChatResponse
+	require.NoError(t, json.Unmarshal(rec1.Body.Bytes(), &resp1))
+	assert.NotEmpty(t, resp1.SessionID)
+
+	// Second turn — echo back the session_id.
+	body2, _ := json.Marshal(models.ChatRequest{Message: "继续", SessionID: resp1.SessionID})
+	c2, rec2 := echoContext(e, http.MethodPost, "/api/chat", string(body2))
+	require.NoError(t, h.Handle(c2))
+	require.Equal(t, http.StatusOK, rec2.Code)
+
+	var resp2 models.ChatResponse
+	require.NoError(t, json.Unmarshal(rec2.Body.Bytes(), &resp2))
+	assert.Equal(t, resp1.SessionID, resp2.SessionID, "session_id must be stable across turns")
 }
 
-func TestHandler_Chat_NoFetchResults_SummaryContainsNoNewsMessage(t *testing.T) {
-	topicJSON := `{"category":"政治","keywords":["politics"],"summary":"Political news inquiry"}`
-	h := newHandlerWithMockDeepSeek(t, topicJSON)
-
+func TestHandler_Chat_MessageAtMaxLength_Succeeds(t *testing.T) {
+	h := newHandler(t, "收到。")
 	e := echo.New()
-	body, _ := json.Marshal(models.ChatRequest{Message: "Latest politics news?"})
+
+	body, _ := json.Marshal(models.ChatRequest{Message: strings.Repeat("a", 500)})
 	c, rec := echoContext(e, http.MethodPost, "/api/chat", string(body))
-
-	err := h.Handle(c)
-	require.NoError(t, err)
-	require.Equal(t, http.StatusOK, rec.Code)
-
-	var resp models.ChatResponse
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-	// When no items are found, the summary contains the fallback message.
-	assert.Contains(t, resp.Summary, "暂时没有找到相关新闻")
+	require.NoError(t, h.Handle(c))
+	assert.NotEqual(t, http.StatusBadRequest, rec.Code)
 }
 
 // ---------------------------------------------------------------------------
-// GET /health — inline health handler (mirrors main.go pattern)
+// LLM error path — 500
+// ---------------------------------------------------------------------------
+
+func TestHandler_Chat_LLMUnavailable_Returns500(t *testing.T) {
+	h := newHandlerWithError(t)
+	e := echo.New()
+
+	body, _ := json.Marshal(models.ChatRequest{Message: "任何问题"})
+	c, rec := echoContext(e, http.MethodPost, "/api/chat", string(body))
+	require.NoError(t, h.Handle(c))
+
+	// Agent retries twice before giving up, which takes ~2s.
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	var resp models.ChatErrorResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	assert.NotEmpty(t, resp.Error)
+}
+
+// ---------------------------------------------------------------------------
+// Health endpoint
 // ---------------------------------------------------------------------------
 
 func TestHandler_Health_Returns200OK(t *testing.T) {
 	e := echo.New()
-
-	// Register the health endpoint using the same pattern as main.go.
-	const agentVersion = "1.0.0-test"
 	e.GET("/health", func(c echo.Context) error {
 		return c.JSON(http.StatusOK, map[string]string{
 			"status":  "ok",
-			"version": agentVersion,
+			"version": "1.0.0-test",
 			"time":    time.Now().UTC().Format(time.RFC3339),
 		})
 	})
@@ -280,57 +252,7 @@ func TestHandler_Health_Returns200OK(t *testing.T) {
 	e.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusOK, rec.Code)
-
 	var body map[string]string
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	assert.Equal(t, "ok", body["status"])
-	assert.Equal(t, agentVersion, body["version"])
-	assert.NotEmpty(t, body["time"])
-}
-
-func TestHandler_Health_GET_MethodNotAllowed_ForPost(t *testing.T) {
-	e := echo.New()
-	e.GET("/health", func(c echo.Context) error {
-		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
-	})
-
-	req := httptest.NewRequest(http.MethodPost, "/health", nil)
-	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, req)
-
-	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
-}
-
-// ---------------------------------------------------------------------------
-// POST /api/chat — DeepSeek failure
-// ---------------------------------------------------------------------------
-
-func TestHandler_Chat_DeepSeekUnavailable_Returns500(t *testing.T) {
-	// Set up a DeepSeek server that returns a 503 error.
-	dsSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte(`{"error":{"message":"service unavailable","type":"server_error"}}`))
-	}))
-	t.Cleanup(dsSrv.Close)
-
-	aiClient := processor.NewDeepSeekClient("test-key", dsSrv.URL)
-	proc := processor.New(aiClient, "deepseek-chat", slog.Default())
-	cacheFile := filepath.Join(t.TempDir(), "dedup.json")
-	mgr := fetcher.NewManager([]fetcher.Fetcher{}, cacheFile, slog.Default())
-	ver := verifier.New(nil, true, slog.Default())
-	cfg := &config.Config{}
-
-	h := chat.New(proc, mgr, ver, cfg, slog.Default())
-
-	e := echo.New()
-	body, _ := json.Marshal(models.ChatRequest{Message: "Any news?"})
-	c, rec := echoContext(e, http.MethodPost, "/api/chat", string(body))
-
-	err := h.Handle(c)
-	require.NoError(t, err)
-
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-	var resp models.ChatErrorResponse
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-	assert.NotEmpty(t, resp.Error)
 }

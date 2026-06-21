@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { listArticles } from "../api/client";
 import type { ArticleFilter, ArticleListResponse, ArticleRow } from "../types";
 import { ArticleCard } from "./ArticleCard";
@@ -70,11 +71,11 @@ export function ArticleList() {
 
       {loading ? (
         <div className="text-center py-16 text-slate-400">加载中…</div>
-      ) : data?.articles.length === 0 ? (
+      ) : (data?.articles?.length ?? 0) === 0 ? (
         <div className="text-center py-16 text-slate-400">暂无文章</div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {data?.articles.map((a) => (
+          {data?.articles?.map((a) => (
             <ArticleCard
               key={a.id}
               article={a}
@@ -88,24 +89,22 @@ export function ArticleList() {
       )}
 
       {totalPages > 1 && (
-        <div className="flex justify-center gap-2">
-          <button
+        <div className="flex justify-center items-center gap-2">
+          <Button
+            variant="outline" size="sm"
             onClick={() => setFilter((f) => ({ ...f, page: Math.max(1, (f.page ?? 1) - 1) }))}
             disabled={currentPage <= 1}
-            className="px-3 py-1.5 text-sm border border-slate-200 rounded-lg disabled:opacity-40 hover:bg-slate-50 transition-colors"
           >
             上一页
-          </button>
-          <span className="px-3 py-1.5 text-sm text-slate-500">
-            {currentPage} / {totalPages}
-          </span>
-          <button
+          </Button>
+          <span className="text-sm text-muted-foreground px-2">{currentPage} / {totalPages}</span>
+          <Button
+            variant="outline" size="sm"
             onClick={() => setFilter((f) => ({ ...f, page: Math.min(totalPages, (f.page ?? 1) + 1) }))}
             disabled={currentPage >= totalPages}
-            className="px-3 py-1.5 text-sm border border-slate-200 rounded-lg disabled:opacity-40 hover:bg-slate-50 transition-colors"
           >
             下一页
-          </button>
+          </Button>
         </div>
       )}
 
