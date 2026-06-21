@@ -81,7 +81,7 @@ func newRunner(t *testing.T, handler http.HandlerFunc) *agent.Runner {
 	t.Cleanup(srv.Close)
 
 	cacheFile := filepath.Join(t.TempDir(), "dedup.json")
-	mgr := fetcher.NewManager([]fetcher.Fetcher{}, cacheFile, slog.Default())
+	mgr := fetcher.NewManager([]fetcher.Fetcher{}, nil, cacheFile, slog.Default())
 	return agent.New(srv.URL, "test-key", "deepseek-v4-pro", mgr, slog.Default())
 }
 

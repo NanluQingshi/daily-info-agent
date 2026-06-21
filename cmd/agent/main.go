@@ -83,6 +83,7 @@ func main() {
 
 	mgr := fetcher.NewManager(
 		[]fetcher.Fetcher{rssFetcher, newsAPIFetcher, rssHubFetcher},
+		cfg.RSSFeeds,
 		cfg.CacheFilePath,
 		logger.With(slog.String("component", "fetcher")),
 	)

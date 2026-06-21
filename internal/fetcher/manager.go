@@ -96,15 +96,19 @@ type fetchResult struct {
 // Manager orchestrates parallel fetching across all configured sources and
 // applies URL-based deduplication using a local cache file.
 type Manager struct {
-	fetchers  []Fetcher
-	cache     *dedupCache
-	logger    *slog.Logger
+	fetchers []Fetcher
+	rssFeeds []string // feed URLs used by FetchForTopic (topic/chat mode)
+	cache    *dedupCache
+	logger   *slog.Logger
 }
 
 // NewManager creates a Manager wired with the provided fetchers and cache path.
-func NewManager(fetchers []Fetcher, cacheFile string, logger *slog.Logger) *Manager {
+// rssFeeds is the list of RSS feed URLs used for keyword-based topic fetching;
+// pass nil or empty to disable RSS in FetchForTopic.
+func NewManager(fetchers []Fetcher, rssFeeds []string, cacheFile string, logger *slog.Logger) *Manager {
 	return &Manager{
 		fetchers: fetchers,
+		rssFeeds: rssFeeds,
 		cache:    loadDedupCache(cacheFile),
 		logger:   logger,
 	}
@@ -207,34 +211,56 @@ func (m *Manager) FetchAll(ctx context.Context, cfgs []models.FetchConfig) ([]mo
 	return allItems, nil
 }
 
+// newsAPIEverythingURL is the NewsAPI endpoint for full keyword search.
+// Unlike /top-headlines (which surfaces today's hot stories regardless of
+// keywords), /everything searches the full article index by relevance.
+const newsAPIEverythingURL = "https://newsapi.org/v2/everything"
+
 // FetchForTopic fetches items relevant to the given keywords across all sources.
-// It builds NewsAPI queries and RSS fetches then filters titles/descriptions
-// for keyword matches. Returns at most maxItems results.
+//
+// - RSS: fetches every feed in m.rssFeeds in parallel, then post-filters by keyword.
+// - NewsAPI: queries /v2/everything with the keywords joined by OR for best recall,
+//   sorted by relevancy.
+// - RSSHub: skipped (requires explicit route configuration).
+//
+// Returns at most maxItems results after keyword filtering.
 func (m *Manager) FetchForTopic(ctx context.Context, keywords []string, maxItems int) ([]models.RawItem, error) {
 	if len(keywords) == 0 {
 		return nil, fmt.Errorf("no keywords provided")
 	}
 
-	// Build FetchConfigs for all registered fetchers.
 	var cfgs []models.FetchConfig
 
-	// For each fetcher, create an appropriate config.
 	for _, f := range m.fetchers {
 		switch f.Name() {
+
+		case "rss":
+			// A: include every configured RSS feed; keyword filtering happens
+			// after fetch via filterByKeywords below.
+			for _, feedURL := range m.rssFeeds {
+				cfgs = append(cfgs, models.FetchConfig{
+					Type: models.SourceTypeRSS,
+					URL:  feedURL,
+				})
+			}
+
 		case "newsapi":
+			// B: use /everything for full-text keyword search.
+			// Join keywords with OR so any match returns a result.
 			cfgs = append(cfgs, models.FetchConfig{
 				Type: models.SourceTypeNewsAPI,
+				URL:  newsAPIEverythingURL,
 				Params: map[string]string{
-					"q":        strings.Join(keywords, " "),
+					"q":        strings.Join(keywords, " OR "),
 					"language": "en",
 					"pageSize": "20",
+					"sortBy":   "relevancy",
 				},
 			})
-		case "rss":
-			// For RSS, we use all configured feeds and post-filter locally
-			// Nothing to add here - we'll use a global RSS fetch
+
 		case "rsshub":
-			// RSSHub fetcher needs explicit routes - skip for topic fetch
+			// RSSHub needs explicit route configs — not suitable for open-ended
+			// keyword search; skip.
 		}
 	}
 
@@ -243,9 +269,7 @@ func (m *Manager) FetchForTopic(ctx context.Context, keywords []string, maxItems
 		return nil, fmt.Errorf("fetch for topic: %w", err)
 	}
 
-	// Filter by keyword relevance
 	filtered := filterByKeywords(items, keywords)
-
 	if len(filtered) > maxItems {
 		filtered = filtered[:maxItems]
 	}
