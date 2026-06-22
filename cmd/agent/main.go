@@ -77,12 +77,21 @@ func main() {
 	httpClient := &http.Client{Timeout: 10 * time.Second}
 
 	// ---- Build fetchers ----
-	rssFetcher := fetcher.NewRSSFetcher(httpClient)
-	newsAPIFetcher := fetcher.NewNewsAPIFetcher(cfg.NewsAPIKey, httpClient)
-	rssHubFetcher := fetcher.NewRSSHubFetcher(cfg.RSSHubBaseURL, httpClient)
+	fetchers := []fetcher.Fetcher{fetcher.NewRSSFetcher(httpClient)}
+
+	// Only register NewsAPI when the key looks like a real token (not empty
+	// and not the placeholder URL from .env.example).
+	if cfg.NewsAPIKey != "" && !strings.HasPrefix(cfg.NewsAPIKey, "http") {
+		fetchers = append(fetchers, fetcher.NewNewsAPIFetcher(cfg.NewsAPIKey, httpClient))
+		logger.Info("NewsAPI fetcher enabled")
+	} else {
+		logger.Info("NewsAPI fetcher disabled (NEWSAPI_KEY not set or is a placeholder)")
+	}
+
+	fetchers = append(fetchers, fetcher.NewRSSHubFetcher(cfg.RSSHubBaseURL, httpClient))
 
 	mgr := fetcher.NewManager(
-		[]fetcher.Fetcher{rssFetcher, newsAPIFetcher, rssHubFetcher},
+		fetchers,
 		cfg.RSSFeeds,
 		cfg.CacheFilePath,
 		logger.With(slog.String("component", "fetcher")),
