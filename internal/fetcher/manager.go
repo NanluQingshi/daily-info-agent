@@ -223,6 +223,10 @@ const newsAPIEverythingURL = "https://newsapi.org/v2/everything"
 //   sorted by relevancy.
 // - RSSHub: skipped (requires explicit route configuration).
 //
+// Unlike FetchAll (used by the scheduler), FetchForTopic does NOT apply the
+// deduplication cache — chat-mode queries should always return fresh results
+// regardless of what the scheduler has previously seen.
+//
 // Returns at most maxItems results after keyword filtering.
 func (m *Manager) FetchForTopic(ctx context.Context, keywords []string, maxItems int) ([]models.RawItem, error) {
 	if len(keywords) == 0 {
@@ -264,7 +268,9 @@ func (m *Manager) FetchForTopic(ctx context.Context, keywords []string, maxItems
 		}
 	}
 
-	items, err := m.FetchAll(ctx, cfgs)
+	// fetchRaw runs the same parallel logic as FetchAll but skips dedup so
+	// chat-mode queries always get fresh results.
+	items, err := m.fetchRaw(ctx, cfgs)
 	if err != nil {
 		return nil, fmt.Errorf("fetch for topic: %w", err)
 	}
@@ -275,6 +281,80 @@ func (m *Manager) FetchForTopic(ctx context.Context, keywords []string, maxItems
 	}
 
 	return filtered, nil
+}
+
+// fetchRaw is like FetchAll but never reads or writes the dedup cache.
+// Used by FetchForTopic so chat queries always see fresh articles.
+func (m *Manager) fetchRaw(ctx context.Context, cfgs []models.FetchConfig) ([]models.RawItem, error) {
+	if len(cfgs) == 0 {
+		return nil, nil
+	}
+
+	fetcherMap := make(map[models.SourceType]Fetcher)
+	for _, f := range m.fetchers {
+		switch f.Name() {
+		case "rss":
+			fetcherMap[models.SourceTypeRSS] = f
+		case "newsapi":
+			fetcherMap[models.SourceTypeNewsAPI] = f
+		case "rsshub":
+			fetcherMap[models.SourceTypeRSSHub] = f
+		}
+	}
+
+	type job struct {
+		fetcher Fetcher
+		cfg     models.FetchConfig
+	}
+	var jobs []job
+	for _, cfg := range cfgs {
+		f, ok := fetcherMap[cfg.Type]
+		if !ok {
+			m.logger.Warn("no fetcher registered for source type",
+				slog.String("source_type", string(cfg.Type)),
+				slog.String("url", cfg.URL),
+			)
+			continue
+		}
+		jobs = append(jobs, job{fetcher: f, cfg: cfg})
+	}
+
+	results := make(chan fetchResult, len(jobs))
+	var wg sync.WaitGroup
+	for _, j := range jobs {
+		wg.Add(1)
+		go func(jj job) {
+			defer wg.Done()
+			items, err := jj.fetcher.Fetch(ctx, jj.cfg)
+			results <- fetchResult{items: items, err: err}
+		}(j)
+	}
+	wg.Wait()
+	close(results)
+
+	seen := make(map[string]struct{})
+	var allItems []models.RawItem
+	errCount := 0
+	for r := range results {
+		if r.err != nil {
+			m.logger.Warn("fetcher error", slog.String("error", r.err.Error()))
+			errCount++
+			continue
+		}
+		for _, item := range r.items {
+			h := urlHash(item.URL)
+			if _, dup := seen[h]; dup {
+				continue
+			}
+			seen[h] = struct{}{}
+			allItems = append(allItems, item)
+		}
+	}
+
+	if errCount > 0 && len(allItems) == 0 && errCount == len(jobs) {
+		return nil, fmt.Errorf("all %d sources failed", errCount)
+	}
+	return allItems, nil
 }
 
 // filterByKeywords returns items whose title or description contains at least
