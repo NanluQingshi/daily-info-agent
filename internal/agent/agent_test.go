@@ -176,6 +176,26 @@ func TestRunner_MaxIterationsGuard(t *testing.T) {
 	_ = result
 }
 
+func TestRunner_GetCurrentTimeTool_CalledAndReturnsReply(t *testing.T) {
+	var callCount atomic.Int32
+
+	r := newRunner(t, func(w http.ResponseWriter, _ *http.Request) {
+		call := callCount.Add(1)
+		if call == 1 {
+			writeJSON(w, toolCallResp("get_current_time", "{}", "call-time-001"))
+		} else {
+			writeJSON(w, stopResp("当前北京时间已获取到。"))
+		}
+	})
+
+	result, err := r.Run(context.Background(), "", "现在几点了？")
+	require.NoError(t, err)
+	assert.True(t, result.ToolCalled)
+	assert.NotEmpty(t, result.Reply)
+	assert.Equal(t, 2, result.Iterations)
+	assert.Equal(t, int32(2), callCount.Load())
+}
+
 func TestRunner_ReasoningContent_UsedWhenContentEmpty(t *testing.T) {
 	// deepseek thinking models sometimes return content="" and put the answer
 	// in reasoning_content. The runner should fall back to it.
