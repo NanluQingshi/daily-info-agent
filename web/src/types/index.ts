@@ -75,6 +75,19 @@ export interface ChatSource {
   source_domain: string;
 }
 
+// SSE events emitted by POST /api/chat/stream
+export type StreamEventType = "thinking" | "tool" | "delta" | "done" | "error";
+
+export interface StreamEvent {
+  type: StreamEventType;
+  content?: string;   // delta text or error message
+  tool?: string;      // tool event: tool name
+  session_id?: string;
+  sources?: ChatSource[];
+  tool_called?: boolean;
+  latency_ms?: number;
+}
+
 export interface ChatResponse {
   session_id: string;
   reply: string;
