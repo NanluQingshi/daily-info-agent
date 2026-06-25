@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	openai "github.com/sashabaranov/go-openai"
 	"github.com/user/daily-info-agent/internal/fetcher"
@@ -13,6 +14,14 @@ import (
 
 // toolDefs is the list of tools exposed to the LLM.
 var toolDefs = []openai.Tool{
+	{
+		Type: openai.ToolTypeFunction,
+		Function: &openai.FunctionDefinition{
+			Name:        "get_current_time",
+			Description: "返回当前的日期和时间（北京时间）。当用户询问现在几点、今天几号、今天星期几等与时间/日期相关的问题时调用。",
+			Parameters:  json.RawMessage(`{"type":"object","properties":{},"required":[]}`),
+		},
+	},
 	{
 		Type: openai.ToolTypeFunction,
 		Function: &openai.FunctionDefinition{
@@ -60,11 +69,28 @@ func newToolExecutor(mgr *fetcher.Manager) *toolExecutor {
 // the LLM can read, plus any raw items that were fetched.
 func (e *toolExecutor) Execute(ctx context.Context, tc openai.ToolCall) (result string, items []models.RawItem) {
 	switch tc.Function.Name {
+	case "get_current_time":
+		return getCurrentTime(), nil
 	case "search_news":
 		return e.searchNews(ctx, tc.Function.Arguments)
 	default:
 		return fmt.Sprintf("unknown tool: %s", tc.Function.Name), nil
 	}
+}
+
+// getCurrentTime returns the current Beijing time as a human-readable string.
+func getCurrentTime() string {
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		loc = time.FixedZone("CST", 8*60*60)
+	}
+	now := time.Now().In(loc)
+	weekdays := []string{"星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"}
+	return fmt.Sprintf("当前北京时间：%d年%d月%d日 %s %02d:%02d:%02d",
+		now.Year(), now.Month(), now.Day(),
+		weekdays[now.Weekday()],
+		now.Hour(), now.Minute(), now.Second(),
+	)
 }
 
 // searchNews implements the search_news tool.

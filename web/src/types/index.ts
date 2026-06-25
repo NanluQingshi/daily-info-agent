@@ -75,6 +75,28 @@ export interface ChatSource {
   source_domain: string;
 }
 
+// A single conversation managed on the client side.
+// sessionId is undefined until the first message is sent.
+export interface Conversation {
+  localId: string;      // client-only UUID used as React key
+  sessionId?: string;   // backend session ID
+  title: string;        // first user message (truncated) or "新对话"
+  createdAt: number;    // Date.now() at creation
+}
+
+// SSE events emitted by POST /api/chat/stream
+export type StreamEventType = "thinking" | "tool" | "delta" | "done" | "error";
+
+export interface StreamEvent {
+  type: StreamEventType;
+  content?: string;   // delta text or error message
+  tool?: string;      // tool event: tool name
+  session_id?: string;
+  sources?: ChatSource[];
+  tool_called?: boolean;
+  latency_ms?: number;
+}
+
 export interface ChatResponse {
   session_id: string;
   reply: string;

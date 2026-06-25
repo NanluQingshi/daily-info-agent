@@ -255,8 +255,10 @@ func runServerMode(
 	e.Use(slogMiddleware(logger))
 	e.Use(middleware.Recover())
 
-	// Existing endpoints
+	// Chat endpoints
 	e.POST("/api/chat", chatHandler.Handle)
+	e.POST("/api/chat/stream", chatHandler.HandleStream)
+	e.DELETE("/api/sessions/:id", chatHandler.HandleDeleteSession)
 	e.GET("/health", healthHandler(version, st))
 
 	// New article management API (requires database)

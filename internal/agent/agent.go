@@ -62,6 +62,10 @@ func New(
 	}
 }
 
+// DeleteSession removes a session from the store, freeing its memory.
+// Safe to call with an unknown id (no-op).
+func (r *Runner) DeleteSession(sessionID string) { r.sessions.Delete(sessionID) }
+
 // Run executes one user turn of the agent loop.
 //
 //   - If sessionID is empty, a new session is created and its ID is returned

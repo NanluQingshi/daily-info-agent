@@ -4,7 +4,7 @@ import { Separator } from "@/components/ui/separator";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { ArticleList } from "./components/ArticleList";
-import { ChatPanel } from "./components/ChatPanel";
+import { ChatView } from "./components/ChatView";
 import { StatsPanel } from "./components/StatsPanel";
 
 type Tab = "chat" | "articles" | "stats";
@@ -48,7 +48,7 @@ export default function App() {
 
         {/* Main content */}
         <main className="flex-1 overflow-hidden">
-          {tab === "chat" && <ChatPanel />}
+          {tab === "chat" && <ChatView />}
           {tab === "articles" && (
             <div className="h-full overflow-y-auto">
               <div className="max-w-5xl mx-auto px-6 py-6">

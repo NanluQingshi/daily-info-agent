@@ -5,6 +5,7 @@ import type {
   ChatResponse,
   FetchTriggerResponse,
   StatsResult,
+  StreamEvent,
 } from "../types";
 
 const BASE = "/api";
@@ -56,10 +57,62 @@ export function getStats(since?: string): Promise<StatsResult> {
   return request(`/stats${since ? `?since=${since}` : ""}`);
 }
 
+/** Delete a backend session (best-effort, ignores errors). */
+export async function deleteSession(sessionId: string): Promise<void> {
+  await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+    method: "DELETE",
+  }).catch(() => {/* fire-and-forget */});
+}
+
 export function sendChat(message: string, sessionId?: string): Promise<ChatResponse> {
   return request("/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message, session_id: sessionId }),
   });
+}
+
+/**
+ * sendChatStream opens a streaming connection to POST /api/chat/stream
+ * and calls onEvent for each SSE event. Returns when the stream ends.
+ */
+export async function sendChatStream(
+  message: string,
+  sessionId: string | undefined,
+  onEvent: (ev: StreamEvent) => void
+): Promise<void> {
+  const res = await fetch("/api/chat/stream", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message, session_id: sessionId }),
+  });
+
+  if (!res.ok || !res.body) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { message?: string }).message ?? `HTTP ${res.status}`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? ""; // keep incomplete last line
+
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      const data = line.slice(6).trim();
+      if (!data) continue;
+      try {
+        onEvent(JSON.parse(data) as StreamEvent);
+      } catch {
+        // ignore malformed chunks
+      }
+    }
+  }
 }
