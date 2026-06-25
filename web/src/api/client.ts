@@ -57,6 +57,13 @@ export function getStats(since?: string): Promise<StatsResult> {
   return request(`/stats${since ? `?since=${since}` : ""}`);
 }
 
+/** Delete a backend session (best-effort, ignores errors). */
+export async function deleteSession(sessionId: string): Promise<void> {
+  await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+    method: "DELETE",
+  }).catch(() => {/* fire-and-forget */});
+}
+
 export function sendChat(message: string, sessionId?: string): Promise<ChatResponse> {
   return request("/chat", {
     method: "POST",

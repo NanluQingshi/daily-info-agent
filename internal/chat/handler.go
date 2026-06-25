@@ -95,6 +95,20 @@ func (h *Handler) Handle(c echo.Context) error {
 	return c.JSON(http.StatusOK, resp)
 }
 
+// HandleDeleteSession is the Echo HandlerFunc for DELETE /api/sessions/:id.
+// It removes the session from the in-memory store. The call is idempotent.
+func (h *Handler) HandleDeleteSession(c echo.Context) error {
+	id := c.Param("id")
+	if id == "" {
+		return c.JSON(http.StatusBadRequest, models.ChatErrorResponse{
+			Error:   "validation_error",
+			Message: "session id is required",
+		})
+	}
+	h.runner.DeleteSession(id)
+	return c.NoContent(http.StatusNoContent)
+}
+
 func truncate(s string, n int) string {
 	r := []rune(s)
 	if len(r) <= n {
