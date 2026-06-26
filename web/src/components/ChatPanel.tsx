@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { sendChatStream } from "../api/client";
+import { MarkdownContent } from "./MarkdownContent";
 import type { ChatSource, Conversation } from "../types";
 
 // ── Message shape ─────────────────────────────────────────────────────────────
@@ -168,12 +169,7 @@ function AssistantBubble({ msg }: { msg: AssistantMessage }) {
             </div>
 
             {msg.text ? (
-              <p className="text-sm leading-relaxed whitespace-pre-wrap">
-                {msg.text}
-                {msg.streaming && (
-                  <span className="inline-block w-0.5 h-4 ml-0.5 bg-foreground animate-pulse align-text-bottom" />
-                )}
-              </p>
+              <MarkdownContent content={msg.text} streaming={msg.streaming} />
             ) : (
               msg.streaming && !msg.activeTool && (
                 <div className="flex gap-1.5 items-center h-5">

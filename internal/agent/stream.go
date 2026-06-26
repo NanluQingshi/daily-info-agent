@@ -205,12 +205,12 @@ func (r *Runner) streamLLM(ctx context.Context, messages []openai.ChatCompletion
 		return fmt.Errorf("stream api http %d: %s", httpResp.StatusCode, string(raw))
 	}
 
-	return parseLLMStream(httpResp.Body, onToken)
+	return ParseLLMStream(httpResp.Body, onToken)
 }
 
-// parseLLMStream reads an OpenAI-compatible SSE stream and calls onToken for
-// each non-empty content delta.
-func parseLLMStream(body io.Reader, onToken func(string)) error {
+// ParseLLMStream reads an OpenAI-compatible SSE stream and calls onToken for
+// each non-empty content delta. Exported for testing.
+func ParseLLMStream(body io.Reader, onToken func(string)) error {
 	scanner := bufio.NewScanner(body)
 
 	for scanner.Scan() {
