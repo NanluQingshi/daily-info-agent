@@ -96,21 +96,25 @@ type fetchResult struct {
 // Manager orchestrates parallel fetching across all configured sources and
 // applies URL-based deduplication using a local cache file.
 type Manager struct {
-	fetchers []Fetcher
-	rssFeeds []string // feed URLs used by FetchForTopic (topic/chat mode)
-	cache    *dedupCache
-	logger   *slog.Logger
+	fetchers      []Fetcher
+	rssFeeds      []string // RSS feed URLs used by FetchForTopic
+	rssHubRoutes  []string // RSSHub route paths used by FetchForTopic
+	cache         *dedupCache
+	logger        *slog.Logger
 }
 
 // NewManager creates a Manager wired with the provided fetchers and cache path.
-// rssFeeds is the list of RSS feed URLs used for keyword-based topic fetching;
-// pass nil or empty to disable RSS in FetchForTopic.
-func NewManager(fetchers []Fetcher, rssFeeds []string, cacheFile string, logger *slog.Logger) *Manager {
+//   - rssFeeds: full RSS feed URLs fetched and keyword-filtered in topic mode.
+//   - rssHubRoutes: RSSHub route paths (e.g. "/wallstreetcn/news/global")
+//     appended to the RSSHub base URL by the rssHubFetcher.
+//     Pass nil to disable RSSHub in FetchForTopic.
+func NewManager(fetchers []Fetcher, rssFeeds []string, rssHubRoutes []string, cacheFile string, logger *slog.Logger) *Manager {
 	return &Manager{
-		fetchers: fetchers,
-		rssFeeds: rssFeeds,
-		cache:    loadDedupCache(cacheFile),
-		logger:   logger,
+		fetchers:     fetchers,
+		rssFeeds:     rssFeeds,
+		rssHubRoutes: rssHubRoutes,
+		cache:        loadDedupCache(cacheFile),
+		logger:       logger,
 	}
 }
 
@@ -263,8 +267,14 @@ func (m *Manager) FetchForTopic(ctx context.Context, keywords []string, maxItems
 			})
 
 		case "rsshub":
-			// RSSHub needs explicit route configs — not suitable for open-ended
-			// keyword search; skip.
+			// RSSHub routes are pre-configured; we fetch them all and let
+			// filterByKeywords do the relevance filtering locally.
+			for _, route := range m.rssHubRoutes {
+				cfgs = append(cfgs, models.FetchConfig{
+					Type: models.SourceTypeRSSHub,
+					URL:  route,
+				})
+			}
 		}
 	}
 

@@ -186,11 +186,11 @@ func TestLoad_DefaultRSSFeeds_FallbackBuiltin(t *testing.T) {
 	// Check that at least one well-known default feed is present.
 	var found bool
 	for _, f := range cfg.RSSFeeds {
-		if f == "https://feeds.reuters.com/reuters/topNews" {
+		if f == "https://36kr.com/feed" {
 			found = true
 		}
 	}
-	assert.True(t, found, "default RSS feeds should include Reuters top-news feed")
+	assert.True(t, found, "default RSS feeds should include 36kr feed")
 }
 
 func TestLoad_DefaultTrustedDomains_FallbackBuiltin(t *testing.T) {
@@ -286,4 +286,30 @@ func TestLoad_SkipVerification_FalseByDefault(t *testing.T) {
 	cfg, err := config.Load()
 	require.NoError(t, err)
 	assert.False(t, cfg.SkipVerification)
+}
+
+func TestLoad_DefaultRSSHubRoutes_FallbackBuiltin(t *testing.T) {
+	setRequiredEnvVars(t)
+	t.Setenv("RSSHUB_ROUTES", "")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.NotEmpty(t, cfg.RSSHubRoutes)
+	// At least one finance-related route should be present by default.
+	var found bool
+	for _, r := range cfg.RSSHubRoutes {
+		if r == "/wallstreetcn/news/global" {
+			found = true
+		}
+	}
+	assert.True(t, found, "default RSSHub routes should include wallstreetcn")
+}
+
+func TestLoad_CustomRSSHubRoutes_SemicolonSeparated(t *testing.T) {
+	setRequiredEnvVars(t)
+	t.Setenv("RSSHUB_ROUTES", "/cls/telegraph;/jin10/flash_news")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/cls/telegraph", "/jin10/flash_news"}, cfg.RSSHubRoutes)
 }
