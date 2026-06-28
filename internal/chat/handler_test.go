@@ -76,7 +76,7 @@ func newHandler(t *testing.T, llmContent string) *chat.Handler {
 	t.Cleanup(srv.Close)
 
 	cacheFile := filepath.Join(t.TempDir(), "dedup.json")
-	mgr := fetcher.NewManager([]fetcher.Fetcher{}, nil, cacheFile, slog.Default())
+	mgr := fetcher.NewManager([]fetcher.Fetcher{}, nil, nil, cacheFile, slog.Default())
 	runner := agent.New(srv.URL, "test-key", "deepseek-v4-pro", mgr, slog.Default())
 
 	return chat.New(runner, slog.Default())
@@ -93,7 +93,7 @@ func newHandlerWithError(t *testing.T) *chat.Handler {
 	t.Cleanup(srv.Close)
 
 	cacheFile := filepath.Join(t.TempDir(), "dedup.json")
-	mgr := fetcher.NewManager([]fetcher.Fetcher{}, nil, cacheFile, slog.Default())
+	mgr := fetcher.NewManager([]fetcher.Fetcher{}, nil, nil, cacheFile, slog.Default())
 	runner := agent.New(srv.URL, "test-key", "deepseek-v4-pro", mgr, slog.Default())
 
 	return chat.New(runner, slog.Default())

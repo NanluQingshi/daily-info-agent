@@ -11,26 +11,57 @@ import (
 )
 
 // defaultRSSFeeds is the built-in list used when RSS_FEEDS is not set.
+// defaultRSSFeeds is the built-in list used when RSS_FEEDS is not set.
+// All feeds have been verified accessible from mainland China (2026-06).
 var defaultRSSFeeds = []string{
-	"https://feeds.reuters.com/reuters/topNews",
-	"https://feeds.bbci.co.uk/news/world/rss.xml",
-	"https://www.theverge.com/rss/index.xml",
-	"http://www.xinhuanet.com/rss/world.xml",
-	"http://www.people.com.cn/rss/finance.xml",
+	"https://36kr.com/feed",                         // 36氪 — 科技/创投
+	"https://sspai.com/feed",                        // 少数派 — 科技/效率
+	"https://www.ifanr.com/feed",                    // 爱范儿 — 科技消费
+	"https://feeds.feedburner.com/cnbeta",           // cnBeta — 科技资讯
+	"https://rss.huxiu.com/",                        // 虎嗅 — 科技深度
+	"https://www.guancha.cn/rss.xml",               // 观察者网 — 国际/政治
+	"https://www.pingwest.com/feed",                 // PingWest — 科技（双语）
+	"http://www.people.com.cn/rss/politics.xml",    // 人民日报 — 政治
+	"http://www.people.com.cn/rss/finance.xml",     // 人民日报 — 财经
+}
+
+// defaultRSSHubRoutes is the built-in list of RSSHub route paths used when
+// RSSHUB_ROUTES is not set. These are appended to RSSHUB_BASE_URL at runtime.
+// Set RSSHUB_BASE_URL to your own RSSHub instance; the public rsshub.app is
+// blocked in mainland China.
+var defaultRSSHubRoutes = []string{
+	"/wallstreetcn/news/global",    // 华尔街见闻 — 全球财经
+	"/cls/telegraph",               // 财联社电报 — 实时财经
+	"/jin10/flash_news",            // 金十数据 — 财经快讯
+	"/36kr/news/technology",        // 36氪科技
+	"/huxiu/article",               // 虎嗅文章
+	"/zaobao/realtime/china",       // 联合早报 — 中国新闻
+	"/xinhua/world",                // 新华社国际
 }
 
 // defaultTrustedDomains is the built-in whitelist used when TRUSTED_DOMAINS is not set.
+// Domains here bypass the AI credibility-score threshold check in the verifier.
 var defaultTrustedDomains = []string{
+	// 中文权威来源
 	"xinhua.net",
 	"people.com.cn",
 	"gov.cn",
+	"guancha.cn",   // 观察者网
+	// 中文科技 / 财经媒体
+	"36kr.com",
+	"huxiu.com",
+	"sspai.com",
+	"ifanr.com",
+	"cnbeta.com",
+	"pingwest.com",
+	// 境外主流媒体（境外网络可用时）
 	"reuters.com",
 	"bbc.com",
-	"theverge.com",
 	"apnews.com",
 	"ft.com",
 	"wsj.com",
 	"economist.com",
+	"theverge.com",
 }
 
 // Config holds all runtime configuration loaded from environment variables.
@@ -44,6 +75,7 @@ type Config struct {
 	NewsAPIKey    string
 	RSSHubBaseURL string   // default: "https://rsshub.app"
 	RSSFeeds      []string // parsed from semicolon-separated env var
+	RSSHubRoutes  []string // parsed from semicolon-separated env var (route paths)
 
 	// Verification
 	TrustedDomains    []string // parsed from comma-separated env var
@@ -140,6 +172,18 @@ func Load() (*Config, error) {
 	cfg.BindAddr = envOr("BIND_ADDR", "127.0.0.1:8080")
 	cfg.CacheFilePath = envOr("CACHE_FILE_PATH", "cache/dedup.json")
 	cfg.AgentVersion = envOr("AGENT_VERSION", "1.0.0")
+
+	// RSSHub routes
+	if raw := os.Getenv("RSSHUB_ROUTES"); raw != "" {
+		for _, r := range strings.Split(raw, ";") {
+			r = strings.TrimSpace(r)
+			if r != "" {
+				cfg.RSSHubRoutes = append(cfg.RSSHubRoutes, r)
+			}
+		}
+	} else {
+		cfg.RSSHubRoutes = defaultRSSHubRoutes
+	}
 
 	// RSS feeds
 	if raw := os.Getenv("RSS_FEEDS"); raw != "" {
