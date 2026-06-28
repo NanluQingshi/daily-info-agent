@@ -40,17 +40,28 @@ var defaultRSSHubRoutes = []string{
 }
 
 // defaultTrustedDomains is the built-in whitelist used when TRUSTED_DOMAINS is not set.
+// Domains here bypass the AI credibility-score threshold check in the verifier.
 var defaultTrustedDomains = []string{
+	// 中文权威来源
 	"xinhua.net",
 	"people.com.cn",
 	"gov.cn",
+	"guancha.cn",   // 观察者网
+	// 中文科技 / 财经媒体
+	"36kr.com",
+	"huxiu.com",
+	"sspai.com",
+	"ifanr.com",
+	"cnbeta.com",
+	"pingwest.com",
+	// 境外主流媒体（境外网络可用时）
 	"reuters.com",
 	"bbc.com",
-	"theverge.com",
 	"apnews.com",
 	"ft.com",
 	"wsj.com",
 	"economist.com",
+	"theverge.com",
 }
 
 // Config holds all runtime configuration loaded from environment variables.
