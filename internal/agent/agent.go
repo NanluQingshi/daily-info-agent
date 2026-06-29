@@ -46,9 +46,11 @@ type Runner struct {
 // New creates a Runner.
 // baseURL should be the OpenAI-compatible endpoint root, e.g. "https://api.llm.ustc.edu.cn/v1".
 // apiKey is the Bearer token sent in the Authorization header.
+// db may be nil; when nil, the search_stored_articles tool is not registered.
 func New(
 	baseURL, apiKey, modelID string,
 	mgr *fetcher.Manager,
+	db ArticleSearcher,
 	logger *slog.Logger,
 ) *Runner {
 	return &Runner{
@@ -57,7 +59,7 @@ func New(
 		modelID:    modelID,
 		httpClient: &http.Client{Timeout: 60 * time.Second},
 		sessions:   NewSessionStore(),
-		executor:   newToolExecutor(mgr),
+		executor:   newToolExecutor(mgr, db),
 		logger:     logger,
 	}
 }
@@ -214,7 +216,7 @@ func (r *Runner) callLLM(ctx context.Context, messages []openai.ChatCompletionMe
 	reqBody := map[string]interface{}{
 		"model":       r.modelID,
 		"messages":    llmMsgs,
-		"tools":       toolDefs,
+		"tools":       r.executor.activeTools(),
 		"tool_choice": "auto",
 	}
 

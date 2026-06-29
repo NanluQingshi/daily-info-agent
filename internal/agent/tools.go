@@ -12,7 +12,19 @@ import (
 	"github.com/user/daily-info-agent/pkg/models"
 )
 
+// ── Store interface ────────────────────────────────────────────────────────────
+
+// ArticleSearcher is a minimal read interface over the article store.
+// *store.PostgresStore satisfies it; pass nil when the database is disabled
+// (search_stored_articles will not be registered as a tool).
+type ArticleSearcher interface {
+	ListArticles(ctx context.Context, f models.ArticleFilter) ([]models.ArticleRow, int, error)
+}
+
+// ── Tool definitions ──────────────────────────────────────────────────────────
+
 // toolDefs is the list of tools exposed to the LLM.
+// search_stored_articles is appended at runtime only when a store is wired in.
 var toolDefs = []openai.Tool{
 	{
 		Type: openai.ToolTypeFunction,
@@ -47,36 +59,89 @@ var toolDefs = []openai.Tool{
 	},
 }
 
+// storedArticleTool is appended to toolDefs when a store is available.
+var storedArticleTool = openai.Tool{
+	Type: openai.ToolTypeFunction,
+	Function: &openai.FunctionDefinition{
+		Name:        "search_stored_articles",
+		Description: "搜索本地数据库中由定时任务已抓取并处理的新闻文章。当用户查询过去几天的历史新闻、需要 AI 已提炼过的摘要、或实时搜索结果为空时使用。与 search_news（实时抓取）互补。",
+		Parameters: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"query": {
+					"type": "string",
+					"description": "关键词，用空格分隔，匹配文章标题和摘要"
+				},
+				"category": {
+					"type": "string",
+					"enum": ["金融", "政治", "经济", "科技/AI", "国际"],
+					"description": "可选，限定新闻分类"
+				},
+				"days": {
+					"type": "integer",
+					"description": "查询最近几天内的文章，默认 7",
+					"minimum": 1,
+					"maximum": 90
+				}
+			},
+			"required": ["query"]
+		}`),
+	},
+}
+
+// ── Executor ──────────────────────────────────────────────────────────────────
+
 // searchNewsArgs is the parsed argument struct for the search_news tool.
 type searchNewsArgs struct {
 	Keywords []string `json:"keywords"`
 	Category string   `json:"category"`
 }
 
-// toolExecutor runs tool calls requested by the LLM and returns
-// (toolResultContent, sourcesFound).
+// searchStoredArgs is the parsed argument struct for the search_stored_articles tool.
+type searchStoredArgs struct {
+	Query    string `json:"query"`
+	Category string `json:"category"`
+	Days     int    `json:"days"`
+}
+
+// toolExecutor runs tool calls requested by the LLM.
 type toolExecutor struct {
 	mgr     *fetcher.Manager
+	db      ArticleSearcher // nil when database is disabled
 	maxNews int
 }
 
-// newToolExecutor creates an executor backed by the given fetcher manager.
-func newToolExecutor(mgr *fetcher.Manager) *toolExecutor {
-	return &toolExecutor{mgr: mgr, maxNews: 10}
+// newToolExecutor creates an executor backed by the given fetcher manager and
+// optional article store. Pass nil for db to disable search_stored_articles.
+func newToolExecutor(mgr *fetcher.Manager, db ArticleSearcher) *toolExecutor {
+	return &toolExecutor{mgr: mgr, db: db, maxNews: 10}
+}
+
+// activeTools returns the tool definitions to send to the LLM, appending
+// search_stored_articles only when a database store is configured.
+func (e *toolExecutor) activeTools() []openai.Tool {
+	if e.db != nil {
+		return append(toolDefs, storedArticleTool)
+	}
+	return toolDefs
 }
 
 // Execute dispatches a single ToolCall and returns the result as a string
-// the LLM can read, plus any raw items that were fetched.
+// the LLM can read, plus any raw items that were fetched (for search_news).
 func (e *toolExecutor) Execute(ctx context.Context, tc openai.ToolCall) (result string, items []models.RawItem) {
 	switch tc.Function.Name {
 	case "get_current_time":
 		return getCurrentTime(), nil
 	case "search_news":
 		return e.searchNews(ctx, tc.Function.Arguments)
+	case "search_stored_articles":
+		return e.searchStoredArticles(ctx, tc.Function.Arguments), nil
 	default:
 		return fmt.Sprintf("unknown tool: %s", tc.Function.Name), nil
 	}
 }
+
+// ── Tool implementations ──────────────────────────────────────────────────────
 
 // getCurrentTime returns the current Beijing time as a human-readable string.
 func getCurrentTime() string {
@@ -107,9 +172,52 @@ func (e *toolExecutor) searchNews(ctx context.Context, argsJSON string) (string,
 	if err != nil || len(items) == 0 {
 		return "未找到相关新闻", nil
 	}
-
 	return formatItems(items), items
 }
+
+// searchStoredArticles implements the search_stored_articles tool.
+// Returns "数据库未启用" when db is nil.
+func (e *toolExecutor) searchStoredArticles(ctx context.Context, argsJSON string) string {
+	if e.db == nil {
+		return "数据库未启用，无法查询历史文章"
+	}
+
+	var args searchStoredArgs
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return fmt.Sprintf("参数解析失败: %v", err)
+	}
+	if args.Query == "" {
+		return "query 不能为空"
+	}
+	if args.Days <= 0 {
+		args.Days = 7
+	}
+
+	dateFrom := time.Now().UTC().AddDate(0, 0, -args.Days)
+
+	filter := models.ArticleFilter{
+		Query:    args.Query,
+		DateFrom: &dateFrom,
+		PageSize: 10,
+		Page:     1,
+	}
+	if args.Category != "" {
+		cat := models.Category(args.Category)
+		filter.Category = &cat
+	}
+
+	rows, total, err := e.db.ListArticles(ctx, filter)
+	if err != nil {
+		return fmt.Sprintf("数据库查询失败: %v", err)
+	}
+	if len(rows) == 0 {
+		return fmt.Sprintf("最近 %d 天内未找到与「%s」相关的历史文章", args.Days, args.Query)
+	}
+
+	return formatStoredArticles(rows, total, args.Days)
+}
+
+// ── Formatters ────────────────────────────────────────────────────────────────
 
 // formatItems converts raw items into a compact text block the LLM can digest.
 func formatItems(items []models.RawItem) string {
@@ -122,6 +230,24 @@ func formatItems(items []models.RawItem) string {
 			it.Title,
 			it.URL,
 			truncate(it.Description, 150),
+		))
+	}
+	return sb.String()
+}
+
+// formatStoredArticles formats a list of stored ArticleRow records for the LLM.
+func formatStoredArticles(rows []models.ArticleRow, total, days int) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("最近 %d 天共找到 %d 篇历史文章（显示前 %d 篇）：\n\n", days, total, len(rows)))
+	for i, a := range rows {
+		date := a.FetchedAt.Format("2006-01-02")
+		sb.WriteString(fmt.Sprintf("%d. 【%s】%s（%s）\n   来源：%s\n   摘要：%s\n\n",
+			i+1,
+			a.Category,
+			a.Title,
+			date,
+			a.SourceDomain,
+			truncate(a.Summary, 200),
 		))
 	}
 	return sb.String()
