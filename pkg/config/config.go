@@ -102,6 +102,11 @@ type Config struct {
 	// HTTP server
 	BindAddr string // default: "127.0.0.1:8080"
 
+	// Chat API auth (optional — leave blank to disable)
+	// When set, /api/chat and /api/chat/stream require a matching
+	// "X-Api-Token" request header (or "Authorization: Bearer <token>").
+	ChatAPIToken string
+
 	// Observability
 	LogLevel     slog.Level
 	AgentVersion string // injected at build time via -ldflags
@@ -156,6 +161,9 @@ func Load() (*Config, error) {
 
 	// Optional database config
 	cfg.DatabaseDSN = os.Getenv("DATABASE_DSN")
+
+	// Optional chat API auth token
+	cfg.ChatAPIToken = strings.TrimSpace(os.Getenv("CHAT_API_TOKEN"))
 
 	// Optional email notifier config
 	cfg.SMTPHost = os.Getenv("SMTP_HOST")

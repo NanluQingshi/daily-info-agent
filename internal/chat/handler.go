@@ -16,17 +16,48 @@ const maxMessageLen = 500
 
 // Handler implements the Echo handler for POST /api/chat.
 type Handler struct {
-	runner *agent.Runner
-	logger *slog.Logger
+	runner   *agent.Runner
+	logger   *slog.Logger
+	apiToken string // when non-empty, requests must carry it in a header
 }
 
 // New creates a Handler backed by the given agent Runner.
-func New(runner *agent.Runner, logger *slog.Logger) *Handler {
-	return &Handler{runner: runner, logger: logger}
+// apiToken is optional; when non-empty it gates /api/chat and /api/chat/stream.
+func New(runner *agent.Runner, apiToken string, logger *slog.Logger) *Handler {
+	return &Handler{runner: runner, apiToken: apiToken, logger: logger}
+}
+
+// checkAuth returns true when the request is authorized to call the chat API.
+// When no token is configured, all requests pass. Otherwise the request must
+// carry the token in "X-Api-Token" or "Authorization: Bearer <token>".
+func (h *Handler) checkAuth(c echo.Context) bool {
+	if h.apiToken == "" {
+		return true
+	}
+	if c.Request().Header.Get("X-Api-Token") == h.apiToken {
+		return true
+	}
+	if bearer := c.Request().Header.Get("Authorization"); strings.HasPrefix(bearer, "Bearer ") {
+		if strings.TrimPrefix(bearer, "Bearer ") == h.apiToken {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *Handler) unauthorized(c echo.Context) error {
+	return c.JSON(http.StatusUnauthorized, models.ChatErrorResponse{
+		Error:   "unauthorized",
+		Message: "missing or invalid API token",
+	})
 }
 
 // Handle is the Echo HandlerFunc registered at POST /api/chat.
 func (h *Handler) Handle(c echo.Context) error {
+	if !h.checkAuth(c) {
+		return h.unauthorized(c)
+	}
+
 	reqStart := time.Now()
 
 	var req models.ChatRequest

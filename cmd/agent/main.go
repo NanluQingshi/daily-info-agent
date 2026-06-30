@@ -238,6 +238,7 @@ func runServerMode(
 	)
 	chatHandler := chat.New(
 		agentRunner,
+		cfg.ChatAPIToken,
 		logger.With(slog.String("component", "chat")),
 	)
 
