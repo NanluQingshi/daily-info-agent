@@ -89,3 +89,10 @@ SELECT run_id, total_fetched, total_processed, total_saved,
 FROM run_logs
 ORDER BY started_at DESC
 LIMIT 10`
+
+const sqlGetRunLog = `
+SELECT run_id, total_fetched, total_processed, total_saved,
+       total_published, total_skipped, total_failed,
+       duration_ms, fatal_error, started_at, finished_at
+FROM run_logs
+WHERE run_id = $1`
