@@ -50,7 +50,7 @@ var toolDefs = []openai.Tool{
 					"category": {
 						"type": "string",
 						"enum": ["金融", "政治", "经济", "科技/AI", "国际"],
-						"description": "新闻分类"
+						"description": "新闻分类，会作为额外关键词加入搜索以提升相关性"
 					}
 				},
 				"required": ["keywords", "category"]
@@ -168,11 +168,37 @@ func (e *toolExecutor) searchNews(ctx context.Context, argsJSON string) (string,
 		return "keywords 不能为空", nil
 	}
 
-	items, err := e.mgr.FetchForTopic(ctx, args.Keywords, e.maxNews)
+	// Map the requested category to an English topic keyword so it actually
+	// biases the NewsAPI query and the local keyword filter — otherwise the
+	// field was parsed and silently dropped.
+	keywords := args.Keywords
+	if kw, ok := categoryTopicKeyword(args.Category); ok {
+		keywords = append(append([]string{}, args.Keywords...), kw)
+	}
+
+	items, err := e.mgr.FetchForTopic(ctx, keywords, e.maxNews)
 	if err != nil || len(items) == 0 {
 		return "未找到相关新闻", nil
 	}
 	return formatItems(items), items
+}
+
+// categoryTopicKeyword maps an internal category to an English search term.
+// Returns ok=false for empty/unknown categories.
+func categoryTopicKeyword(cat string) (string, bool) {
+	switch models.Category(cat) {
+	case models.CategoryFinance:
+		return "finance", true
+	case models.CategoryPolitics:
+		return "politics", true
+	case models.CategoryEconomy:
+		return "economy", true
+	case models.CategoryTechAI:
+		return "technology AI", true
+	case models.CategoryInternational:
+		return "world international", true
+	}
+	return "", false
 }
 
 // searchStoredArticles implements the search_stored_articles tool.
