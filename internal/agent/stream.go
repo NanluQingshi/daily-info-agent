@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	openai "github.com/sashabaranov/go-openai"
+	"github.com/user/daily-info-agent/pkg/backoff"
 	"github.com/user/daily-info-agent/pkg/models"
 )
 
@@ -195,25 +196,45 @@ func (r *Runner) streamLLM(ctx context.Context, messages []openai.ChatCompletion
 		return fmt.Errorf("marshal stream request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		r.baseURL+"/chat/completions", bytes.NewReader(bodyBytes))
-	if err != nil {
-		return fmt.Errorf("build stream request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+r.apiKey)
-	httpReq.Header.Set("Accept", "text/event-stream")
+	// Establish the SSE connection with retries for transient failures
+	// (429, 5xx, network). Once a 2xx response is received we commit to
+	// consuming the body — mid-stream errors cannot be retried without
+	// emitting duplicate tokens.
+	var httpResp *http.Response
+	err = backoff.Retry(ctx, 3, 2*time.Second, func() error {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
+			r.baseURL+"/chat/completions", bytes.NewReader(bodyBytes))
+		if err != nil {
+			return fmt.Errorf("build stream request: %w", err)
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Authorization", "Bearer "+r.apiKey)
+		httpReq.Header.Set("Accept", "text/event-stream")
 
-	httpResp, err := r.httpClient.Do(httpReq)
+		resp, err := r.streamClient.Do(httpReq)
+		if err != nil {
+			return &backoff.RetryableError{Cause: fmt.Errorf("stream http do: %w", err)}
+		}
+
+		if resp.StatusCode == 429 || resp.StatusCode >= 500 {
+			raw, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			return &backoff.RetryableError{
+				Cause: fmt.Errorf("stream api http %d: %s", resp.StatusCode, string(raw)),
+			}
+		}
+		if resp.StatusCode >= 400 {
+			raw, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			return fmt.Errorf("stream api http %d: %s", resp.StatusCode, string(raw))
+		}
+		httpResp = resp
+		return nil
+	})
 	if err != nil {
-		return fmt.Errorf("stream http do: %w", err)
+		return err
 	}
 	defer httpResp.Body.Close()
-
-	if httpResp.StatusCode >= 400 {
-		raw, _ := io.ReadAll(httpResp.Body)
-		return fmt.Errorf("stream api http %d: %s", httpResp.StatusCode, string(raw))
-	}
 
 	return ParseLLMStream(httpResp.Body, onToken)
 }

@@ -253,7 +253,7 @@ func (h *Handler) TriggerFetch(c echo.Context) error {
 		}()
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 		defer cancel()
-		result := h.scheduler.Run(ctx)
+		result := h.scheduler.RunWithProgressAndID(ctx, h.cfg.DefaultCategories, nil, runID)
 		h.logger.Info("triggered fetch complete",
 			slog.String("run_id", result.RunID),
 			slog.Int("fetched", result.TotalFetched),

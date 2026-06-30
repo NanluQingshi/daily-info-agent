@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	openai "github.com/sashabaranov/go-openai"
 	"github.com/user/daily-info-agent/internal/fetcher"
+	"github.com/user/daily-info-agent/pkg/backoff"
 	"github.com/user/daily-info-agent/pkg/models"
 )
 
@@ -40,13 +41,14 @@ type RunResult struct {
 
 // Runner is the stateful agent that manages sessions and drives the LLM loop.
 type Runner struct {
-	baseURL    string
-	apiKey     string
-	modelID    string
-	httpClient *http.Client
-	sessions   *SessionStore
-	executor   *toolExecutor
-	logger     *slog.Logger
+	baseURL       string
+	apiKey        string
+	modelID       string
+	httpClient    *http.Client // non-streaming calls; bounded by Timeout
+	streamClient  *http.Client // streaming calls; no overall timeout (ctx controls lifetime)
+	sessions      *SessionStore
+	executor      *toolExecutor
+	logger        *slog.Logger
 }
 
 // New creates a Runner.
@@ -60,13 +62,14 @@ func New(
 	logger *slog.Logger,
 ) *Runner {
 	return &Runner{
-		baseURL:    strings.TrimRight(baseURL, "/"),
-		apiKey:     apiKey,
-		modelID:    modelID,
-		httpClient: &http.Client{Timeout: 60 * time.Second},
-		sessions:   NewSessionStore(),
-		executor:   newToolExecutor(mgr, db),
-		logger:     logger,
+		baseURL:      strings.TrimRight(baseURL, "/"),
+		apiKey:       apiKey,
+		modelID:      modelID,
+		httpClient:   &http.Client{Timeout: 60 * time.Second},
+		streamClient: &http.Client{}, // no overall timeout; SSE lifetime is bounded by ctx
+		sessions:     NewSessionStore(),
+		executor:     newToolExecutor(mgr, db),
+		logger:       logger,
 	}
 }
 
@@ -206,7 +209,22 @@ type llmResponse struct {
 
 // callLLM makes a raw HTTP POST to the LLM endpoint so that non-standard
 // fields (e.g. reasoning_content) are preserved in the parsed response.
+// Transient failures (429, 5xx, network errors) are retried with exponential
+// backoff; non-retryable errors (4xx other than 429) surface immediately.
 func (r *Runner) callLLM(ctx context.Context, messages []openai.ChatCompletionMessage) (llmResponse, error) {
+	var resp llmResponse
+	err := backoff.Retry(ctx, 3, 2*time.Second, func() error {
+		var err error
+		resp, err = r.callLLMOnce(ctx, messages)
+		return err
+	})
+	if err != nil {
+		return llmResponse{}, err
+	}
+	return resp, nil
+}
+
+func (r *Runner) callLLMOnce(ctx context.Context, messages []openai.ChatCompletionMessage) (llmResponse, error) {
 	// Convert messages to our llmMessage slice (which serialises identically
 	// to openai.ChatCompletionMessage for the fields we use).
 	llmMsgs := make([]llmMessage, len(messages))
@@ -241,22 +259,35 @@ func (r *Runner) callLLM(ctx context.Context, messages []openai.ChatCompletionMe
 
 	httpResp, err := r.httpClient.Do(httpReq)
 	if err != nil {
-		return llmResponse{}, fmt.Errorf("http do: %w", err)
+		// Network / connection errors are transient — retry.
+		return llmResponse{}, &backoff.RetryableError{Cause: fmt.Errorf("http do: %w", err)}
 	}
 	defer httpResp.Body.Close()
 
 	raw, err := io.ReadAll(httpResp.Body)
 	if err != nil {
-		return llmResponse{}, fmt.Errorf("read body: %w", err)
+		return llmResponse{}, &backoff.RetryableError{Cause: fmt.Errorf("read body: %w", err)}
 	}
 
 	var resp llmResponse
 	if err := json.Unmarshal(raw, &resp); err != nil {
-		return llmResponse{}, fmt.Errorf("unmarshal response: %w", err)
+		// A malformed body is most likely a transient proxy/gateway glitch.
+		return llmResponse{}, &backoff.RetryableError{Cause: fmt.Errorf("unmarshal response: %w", err)}
 	}
 
 	if resp.Error != nil {
+		// Provider-side error envelope: treat 5xx-class types as retryable.
+		if isRetryableErrorType(resp.Error.Type) {
+			return llmResponse{}, &backoff.RetryableError{
+				Cause: fmt.Errorf("api error (%s): %s", resp.Error.Type, resp.Error.Message),
+			}
+		}
 		return llmResponse{}, fmt.Errorf("api error (%s): %s", resp.Error.Type, resp.Error.Message)
+	}
+	if httpResp.StatusCode == 429 || httpResp.StatusCode >= 500 {
+		return llmResponse{}, &backoff.RetryableError{
+			Cause: fmt.Errorf("api http %d: %s", httpResp.StatusCode, string(raw)),
+		}
 	}
 	if httpResp.StatusCode >= 400 {
 		return llmResponse{}, fmt.Errorf("api http %d: %s", httpResp.StatusCode, string(raw))
@@ -266,4 +297,14 @@ func (r *Runner) callLLM(ctx context.Context, messages []openai.ChatCompletionMe
 	}
 
 	return resp, nil
+}
+
+// isRetryableErrorType returns true for provider error types that usually
+// resolve on retry (rate limits, server-side overload).
+func isRetryableErrorType(t string) bool {
+	switch t {
+	case "rate_limit_exceeded", "server_error", "overloaded_error", "temporarily_overloaded":
+		return true
+	}
+	return false
 }
