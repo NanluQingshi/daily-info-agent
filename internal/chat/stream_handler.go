@@ -14,6 +14,10 @@ import (
 // HandleStream is the Echo HandlerFunc registered at POST /api/chat/stream.
 // It validates the request then streams SSE events back to the client.
 func (h *Handler) HandleStream(c echo.Context) error {
+	if !h.checkAuth(c) {
+		return h.unauthorized(c)
+	}
+
 	var req models.ChatRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, models.ChatErrorResponse{

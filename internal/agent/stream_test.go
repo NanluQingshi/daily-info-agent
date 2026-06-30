@@ -253,3 +253,63 @@ func TestParseLLMStream_ReasoningContentFallback(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"思考中", "答案"}, tokens)
 }
+
+// TestRunStream_EmptyStopReply_EmitsFallback verifies that when the LLM returns
+// a stop response with empty content (and no reasoning_content) on a
+// non-streaming iteration, the stream emits the fallback reply instead of a
+// blank delta — matching the non-stream Run path.
+func TestRunStream_EmptyStopReply_EmitsFallback(t *testing.T) {
+	r := newRunner(t, func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, stopResp(""))
+	})
+
+	events := collectStream(r, context.Background(), "", "hi")
+
+	var reply strings.Builder
+	for _, e := range events {
+		if e.Type == agent.EventDelta {
+			reply.WriteString(e.Content)
+		}
+	}
+	assert.Equal(t, "抱歉，我暂时无法生成回复，请稍后再试。", reply.String())
+
+	// done should still fire so the client finalizes the turn.
+	var hasDone bool
+	for _, e := range events {
+		if e.Type == agent.EventDone {
+			hasDone = true
+		}
+	}
+	assert.True(t, hasDone, "expected a done event after fallback")
+}
+
+// TestRunStream_EmptyTokenStream_EmitsFallback drives the loop to the final
+// (streaming) iteration by returning tool_calls on every non-streaming call,
+// then streams zero tokens. The fallback reply must be emitted so the client
+// never renders an empty assistant bubble.
+func TestRunStream_EmptyTokenStream_EmitsFallback(t *testing.T) {
+	argsJSON := `{"keywords":["test"],"category":"国际"}`
+
+	r := newRunner(t, func(w http.ResponseWriter, req *http.Request) {
+		var body map[string]interface{}
+		json.NewDecoder(req.Body).Decode(&body)
+
+		if body["stream"] == true {
+			// Final streaming call: emit only the stop chunk, no content tokens.
+			sseTokens(w)
+			return
+		}
+		// Non-streaming calls: always tool_calls to reach the final iteration.
+		writeJSON(w, toolCallResp("search_news", argsJSON, "call-loop"))
+	})
+
+	events := collectStream(r, context.Background(), "", "test")
+
+	var reply strings.Builder
+	for _, e := range events {
+		if e.Type == agent.EventDelta {
+			reply.WriteString(e.Content)
+		}
+	}
+	assert.Equal(t, "抱歉，我暂时无法生成回复，请稍后再试。", reply.String())
+}

@@ -31,6 +31,8 @@ type Handler struct {
 
 	pipelineMu      sync.Mutex
 	pipelineRunning bool
+	runsMu          sync.RWMutex
+	runs            map[string]models.RunResult // runID -> result (populated when a run finishes)
 }
 
 // New creates a Handler.
@@ -47,6 +49,7 @@ func New(
 		publisher: pub,
 		cfg:       cfg,
 		logger:    logger,
+		runs:      make(map[string]models.RunResult),
 	}
 }
 
@@ -59,6 +62,7 @@ func (h *Handler) Register(g *echo.Group) {
 	g.DELETE("/articles/:id", h.DeleteArticle)
 	g.POST("/fetch", h.TriggerFetch)
 	g.GET("/fetch/stream", h.StreamFetch)
+	g.GET("/fetch/:run_id", h.GetFetchStatus)
 	g.GET("/stats", h.GetStats)
 }
 
@@ -253,7 +257,10 @@ func (h *Handler) TriggerFetch(c echo.Context) error {
 		}()
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 		defer cancel()
-		result := h.scheduler.Run(ctx)
+		result := h.scheduler.RunWithProgressAndID(ctx, h.cfg.DefaultCategories, nil, runID)
+		h.runsMu.Lock()
+		h.runs[runID] = result
+		h.runsMu.Unlock()
 		h.logger.Info("triggered fetch complete",
 			slog.String("run_id", result.RunID),
 			slog.Int("fetched", result.TotalFetched),
@@ -333,6 +340,93 @@ func (h *Handler) StreamFetch(c echo.Context) error {
 		case <-c.Request().Context().Done():
 			return nil
 		}
+	}
+}
+
+// GetFetchStatus handles GET /api/fetch/:run_id — returns the status of a
+// triggered pipeline run. While the run is in flight, status is "running"
+// (held in memory). Once it finishes, the in-memory result is returned;
+// after a restart, the persisted run_logs row is the source of truth.
+func (h *Handler) GetFetchStatus(c echo.Context) error {
+	runID := c.Param("run_id")
+	if runID == "" {
+		return errJSON(c, http.StatusBadRequest, "invalid_id", "run_id is required")
+	}
+
+	// In-flight or recently-finished (in memory).
+	h.runsMu.RLock()
+	result, ok := h.runs[runID]
+	h.runsMu.RUnlock()
+	if ok {
+		return c.JSON(http.StatusOK, fetchStatusFromResult(result))
+	}
+
+	// Still running (no in-memory result yet, but pipeline flag is up)?
+	h.pipelineMu.Lock()
+	running := h.pipelineRunning
+	h.pipelineMu.Unlock()
+	if running {
+		return c.JSON(http.StatusOK, map[string]any{
+			"run_id": runID,
+			"status": "running",
+		})
+	}
+
+	// Fall back to the persisted run log.
+	if h.store == nil {
+		return errJSON(c, http.StatusNotFound, "not_found", "no run record found and database is disabled")
+	}
+	log, err := h.store.GetRunLog(c.Request().Context(), runID)
+	if errors.Is(err, store.ErrNotFound) {
+		return errJSON(c, http.StatusNotFound, "not_found", "run not found")
+	}
+	if err != nil {
+		h.logger.Error("get run log failed", slog.String("run_id", runID), slog.String("error", err.Error()))
+		return errJSON(c, http.StatusInternalServerError, "db_error", "failed to get run status")
+	}
+
+	status := "done"
+	if log.FatalError != "" {
+		status = "error"
+	}
+	return c.JSON(http.StatusOK, map[string]any{
+		"run_id":          log.RunID,
+		"status":          status,
+		"fetched":         log.TotalFetched,
+		"processed":       log.TotalProcessed,
+		"saved":           log.TotalSaved,
+		"published":       log.TotalPublished,
+		"skipped":         log.TotalSkipped,
+		"failed":          log.TotalFailed,
+		"duration_ms":     log.DurationMs,
+		"fatal_error":     log.FatalError,
+		"started_at":      log.StartedAt.UTC().Format(time.RFC3339),
+		"finished_at":     log.FinishedAt.UTC().Format(time.RFC3339),
+	})
+}
+
+// fetchStatusFromResult adapts a scheduler RunResult into the status payload.
+func fetchStatusFromResult(r models.RunResult) map[string]any {
+	status := "done"
+	if r.FatalError != nil {
+		status = "error"
+	}
+	return map[string]any{
+		"run_id":      r.RunID,
+		"status":      status,
+		"fetched":     r.TotalFetched,
+		"processed":   r.TotalProcessed,
+		"saved":       r.TotalSaved,
+		"published":   r.TotalPublished,
+		"skipped":     r.TotalSkipped,
+		"failed":      r.TotalFailed,
+		"duration_ms": r.DurationMs,
+		"fatal_error": func() string {
+			if r.FatalError != nil {
+				return r.FatalError.Error()
+			}
+			return ""
+		}(),
 	}
 }
 

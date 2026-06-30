@@ -233,10 +233,12 @@ func runServerMode(
 		cfg.LLMAPIKey,
 		cfg.LLMModelID,
 		mgr,
+		st, // nil when DATABASE_DSN is not set; search_stored_articles is disabled
 		logger.With(slog.String("component", "agent")),
 	)
 	chatHandler := chat.New(
 		agentRunner,
+		cfg.ChatAPIToken,
 		logger.With(slog.String("component", "chat")),
 	)
 

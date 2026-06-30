@@ -92,6 +92,9 @@ func (s *Scheduler) RunForCategory(ctx context.Context, category models.Category
 	// Filter passing items
 	var passing []models.ProcessedArticle
 	for _, a := range articles {
+		if a.LLMSkipped {
+			continue
+		}
 		if a.Verification.Pass {
 			passing = append(passing, a)
 		}
@@ -102,24 +105,34 @@ func (s *Scheduler) RunForCategory(ctx context.Context, category models.Category
 
 // RunForCategories executes the full pipeline for the given categories.
 func (s *Scheduler) RunForCategories(ctx context.Context, categories []models.Category) models.RunResult {
-	return s.runPipeline(ctx, categories, nil)
+	return s.runPipeline(ctx, categories, nil, uuid.New().String())
 }
 
 // RunWithProgress executes the full pipeline and calls emit after each stage.
 // emit is called synchronously from the pipeline goroutine; implementations must not block.
 func (s *Scheduler) RunWithProgress(ctx context.Context, categories []models.Category, emit func(models.ProgressEvent)) models.RunResult {
-	return s.runPipeline(ctx, categories, emit)
+	return s.runPipeline(ctx, categories, emit, uuid.New().String())
+}
+
+// RunWithProgressAndID is like RunWithProgress but uses the given runID.
+// Useful when the caller needs to correlate the run with an external trigger
+// (e.g. an HTTP handler that returned the runID before the async run started).
+// If runID is empty a new one is generated.
+func (s *Scheduler) RunWithProgressAndID(ctx context.Context, categories []models.Category, emit func(models.ProgressEvent), runID string) models.RunResult {
+	if runID == "" {
+		runID = uuid.New().String()
+	}
+	return s.runPipeline(ctx, categories, emit, runID)
 }
 
 // runPipeline is the shared implementation of RunForCategories and RunWithProgress.
-func (s *Scheduler) runPipeline(ctx context.Context, categories []models.Category, emit func(models.ProgressEvent)) models.RunResult {
+func (s *Scheduler) runPipeline(ctx context.Context, categories []models.Category, emit func(models.ProgressEvent), runID string) models.RunResult {
 	fire := func(e models.ProgressEvent) {
 		if emit != nil {
 			emit(e)
 		}
 	}
 
-	runID := uuid.New().String()
 	start := time.Now()
 
 	s.logger.Info("scheduler run starting",
@@ -219,6 +232,13 @@ func (s *Scheduler) runPipeline(ctx context.Context, categories []models.Categor
 
 	var passing []models.ProcessedArticle
 	for _, a := range articles {
+		if a.LLMSkipped {
+			// The processor never produced AI output for this item (e.g.
+			// DeepSeek unavailable). Never publish raw, uncategorised
+			// articles to the website — count as skipped and move on.
+			result.TotalSkipped++
+			continue
+		}
 		if a.Verification.Pass {
 			passing = append(passing, a)
 		} else {

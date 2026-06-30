@@ -10,6 +10,7 @@ import (
 const (
 	maxHistoryMessages = 20            // 每个会话最多保留的消息条数
 	sessionTTL         = 2 * time.Hour // 不活跃超过此时长的会话自动清理
+	maxSessions        = 1000          // 最多并发活跃会话数；超出时淘汰最久未活跃的
 )
 
 // sessionEntry holds the conversation history for one session.
@@ -68,6 +69,24 @@ func (s *SessionStore) Set(sessionID string, messages []openai.ChatCompletionMes
 	s.sessions[sessionID] = &sessionEntry{
 		messages:  messages,
 		updatedAt: time.Now(),
+	}
+	// Evict the least-recently-active session when over capacity. Skip the
+	// just-touched entry so we never immediately drop what we just stored.
+	if len(s.sessions) > maxSessions {
+		var oldestID string
+		var oldestAt time.Time
+		for id, e := range s.sessions {
+			if id == sessionID {
+				continue
+			}
+			if oldestID == "" || e.updatedAt.Before(oldestAt) {
+				oldestID = id
+				oldestAt = e.updatedAt
+			}
+		}
+		if oldestID != "" {
+			delete(s.sessions, oldestID)
+		}
 	}
 }
 

@@ -77,9 +77,9 @@ func newHandler(t *testing.T, llmContent string) *chat.Handler {
 
 	cacheFile := filepath.Join(t.TempDir(), "dedup.json")
 	mgr := fetcher.NewManager([]fetcher.Fetcher{}, nil, nil, cacheFile, slog.Default())
-	runner := agent.New(srv.URL, "test-key", "deepseek-v4-pro", mgr, slog.Default())
+	runner := agent.New(srv.URL, "test-key", "deepseek-v4-pro", mgr, nil, slog.Default())
 
-	return chat.New(runner, slog.Default())
+	return chat.New(runner, "", slog.Default())
 }
 
 // newHandlerWithError wires up a handler whose LLM always returns a 503.
@@ -94,9 +94,9 @@ func newHandlerWithError(t *testing.T) *chat.Handler {
 
 	cacheFile := filepath.Join(t.TempDir(), "dedup.json")
 	mgr := fetcher.NewManager([]fetcher.Fetcher{}, nil, nil, cacheFile, slog.Default())
-	runner := agent.New(srv.URL, "test-key", "deepseek-v4-pro", mgr, slog.Default())
+	runner := agent.New(srv.URL, "test-key", "deepseek-v4-pro", mgr, nil, slog.Default())
 
-	return chat.New(runner, slog.Default())
+	return chat.New(runner, "", slog.Default())
 }
 
 // echoContext creates an Echo context for the given request.
@@ -105,6 +105,13 @@ func echoContext(e *echo.Echo, method, path, body string) (echo.Context, *httpte
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	rec := httptest.NewRecorder()
 	return e.NewContext(req, rec), rec
+}
+
+// echoContextWithHeader is like echoContext but sets one extra header.
+func echoContextWithHeader(e *echo.Echo, method, path, body, header, value string) (echo.Context, *httptest.ResponseRecorder) {
+	c, rec := echoContext(e, method, path, body)
+	c.Request().Header.Set(header, value)
+	return c, rec
 }
 
 // ---------------------------------------------------------------------------
@@ -255,4 +262,63 @@ func TestHandler_Health_Returns200OK(t *testing.T) {
 	var body map[string]string
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	assert.Equal(t, "ok", body["status"])
+}
+
+// ---------------------------------------------------------------------------
+// Auth — CHAT_API_TOKEN gating
+// ---------------------------------------------------------------------------
+
+// newHandlerWithToken wires up a handler that requires the given API token.
+func newHandlerWithToken(t *testing.T, llmContent, token string) *chat.Handler {
+	t.Helper()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/chat/completions", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(stopResponse(llmContent))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	cacheFile := filepath.Join(t.TempDir(), "dedup.json")
+	mgr := fetcher.NewManager([]fetcher.Fetcher{}, nil, nil, cacheFile, slog.Default())
+	runner := agent.New(srv.URL, "test-key", "deepseek-v4-pro", mgr, nil, slog.Default())
+
+	return chat.New(runner, token, slog.Default())
+}
+
+func TestHandler_Chat_TokenRequired_MissingHeader_Returns401(t *testing.T) {
+	h := newHandlerWithToken(t, "should not reach", "secret-token")
+	e := echo.New()
+	body, _ := json.Marshal(models.ChatRequest{Message: "你好"})
+	c, rec := echoContext(e, http.MethodPost, "/api/chat", string(body))
+	require.NoError(t, h.Handle(c))
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestHandler_Chat_TokenRequired_WrongHeader_Returns401(t *testing.T) {
+	h := newHandlerWithToken(t, "should not reach", "secret-token")
+	e := echo.New()
+	body, _ := json.Marshal(models.ChatRequest{Message: "你好"})
+	c, rec := echoContextWithHeader(e, http.MethodPost, "/api/chat", string(body), "X-Api-Token", "wrong")
+	require.NoError(t, h.Handle(c))
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestHandler_Chat_TokenRequired_XApiTokenHeader_Passes(t *testing.T) {
+	h := newHandlerWithToken(t, "hello", "secret-token")
+	e := echo.New()
+	body, _ := json.Marshal(models.ChatRequest{Message: "你好"})
+	c, rec := echoContextWithHeader(e, http.MethodPost, "/api/chat", string(body), "X-Api-Token", "secret-token")
+	require.NoError(t, h.Handle(c))
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestHandler_Chat_TokenRequired_BearerAuth_Passes(t *testing.T) {
+	h := newHandlerWithToken(t, "hello", "secret-token")
+	e := echo.New()
+	body, _ := json.Marshal(models.ChatRequest{Message: "你好"})
+	c, rec := echoContextWithHeader(e, http.MethodPost, "/api/chat", string(body), "Authorization", "Bearer secret-token")
+	require.NoError(t, h.Handle(c))
+	assert.Equal(t, http.StatusOK, rec.Code)
 }

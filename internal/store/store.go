@@ -18,6 +18,7 @@ var ErrNotFound = errors.New("store: record not found")
 type ArticleStore interface {
 	SaveArticles(ctx context.Context, articles []models.ProcessedArticle, runID string) (int, error)
 	SaveRunLog(ctx context.Context, log models.RunLogRow) error
+	GetRunLog(ctx context.Context, runID string) (models.RunLogRow, error)
 	ListArticles(ctx context.Context, f models.ArticleFilter) ([]models.ArticleRow, int, error)
 	GetArticle(ctx context.Context, id int64) (models.ArticleRow, error)
 	DeleteArticle(ctx context.Context, id int64) error
@@ -111,6 +112,9 @@ func (s *PostgresStore) SaveArticles(ctx context.Context, articles []models.Proc
 
 // articleStatus maps the verification result to a DB status string.
 func articleStatus(a models.ProcessedArticle) string {
+	if a.LLMSkipped {
+		return "skipped"
+	}
 	if !a.Verification.Pass {
 		return "skipped"
 	}
@@ -133,6 +137,29 @@ func (s *PostgresStore) SaveRunLog(ctx context.Context, log models.RunLogRow) er
 		log.FinishedAt,
 	)
 	return err
+}
+
+// GetRunLog returns the run log for a given runID, or ErrNotFound when absent.
+func (s *PostgresStore) GetRunLog(ctx context.Context, runID string) (models.RunLogRow, error) {
+	row := s.pool.QueryRow(ctx, sqlGetRunLog, runID)
+	var r models.RunLogRow
+	err := row.Scan(
+		&r.RunID,
+		&r.TotalFetched,
+		&r.TotalProcessed,
+		&r.TotalSaved,
+		&r.TotalPublished,
+		&r.TotalSkipped,
+		&r.TotalFailed,
+		&r.DurationMs,
+		&r.FatalError,
+		&r.StartedAt,
+		&r.FinishedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return models.RunLogRow{}, ErrNotFound
+	}
+	return r, err
 }
 
 // ListArticles returns a paginated, filtered list of articles and total count.

@@ -47,14 +47,17 @@ func (c *dedupCache) has(rawURL string) bool {
 	return time.Since(seen) < 7*24*time.Hour
 }
 
-// add records the URL in the cache (no-op if already present).
-func (c *dedupCache) add(rawURL string) {
+// add records the URL in the cache. Returns true when the URL was new
+// (i.e. the cache actually changed and a save is warranted).
+func (c *dedupCache) add(rawURL string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	key := urlHash(rawURL)
-	if _, ok := c.Entries[key]; !ok {
-		c.Entries[key] = time.Now().UTC()
+	if _, ok := c.Entries[key]; ok {
+		return false
 	}
+	c.Entries[key] = time.Now().UTC()
+	return true
 }
 
 // save persists the cache to disk, pruning entries older than 7 days.
@@ -124,95 +127,24 @@ func NewManager(fetchers []Fetcher, rssFeeds []string, rssHubRoutes []string, ca
 // All source errors are logged as warnings; the method returns an error only if
 // ALL sources fail.
 func (m *Manager) FetchAll(ctx context.Context, cfgs []models.FetchConfig) ([]models.RawItem, error) {
-	if len(cfgs) == 0 {
-		return nil, nil
+	items, err := m.fetchConcurrent(ctx, cfgs, true)
+	if err != nil {
+		return nil, err
 	}
-
-	type job struct {
-		fetcher Fetcher
-		cfg     models.FetchConfig
-	}
-
-	// Build job list — assign each config to the appropriate fetcher by SourceType.
-	var jobs []job
-	fetcherMap := make(map[models.SourceType]Fetcher)
-	for _, f := range m.fetchers {
-		switch f.Name() {
-		case "rss":
-			fetcherMap[models.SourceTypeRSS] = f
-		case "newsapi":
-			fetcherMap[models.SourceTypeNewsAPI] = f
-		case "rsshub":
-			fetcherMap[models.SourceTypeRSSHub] = f
+	// Mark fetched URLs so subsequent runs skip them. Skip the disk write
+	// when nothing changed — a no-new-items run shouldn't touch the file.
+	changed := false
+	for _, item := range items {
+		if m.cache.add(item.URL) {
+			changed = true
 		}
 	}
-
-	for _, cfg := range cfgs {
-		f, ok := fetcherMap[cfg.Type]
-		if !ok {
-			m.logger.Warn("no fetcher registered for source type",
-				slog.String("source_type", string(cfg.Type)),
-				slog.String("url", cfg.URL),
-			)
-			continue
-		}
-		jobs = append(jobs, job{fetcher: f, cfg: cfg})
-	}
-
-	results := make(chan fetchResult, len(jobs))
-	var wg sync.WaitGroup
-
-	for _, j := range jobs {
-		wg.Add(1)
-		go func(jj job) {
-			defer wg.Done()
-			items, err := jj.fetcher.Fetch(ctx, jj.cfg)
-			results <- fetchResult{items: items, err: err}
-		}(j)
-	}
-
-	wg.Wait()
-	close(results)
-
-	var allItems []models.RawItem
-	var errCount int
-	seen := make(map[string]struct{}) // in-run dedup
-
-	for r := range results {
-		if r.err != nil {
-			m.logger.Warn("fetcher error",
-				slog.String("error", r.err.Error()),
-			)
-			errCount++
-			continue
-		}
-		for _, item := range r.items {
-			h := urlHash(item.URL)
-			if _, dup := seen[h]; dup {
-				continue
-			}
-			if m.cache.has(item.URL) {
-				m.logger.Debug("dedup skip", slog.String("url", item.URL))
-				continue
-			}
-			seen[h] = struct{}{}
-			allItems = append(allItems, item)
+	if changed {
+		if saveErr := m.cache.save(); saveErr != nil {
+			m.logger.Warn("failed to save dedup cache", slog.String("error", saveErr.Error()))
 		}
 	}
-
-	if errCount > 0 && len(allItems) == 0 && errCount == len(jobs) {
-		return nil, fmt.Errorf("all %d sources failed", errCount)
-	}
-
-	// Mark fetched URLs so subsequent runs skip them.
-	for _, item := range allItems {
-		m.cache.add(item.URL)
-	}
-	if saveErr := m.cache.save(); saveErr != nil {
-		m.logger.Warn("failed to save dedup cache", slog.String("error", saveErr.Error()))
-	}
-
-	return allItems, nil
+	return items, nil
 }
 
 // newsAPIEverythingURL is the NewsAPI endpoint for full keyword search.
@@ -296,8 +228,21 @@ func (m *Manager) FetchForTopic(ctx context.Context, keywords []string, maxItems
 // fetchRaw is like FetchAll but never reads or writes the dedup cache.
 // Used by FetchForTopic so chat queries always see fresh articles.
 func (m *Manager) fetchRaw(ctx context.Context, cfgs []models.FetchConfig) ([]models.RawItem, error) {
+	return m.fetchConcurrent(ctx, cfgs, false)
+}
+
+// fetchConcurrent is the shared implementation behind FetchAll and fetchRaw.
+// When useCache is true, the persistent dedup cache is consulted (and items
+// seen there are skipped); the caller is responsible for marking newly fetched
+// URLs and persisting. When false, only in-run deduplication applies.
+func (m *Manager) fetchConcurrent(ctx context.Context, cfgs []models.FetchConfig, useCache bool) ([]models.RawItem, error) {
 	if len(cfgs) == 0 {
 		return nil, nil
+	}
+
+	type job struct {
+		fetcher Fetcher
+		cfg     models.FetchConfig
 	}
 
 	fetcherMap := make(map[models.SourceType]Fetcher)
@@ -312,10 +257,6 @@ func (m *Manager) fetchRaw(ctx context.Context, cfgs []models.FetchConfig) ([]mo
 		}
 	}
 
-	type job struct {
-		fetcher Fetcher
-		cfg     models.FetchConfig
-	}
 	var jobs []job
 	for _, cfg := range cfgs {
 		f, ok := fetcherMap[cfg.Type]
@@ -342,7 +283,7 @@ func (m *Manager) fetchRaw(ctx context.Context, cfgs []models.FetchConfig) ([]mo
 	wg.Wait()
 	close(results)
 
-	seen := make(map[string]struct{})
+	seen := make(map[string]struct{}) // in-run dedup
 	var allItems []models.RawItem
 	errCount := 0
 	for r := range results {
@@ -354,6 +295,10 @@ func (m *Manager) fetchRaw(ctx context.Context, cfgs []models.FetchConfig) ([]mo
 		for _, item := range r.items {
 			h := urlHash(item.URL)
 			if _, dup := seen[h]; dup {
+				continue
+			}
+			if useCache && m.cache.has(item.URL) {
+				m.logger.Debug("dedup skip", slog.String("url", item.URL))
 				continue
 			}
 			seen[h] = struct{}{}
