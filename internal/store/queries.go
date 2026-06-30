@@ -35,7 +35,9 @@ UPDATE articles SET status = 'pending', external_id = NULL, updated_at = NOW()
 WHERE id = $1`
 
 // sqlListArticles uses nullable parameters so filters are optional.
-// $5 is an optional keyword matched case-insensitively against title and summary.
+// When $5 (the keyword) is non-null, results are ranked by ts_rank against the
+// search_tsv tsvector (title + summary) using a plainto_tsquery — replacing the
+// old ILIKE '%query%' scan. When $5 is null, ordering falls back to created_at.
 const sqlListArticles = `
 SELECT id, run_id, source_url, title, description, content, summary,
        category, source_domain, source_type, credibility_score,
@@ -47,9 +49,11 @@ WHERE ($1::text        IS NULL OR category   = $1)
   AND ($2::text        IS NULL OR status     = $2)
   AND ($3::timestamptz IS NULL OR created_at >= $3)
   AND ($4::timestamptz IS NULL OR created_at <= $4)
-  AND ($5::text        IS NULL OR title   ILIKE '%' || $5 || '%'
-                                OR summary ILIKE '%' || $5 || '%')
-ORDER BY created_at DESC
+  AND ($5::text        IS NULL OR search_tsv @@ plainto_tsquery('simple', $5))
+ORDER BY
+  CASE WHEN $5::text IS NULL THEN created_at END DESC,
+  CASE WHEN $5::text IS NOT NULL THEN ts_rank(search_tsv, plainto_tsquery('simple', $5)) END DESC,
+  created_at DESC
 LIMIT $6 OFFSET $7`
 
 const sqlCountArticles = `
@@ -58,8 +62,7 @@ WHERE ($1::text        IS NULL OR category   = $1)
   AND ($2::text        IS NULL OR status     = $2)
   AND ($3::timestamptz IS NULL OR created_at >= $3)
   AND ($4::timestamptz IS NULL OR created_at <= $4)
-  AND ($5::text        IS NULL OR title   ILIKE '%' || $5 || '%'
-                                OR summary ILIKE '%' || $5 || '%')`
+  AND ($5::text        IS NULL OR search_tsv @@ plainto_tsquery('simple', $5))`
 
 const sqlInsertRunLog = `
 INSERT INTO run_logs (
