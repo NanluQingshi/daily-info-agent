@@ -113,6 +113,7 @@ func (p *Processor) ProcessBatch(ctx context.Context, items []models.RawItem, ru
 					Raw:          &items[start+i],
 					RunID:        runID,
 					AgentVersion: "1.0.0",
+					LLMSkipped:   true,
 				})
 			}
 			continue
@@ -142,6 +143,7 @@ func (p *Processor) ProcessBatch(ctx context.Context, items []models.RawItem, ru
 					slog.String("url", item.URL),
 					slog.String("run_id", runID),
 				)
+				article.LLMSkipped = true
 			}
 			articles = append(articles, article)
 		}

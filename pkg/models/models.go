@@ -155,6 +155,10 @@ type ProcessedArticle struct {
 	CredibilityScore float64
 	Tags             []string
 	DetectedLanguage string
+	// LLMSkipped is true when the processor never obtained AI output for this
+	// item (e.g. DeepSeek was unavailable). Such articles lack a category and
+	// summary and should not be published.
+	LLMSkipped bool
 
 	// Verification
 	Verification VerificationResult

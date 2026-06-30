@@ -92,6 +92,9 @@ func (s *Scheduler) RunForCategory(ctx context.Context, category models.Category
 	// Filter passing items
 	var passing []models.ProcessedArticle
 	for _, a := range articles {
+		if a.LLMSkipped {
+			continue
+		}
 		if a.Verification.Pass {
 			passing = append(passing, a)
 		}
@@ -229,6 +232,13 @@ func (s *Scheduler) runPipeline(ctx context.Context, categories []models.Categor
 
 	var passing []models.ProcessedArticle
 	for _, a := range articles {
+		if a.LLMSkipped {
+			// The processor never produced AI output for this item (e.g.
+			// DeepSeek unavailable). Never publish raw, uncategorised
+			// articles to the website — count as skipped and move on.
+			result.TotalSkipped++
+			continue
+		}
 		if a.Verification.Pass {
 			passing = append(passing, a)
 		} else {

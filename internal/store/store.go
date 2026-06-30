@@ -112,6 +112,9 @@ func (s *PostgresStore) SaveArticles(ctx context.Context, articles []models.Proc
 
 // articleStatus maps the verification result to a DB status string.
 func articleStatus(a models.ProcessedArticle) string {
+	if a.LLMSkipped {
+		return "skipped"
+	}
 	if !a.Verification.Pass {
 		return "skipped"
 	}
