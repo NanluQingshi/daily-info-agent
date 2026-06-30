@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -80,47 +81,55 @@ func (r *Runner) RunStream(ctx context.Context, sessionID, userMessage string, s
 	for iteration := 0; iteration < maxIterations; iteration++ {
 		send(StreamEvent{Type: EventThinking})
 
-		// ── Non-final iterations: use regular (non-streaming) call ─────────
-		// We need to see tool_calls before we can execute tools; streaming
+		// ── Tool-discovery pass: non-streaming call WITH tools ─────────────
+		// We need to see tool_calls before we can execute them; streaming
 		// tool-call assembly is fiddly and not worth the complexity here.
-		if iteration < maxIterations-1 {
-			resp, err := r.callLLM(ctx, messages)
-			if err != nil {
-				send(StreamEvent{Type: EventError, Content: err.Error()})
-				return
-			}
-			choice := resp.Choices[0]
+		// Tools stay attached on every iteration so the model can still
+		// request another tool call late in the loop.
+		resp, err := r.callLLM(ctx, messages)
+		if err != nil {
+			send(StreamEvent{Type: EventError, Content: err.Error()})
+			return
+		}
+		choice := resp.Choices[0]
 
-			if choice.FinishReason == "tool_calls" && len(choice.Message.ToolCalls) > 0 {
-				toolCalled = true
-				messages = append(messages, openai.ChatCompletionMessage{
-					Role:      openai.ChatMessageRoleAssistant,
-					Content:   choice.Message.Content,
-					ToolCalls: choice.Message.ToolCalls,
-				})
-				for _, tc := range choice.Message.ToolCalls {
-					send(StreamEvent{Type: EventTool, ToolName: tc.Function.Name})
-					r.logger.Info("tool call (stream)", "tool", tc.Function.Name)
+		if choice.FinishReason == "tool_calls" && len(choice.Message.ToolCalls) > 0 {
+			toolCalled = true
+			messages = append(messages, openai.ChatCompletionMessage{
+				Role:      openai.ChatMessageRoleAssistant,
+				Content:   choice.Message.Content,
+				ToolCalls: choice.Message.ToolCalls,
+			})
+			for _, tc := range choice.Message.ToolCalls {
+				send(StreamEvent{Type: EventTool, ToolName: tc.Function.Name})
+				r.logger.Info("tool call (stream)", "tool", tc.Function.Name)
 
-					result, items := r.executor.Execute(ctx, tc)
-					// Convert RawItem to ChatSource for the stream event.
-					for _, it := range items {
-						allSources = append(allSources, models.ChatSource{
-							URL:          it.URL,
-							Title:        it.Title,
-							SourceDomain: it.SourceDomain,
-						})
-					}
-					messages = append(messages, openai.ChatCompletionMessage{
-						Role:       openai.ChatMessageRoleTool,
-						Content:    result,
-						ToolCallID: tc.ID,
+				result, items := r.executor.Execute(ctx, tc)
+				for _, it := range items {
+					allSources = append(allSources, models.ChatSource{
+						URL:          it.URL,
+						Title:        it.Title,
+						SourceDomain: it.SourceDomain,
 					})
 				}
-				continue // next iteration
+				messages = append(messages, openai.ChatCompletionMessage{
+					Role:       openai.ChatMessageRoleTool,
+					Content:    result,
+					ToolCallID: tc.ID,
+				})
 			}
-
-			// Non-streaming stop response (e.g. reasoning model answered without tools).
+			// After executing tools, loop back for another discovery pass —
+			// unless we've hit the iteration cap, in which case fall through
+			// to a forced final-answer stream below.
+			if iteration < maxIterations-1 {
+				continue
+			}
+			r.logger.Warn("stream agent hit max iterations mid-tool; forcing final answer",
+				slog.Int("iteration", iteration+1),
+			)
+		} else {
+			// Non-streaming stop: the model answered without tools (e.g. a
+			// reasoning model). Emit whatever text it produced and finish.
 			finalReply := choice.Message.Content
 			if finalReply == "" {
 				finalReply = choice.Message.ReasoningContent
@@ -136,8 +145,11 @@ func (r *Runner) RunStream(ctx context.Context, sessionID, userMessage string, s
 			break
 		}
 
-		// ── Final iteration: stream the answer ──────────────────────────────
-		err := r.streamLLM(ctx, messages, func(token string) {
+		// ── Forced final-answer stream (tools omitted) ─────────────────────
+		// Reached only when the cap was hit mid-tool-call. Stream a direct
+		// answer without tools so the model is forced to summarise what it
+		// has gathered rather than request yet another tool.
+		err = r.streamLLM(ctx, messages, func(token string) {
 			send(StreamEvent{Type: EventDelta, Content: token})
 			fullReply.WriteString(token)
 		})
@@ -145,9 +157,6 @@ func (r *Runner) RunStream(ctx context.Context, sessionID, userMessage string, s
 			send(StreamEvent{Type: EventError, Content: err.Error()})
 			return
 		}
-		// If the stream produced no tokens (e.g. model returned an empty
-		// stream), emit the fallback so the client never renders a blank
-		// assistant bubble. Matches the non-stream path's behavior.
 		if fullReply.Len() == 0 {
 			send(StreamEvent{Type: EventDelta, Content: fallbackReply})
 			fullReply.WriteString(fallbackReply)
