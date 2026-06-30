@@ -124,6 +124,9 @@ func (r *Runner) RunStream(ctx context.Context, sessionID, userMessage string, s
 			if finalReply == "" {
 				finalReply = choice.Message.ReasoningContent
 			}
+			if finalReply == "" {
+				finalReply = fallbackReply
+			}
 			send(StreamEvent{Type: EventDelta, Content: finalReply})
 			fullReply.WriteString(finalReply)
 			messages = append(messages, openai.ChatCompletionMessage{
@@ -140,6 +143,13 @@ func (r *Runner) RunStream(ctx context.Context, sessionID, userMessage string, s
 		if err != nil {
 			send(StreamEvent{Type: EventError, Content: err.Error()})
 			return
+		}
+		// If the stream produced no tokens (e.g. model returned an empty
+		// stream), emit the fallback so the client never renders a blank
+		// assistant bubble. Matches the non-stream path's behavior.
+		if fullReply.Len() == 0 {
+			send(StreamEvent{Type: EventDelta, Content: fallbackReply})
+			fullReply.WriteString(fallbackReply)
 		}
 		messages = append(messages, openai.ChatCompletionMessage{
 			Role: openai.ChatMessageRoleAssistant, Content: fullReply.String(),

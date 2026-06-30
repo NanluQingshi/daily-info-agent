@@ -23,6 +23,12 @@ import (
 
 const maxIterations = 5 // guard against runaway tool-call loops
 
+// fallbackReply is sent when the LLM produces no final text after the agent
+// loop completes (e.g. empty content on a stop response, or a streaming pass
+// that delivered zero tokens). Keeps the UX consistent with the non-stream
+// path and gives the user something actionable instead of a blank bubble.
+const fallbackReply = "抱歉，我暂时无法生成回复，请稍后再试。"
+
 // RunResult is returned by Runner.Run after the agent loop completes.
 type RunResult struct {
 	SessionID  string
@@ -152,7 +158,7 @@ func (r *Runner) Run(ctx context.Context, sessionID, userMessage string) (RunRes
 	}
 
 	if finalReply == "" {
-		finalReply = "抱歉，我暂时无法生成回复，请稍后再试。"
+		finalReply = fallbackReply
 	}
 
 	r.sessions.Set(sessionID, messages)
