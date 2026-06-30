@@ -47,14 +47,17 @@ func (c *dedupCache) has(rawURL string) bool {
 	return time.Since(seen) < 7*24*time.Hour
 }
 
-// add records the URL in the cache (no-op if already present).
-func (c *dedupCache) add(rawURL string) {
+// add records the URL in the cache. Returns true when the URL was new
+// (i.e. the cache actually changed and a save is warranted).
+func (c *dedupCache) add(rawURL string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	key := urlHash(rawURL)
-	if _, ok := c.Entries[key]; !ok {
-		c.Entries[key] = time.Now().UTC()
+	if _, ok := c.Entries[key]; ok {
+		return false
 	}
+	c.Entries[key] = time.Now().UTC()
+	return true
 }
 
 // save persists the cache to disk, pruning entries older than 7 days.
@@ -128,12 +131,18 @@ func (m *Manager) FetchAll(ctx context.Context, cfgs []models.FetchConfig) ([]mo
 	if err != nil {
 		return nil, err
 	}
-	// Mark fetched URLs so subsequent runs skip them.
+	// Mark fetched URLs so subsequent runs skip them. Skip the disk write
+	// when nothing changed — a no-new-items run shouldn't touch the file.
+	changed := false
 	for _, item := range items {
-		m.cache.add(item.URL)
+		if m.cache.add(item.URL) {
+			changed = true
+		}
 	}
-	if saveErr := m.cache.save(); saveErr != nil {
-		m.logger.Warn("failed to save dedup cache", slog.String("error", saveErr.Error()))
+	if changed {
+		if saveErr := m.cache.save(); saveErr != nil {
+			m.logger.Warn("failed to save dedup cache", slog.String("error", saveErr.Error()))
+		}
 	}
 	return items, nil
 }
