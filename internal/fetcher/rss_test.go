@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -242,6 +244,36 @@ func TestFetcher_ParseRSSFeed_ContentTruncatedAt2000Chars(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, items, 1)
 	assert.LessOrEqual(t, len(items[0].Content), 2000)
+}
+
+// TestFetcher_ParseRSSFeed_ContentTruncationMultibyteSafe feeds 3-byte UTF-8
+// runes (Chinese) and asserts the truncation lands on a rune boundary — the
+// result must be valid UTF-8 and ≤ 2000 bytes. A naive byte slice would split
+// the last rune and produce invalid UTF-8.
+func TestFetcher_ParseRSSFeed_ContentTruncationMultibyteSafe(t *testing.T) {
+	// 1000 Chinese chars = 3000 bytes; truncation must cut at ≤2000 bytes on a
+	// rune boundary (2000 / 3 = 666 runes, 1998 bytes).
+	longContent := strings.Repeat("新", 1000)
+	feed := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel><title>T</title>
+  <item>
+    <title>Long Item</title>
+    <link>http://example.com/long</link>
+    <content:encoded><![CDATA[%s]]></content:encoded>
+  </item></channel></rss>`, longContent)
+
+	srv := serveFeed(t, feed, "application/rss+xml")
+	defer srv.Close()
+
+	f := fetcher.NewRSSFetcher(nil)
+	cfg := models.FetchConfig{Type: models.SourceTypeRSS, URL: srv.URL}
+
+	items, err := f.Fetch(context.Background(), cfg)
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	assert.LessOrEqual(t, len(items[0].Content), 2000)
+	assert.True(t, utf8.ValidString(items[0].Content), "truncated content must be valid UTF-8")
 }
 
 // ---------------------------------------------------------------------------

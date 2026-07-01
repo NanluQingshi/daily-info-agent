@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mmcdole/gofeed"
 	"github.com/user/daily-info-agent/pkg/models"
@@ -85,7 +86,7 @@ func (r *rssFetcher) Fetch(ctx context.Context, cfg models.FetchConfig) ([]model
 
 		content := item.Content
 		if len(content) > 2000 {
-			content = content[:2000]
+			content = truncateAtRuneBoundary(content, 2000)
 		}
 
 		lang := feed.Language
@@ -130,4 +131,20 @@ func normalizeLang(lang string) string {
 	// Accept "en-US", "zh-CN", etc. — return only the primary subtag.
 	parts := strings.SplitN(lang, "-", 2)
 	return strings.ToLower(parts[0])
+}
+
+// truncateAtRuneBoundary returns the longest prefix of s whose byte length
+// is ≤ maxBytes, cut on a UTF-8 rune boundary. A naive s[:maxBytes] can split
+// a multi-byte rune and yield an invalid string that breaks JSON marshalling
+// and DB insertion.
+func truncateAtRuneBoundary(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	// Walk back from maxBytes to the start of a rune.
+	i := maxBytes
+	for i > 0 && !utf8.RuneStart(s[i]) {
+		i--
+	}
+	return s[:i]
 }
