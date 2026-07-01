@@ -239,6 +239,7 @@ func runServerMode(
 	chatHandler := chat.New(
 		agentRunner,
 		cfg.ChatAPIToken,
+		cfg.ChatRateLimitPerMin,
 		logger.With(slog.String("component", "chat")),
 	)
 

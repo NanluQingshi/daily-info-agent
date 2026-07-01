@@ -107,6 +107,10 @@ type Config struct {
 	// "X-Api-Token" request header (or "Authorization: Bearer <token>").
 	ChatAPIToken string
 
+	// Chat rate limit: max requests per minute per client IP across the chat
+	// endpoints. 0 disables limiting.
+	ChatRateLimitPerMin int
+
 	// Observability
 	LogLevel     slog.Level
 	AgentVersion string // injected at build time via -ldflags
@@ -164,6 +168,9 @@ func Load() (*Config, error) {
 
 	// Optional chat API auth token
 	cfg.ChatAPIToken = strings.TrimSpace(os.Getenv("CHAT_API_TOKEN"))
+
+	// Optional per-IP chat rate limit (requests per minute)
+	cfg.ChatRateLimitPerMin = parseIntOrDefault(os.Getenv("CHAT_RATE_LIMIT_PER_MIN"), 0)
 
 	// Optional email notifier config
 	cfg.SMTPHost = os.Getenv("SMTP_HOST")
@@ -265,6 +272,19 @@ func parsePort(raw string, fallback int) int {
 		return fallback
 	}
 	return p
+}
+
+// parseIntOrDefault parses a non-negative integer, returning fallback on
+// missing/invalid input.
+func parseIntOrDefault(raw string, fallback int) int {
+	if raw == "" {
+		return fallback
+	}
+	var n int
+	if _, err := fmt.Sscanf(raw, "%d", &n); err != nil || n < 0 {
+		return fallback
+	}
+	return n
 }
 
 // parseLogLevel converts a string log level to slog.Level, defaulting to INFO.

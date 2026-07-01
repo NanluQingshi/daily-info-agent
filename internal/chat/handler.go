@@ -16,15 +16,22 @@ const maxMessageLen = 500
 
 // Handler implements the Echo handler for POST /api/chat.
 type Handler struct {
-	runner   *agent.Runner
-	logger   *slog.Logger
-	apiToken string // when non-empty, requests must carry it in a header
+	runner    *agent.Runner
+	logger    *slog.Logger
+	apiToken  string // when non-empty, requests must carry it in a header
+	limiter   *rateLimiter
 }
 
 // New creates a Handler backed by the given agent Runner.
 // apiToken is optional; when non-empty it gates /api/chat and /api/chat/stream.
-func New(runner *agent.Runner, apiToken string, logger *slog.Logger) *Handler {
-	return &Handler{runner: runner, apiToken: apiToken, logger: logger}
+// rateLimitPerMin, when > 0, enables a per-IP token bucket of that many
+// requests per minute on the chat endpoints.
+func New(runner *agent.Runner, apiToken string, rateLimitPerMin int, logger *slog.Logger) *Handler {
+	h := &Handler{runner: runner, apiToken: apiToken, logger: logger}
+	if rateLimitPerMin > 0 {
+		h.limiter = newRateLimiter(rateLimitPerMin, time.Minute/time.Duration(rateLimitPerMin))
+	}
+	return h
 }
 
 // checkAuth returns true when the request is authorized to call the chat API.
@@ -52,10 +59,29 @@ func (h *Handler) unauthorized(c echo.Context) error {
 	})
 }
 
+// checkRateLimit applies per-IP throttling when enabled. Returns true when the
+// request may proceed.
+func (h *Handler) checkRateLimit(c echo.Context) bool {
+	if h.limiter == nil {
+		return true
+	}
+	return h.limiter.Allow(c.RealIP())
+}
+
+func (h *Handler) rateLimited(c echo.Context) error {
+	return c.JSON(http.StatusTooManyRequests, models.ChatErrorResponse{
+		Error:   "rate_limited",
+		Message: "too many requests, please slow down",
+	})
+}
+
 // Handle is the Echo HandlerFunc registered at POST /api/chat.
 func (h *Handler) Handle(c echo.Context) error {
 	if !h.checkAuth(c) {
 		return h.unauthorized(c)
+	}
+	if !h.checkRateLimit(c) {
+		return h.rateLimited(c)
 	}
 
 	reqStart := time.Now()

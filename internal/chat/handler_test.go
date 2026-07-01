@@ -79,7 +79,7 @@ func newHandler(t *testing.T, llmContent string) *chat.Handler {
 	mgr := fetcher.NewManager([]fetcher.Fetcher{}, nil, nil, cacheFile, slog.Default())
 	runner := agent.New(srv.URL, "test-key", "deepseek-v4-pro", mgr, nil, slog.Default())
 
-	return chat.New(runner, "", slog.Default())
+	return chat.New(runner, "", 0, slog.Default())
 }
 
 // newHandlerWithError wires up a handler whose LLM always returns a 503.
@@ -96,7 +96,7 @@ func newHandlerWithError(t *testing.T) *chat.Handler {
 	mgr := fetcher.NewManager([]fetcher.Fetcher{}, nil, nil, cacheFile, slog.Default())
 	runner := agent.New(srv.URL, "test-key", "deepseek-v4-pro", mgr, nil, slog.Default())
 
-	return chat.New(runner, "", slog.Default())
+	return chat.New(runner, "", 0, slog.Default())
 }
 
 // echoContext creates an Echo context for the given request.
@@ -284,7 +284,7 @@ func newHandlerWithToken(t *testing.T, llmContent, token string) *chat.Handler {
 	mgr := fetcher.NewManager([]fetcher.Fetcher{}, nil, nil, cacheFile, slog.Default())
 	runner := agent.New(srv.URL, "test-key", "deepseek-v4-pro", mgr, nil, slog.Default())
 
-	return chat.New(runner, token, slog.Default())
+	return chat.New(runner, token, 0, slog.Default())
 }
 
 func TestHandler_Chat_TokenRequired_MissingHeader_Returns401(t *testing.T) {
