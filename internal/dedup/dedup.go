@@ -5,6 +5,7 @@
 package dedup
 
 import (
+	"sort"
 	"strings"
 	"unicode"
 
@@ -74,22 +75,46 @@ func ByTitle(items []models.RawItem, trustedDomains []string) ([]models.RawItem,
 		clusters[root] = append(clusters[root], i)
 	}
 
-	// Pick best representative from each cluster; preserve original order via
-	// the smallest member index as the cluster key.
-	result := make([]models.RawItem, 0, len(clusters))
-	removed := 0
+	// Pick best representative from each cluster, then emit clusters in order
+	// of their smallest member index so the output order is deterministic and
+	// tracks the input order. (Map iteration order is randomised in Go, so
+	// emitting directly from `clusters` would shuffle results run to run.)
+	type cluster struct {
+		members []int
+	}
+	ordered := make([]cluster, 0, len(clusters))
 	for _, members := range clusters {
-		best := members[0]
-		for _, m := range members[1:] {
+		ordered = append(ordered, cluster{members: members})
+	}
+	sort.Slice(ordered, func(a, b int) bool {
+		return clusterMin(ordered[a].members) < clusterMin(ordered[b].members)
+	})
+
+	result := make([]models.RawItem, 0, len(ordered))
+	removed := 0
+	for _, c := range ordered {
+		best := c.members[0]
+		for _, m := range c.members[1:] {
 			if isBetter(items[m], items[best], trusted) {
 				best = m
 			}
 		}
 		result = append(result, items[best])
-		removed += len(members) - 1
+		removed += len(c.members) - 1
 	}
 
 	return result, removed
+}
+
+// clusterMin returns the smallest index in members, used as a stable sort key.
+func clusterMin(members []int) int {
+	min := members[0]
+	for _, m := range members[1:] {
+		if m < min {
+			min = m
+		}
+	}
+	return min
 }
 
 // isBetter returns true if candidate should replace current as the cluster
