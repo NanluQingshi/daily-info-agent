@@ -22,7 +22,9 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/golang-migrate/migrate/v4"
@@ -278,11 +280,26 @@ func runServerMode(
 	// Serve React frontend static files
 	serveStaticFrontend(e)
 
-	logger.Info("starting HTTP server", slog.String("addr", cfg.BindAddr))
-	if err := e.Start(cfg.BindAddr); err != nil && err != http.ErrServerClosed {
-		logger.Error("server error", slog.String("error", err.Error()))
-		os.Exit(1)
+	go func() {
+		logger.Info("starting HTTP server", slog.String("addr", cfg.BindAddr))
+		if err := e.Start(cfg.BindAddr); err != nil && err != http.ErrServerClosed {
+			logger.Error("server error", slog.String("error", err.Error()))
+			os.Exit(1)
+		}
+	}()
+
+	// Graceful shutdown on SIGINT / SIGTERM.
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	sig := <-quit
+	logger.Info("shutdown signal received", slog.String("signal", sig.String()))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := e.Shutdown(ctx); err != nil {
+		logger.Error("graceful shutdown failed", slog.String("error", err.Error()))
 	}
+	logger.Info("server stopped")
 }
 
 // serveStaticFrontend serves the React build from web/dist if it exists.
