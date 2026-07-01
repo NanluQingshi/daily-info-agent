@@ -24,14 +24,3 @@ Credibility scoring guidance:
 
 Input items:
 {{INPUT}}`
-
-// topicExtractionPromptTemplate is the user message for conversational topic extraction.
-// {{MESSAGE}} is replaced with the user's raw message.
-const topicExtractionPromptTemplate = `The user sent this message: "{{MESSAGE}}"
-
-Return a JSON object with:
-  "category": one of 金融, 政治, 经济, 科技/AI, 国际
-  "keywords": array of 3-5 English search keywords suitable for a news query
-  "summary":  one sentence describing what the user wants to know
-
-Output ONLY valid JSON.`

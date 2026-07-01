@@ -69,40 +69,6 @@ func (s *Scheduler) Run(ctx context.Context) models.RunResult {
 	return s.RunForCategories(ctx, s.cfg.DefaultCategories)
 }
 
-// RunForCategory runs the pipeline for a single category (used by the chat handler).
-func (s *Scheduler) RunForCategory(ctx context.Context, category models.Category) ([]models.ProcessedArticle, error) {
-	runID := uuid.New().String()
-	cfgs := buildFetchConfigs(s.cfg, []models.Category{category})
-
-	// Fetch
-	items, err := s.mgr.FetchAll(ctx, cfgs)
-	if err != nil {
-		return nil, err
-	}
-
-	// Process
-	articles, err := s.proc.ProcessBatch(ctx, items, runID)
-	if err != nil {
-		return nil, err
-	}
-
-	// Verify
-	articles = s.ver.Verify(articles)
-
-	// Filter passing items
-	var passing []models.ProcessedArticle
-	for _, a := range articles {
-		if a.LLMSkipped {
-			continue
-		}
-		if a.Verification.Pass {
-			passing = append(passing, a)
-		}
-	}
-
-	return passing, nil
-}
-
 // RunForCategories executes the full pipeline for the given categories.
 func (s *Scheduler) RunForCategories(ctx context.Context, categories []models.Category) models.RunResult {
 	return s.runPipeline(ctx, categories, nil, uuid.New().String())

@@ -4,18 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"sync/atomic"
 	"testing"
 	"time"
 
-	openai "github.com/sashabaranov/go-openai"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/user/daily-info-agent/internal/processor"
 	"github.com/user/daily-info-agent/pkg/models"
-	"log/slog"
 )
 
 // ---------------------------------------------------------------------------
@@ -274,166 +272,6 @@ func TestProcessor_ProcessBatch_MalformedJSONContent_DegradeGracefully(t *testin
 	require.NoError(t, err)
 	require.Len(t, articles, 1)
 	assert.Equal(t, models.Category(""), articles[0].Category)
-}
-
-// ---------------------------------------------------------------------------
-// ExtractTopic
-// ---------------------------------------------------------------------------
-
-func TestProcessor_ExtractTopic_ValidResponse(t *testing.T) {
-	topicJSON := `{"category":"科技/AI","keywords":["artificial intelligence","large language model","OpenAI"],"summary":"User wants the latest news about AI developments"}`
-
-	srv := newMockLLMServer(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(chatCompletionResponse(topicJSON))
-	})
-
-	proc := newProcessor(t, srv.URL)
-	result, err := proc.ExtractTopic(context.Background(), "What's happening with AI recently?")
-
-	require.NoError(t, err)
-	assert.Equal(t, models.CategoryTechAI, result.Category)
-	assert.NotEmpty(t, result.Keywords)
-	assert.Contains(t, result.Keywords, "artificial intelligence")
-	assert.NotEmpty(t, result.Summary)
-}
-
-func TestProcessor_ExtractTopic_InvalidCategory_DefaultsToTechAI(t *testing.T) {
-	topicJSON := `{"category":"unknown_category","keywords":["test"],"summary":"Test summary"}`
-
-	srv := newMockLLMServer(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(chatCompletionResponse(topicJSON))
-	})
-
-	proc := newProcessor(t, srv.URL)
-	result, err := proc.ExtractTopic(context.Background(), "some message")
-
-	require.NoError(t, err)
-	// Invalid category defaults to 科技/AI.
-	assert.Equal(t, models.CategoryTechAI, result.Category)
-}
-
-func TestProcessor_ExtractTopic_ServerUnavailable_ReturnsError(t *testing.T) {
-	var callCount atomic.Int32
-	srv := newMockLLMServer(t, func(w http.ResponseWriter, r *http.Request) {
-		callCount.Add(1)
-		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write(openAIErrorResponse("service unavailable"))
-	})
-
-	proc := newProcessor(t, srv.URL)
-	_, err := proc.ExtractTopic(context.Background(), "test message")
-
-	require.Error(t, err)
-	var unavailErr *processor.LLMUnavailableError
-	assert.ErrorAs(t, err, &unavailErr)
-}
-
-func TestProcessor_ExtractTopic_MalformedJSONContent_ReturnsParseError(t *testing.T) {
-	srv := newMockLLMServer(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(chatCompletionResponse("{not valid json"))
-	})
-
-	proc := newProcessor(t, srv.URL)
-	_, err := proc.ExtractTopic(context.Background(), "test message")
-
-	require.Error(t, err)
-	var parseErr *processor.LLMParseError
-	assert.ErrorAs(t, err, &parseErr)
-}
-
-// ---------------------------------------------------------------------------
-// NewLLMClient smoke test
-// ---------------------------------------------------------------------------
-
-func TestProcessor_NewLLMClient_CreatesValidClient(t *testing.T) {
-	client := processor.NewLLMClient("sk-test", "https://api.deepseek.com/v1")
-	assert.NotNil(t, client)
-	assert.IsType(t, &openai.Client{}, client)
-}
-
-// ---------------------------------------------------------------------------
-// ExtractTopic — code-fence stripping (real LLM platforms often ignore
-// "output only JSON" instructions and wrap their output in ```json...```)
-// ---------------------------------------------------------------------------
-
-func TestProcessor_ExtractTopic_CodeFencedJSON_ParsedSuccessfully(t *testing.T) {
-	// Many models return ```json\n{...}\n``` even when instructed not to.
-	fenced := "```json\n{\"category\":\"金融\",\"keywords\":[\"stock\",\"market\"],\"summary\":\"Stock market inquiry\"}\n```"
-
-	srv := newMockLLMServer(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(chatCompletionResponse(fenced))
-	})
-
-	proc := newProcessor(t, srv.URL)
-	result, err := proc.ExtractTopic(context.Background(), "How are the stock markets?")
-
-	require.NoError(t, err)
-	assert.Equal(t, models.CategoryFinance, result.Category)
-	assert.NotEmpty(t, result.Keywords)
-	assert.NotEmpty(t, result.Summary)
-}
-
-func TestProcessor_ExtractTopic_CodeFenceWithoutLanguageTag_ParsedSuccessfully(t *testing.T) {
-	// Some models use ``` without the json language tag.
-	fenced := "```\n{\"category\":\"政治\",\"keywords\":[\"government\",\"policy\"],\"summary\":\"Political news\"}\n```"
-
-	srv := newMockLLMServer(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(chatCompletionResponse(fenced))
-	})
-
-	proc := newProcessor(t, srv.URL)
-	result, err := proc.ExtractTopic(context.Background(), "Any politics news?")
-
-	require.NoError(t, err)
-	assert.Equal(t, models.CategoryPolitics, result.Category)
-}
-
-func TestProcessor_ExtractTopic_LeadingProseBeforeJSON_ParsedSuccessfully(t *testing.T) {
-	// Some models add a preamble before the JSON.
-	withProse := "Sure, here is the JSON output:\n{\"category\":\"科技/AI\",\"keywords\":[\"AI\",\"LLM\"],\"summary\":\"AI news\"}"
-
-	srv := newMockLLMServer(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(chatCompletionResponse(withProse))
-	})
-
-	proc := newProcessor(t, srv.URL)
-	result, err := proc.ExtractTopic(context.Background(), "What's new in AI?")
-
-	require.NoError(t, err)
-	assert.Equal(t, models.CategoryTechAI, result.Category)
-}
-
-func TestProcessor_ExtractTopic_RetriesToLLMOnTransportError(t *testing.T) {
-	// First call returns 503; second call succeeds.
-	// Verifies that ExtractTopic retries once after a transport/API error.
-	var callCount atomic.Int32
-	topicJSON := `{"category":"国际","keywords":["international","world"],"summary":"International news"}`
-
-	srv := newMockLLMServer(t, func(w http.ResponseWriter, r *http.Request) {
-		call := callCount.Add(1)
-		if call == 1 {
-			// First attempt fails.
-			w.WriteHeader(http.StatusServiceUnavailable)
-			w.Write(openAIErrorResponse("service unavailable"))
-			return
-		}
-		// Second attempt succeeds.
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(chatCompletionResponse(topicJSON))
-	})
-
-	proc := newProcessor(t, srv.URL)
-	result, err := proc.ExtractTopic(context.Background(), "World news?")
-
-	require.NoError(t, err, "should succeed on the second attempt")
-	assert.Equal(t, models.CategoryInternational, result.Category)
-	assert.Equal(t, int32(2), callCount.Load(), "expected exactly 2 LLM calls")
 }
 
 // ---------------------------------------------------------------------------
