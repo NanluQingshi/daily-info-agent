@@ -310,17 +310,17 @@ type ArticleListResponse struct {
 
 // RunLogRow maps to the run_logs table.
 type RunLogRow struct {
-	RunID          string
-	TotalFetched   int
-	TotalProcessed int
-	TotalSaved     int
-	TotalPublished int
-	TotalSkipped   int
-	TotalFailed    int
-	DurationMs     int64
-	FatalError     string
-	StartedAt      time.Time
-	FinishedAt     time.Time
+	RunID          string    `json:"run_id"`
+	TotalFetched   int       `json:"total_fetched"`
+	TotalProcessed int       `json:"total_processed"`
+	TotalSaved     int       `json:"total_saved"`
+	TotalPublished int       `json:"total_published"`
+	TotalSkipped   int       `json:"total_skipped"`
+	TotalFailed    int       `json:"total_failed"`
+	DurationMs     int64     `json:"duration_ms"`
+	FatalError     string    `json:"fatal_error"`
+	StartedAt      time.Time `json:"started_at"`
+	FinishedAt     time.Time `json:"finished_at"`
 }
 
 // StatsResult is returned by GET /api/stats.
