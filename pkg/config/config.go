@@ -231,9 +231,18 @@ func Load() (*Config, error) {
 		parts := strings.Split(raw, ",")
 		for _, p := range parts {
 			p = strings.TrimSpace(p)
-			if p != "" {
-				cfg.DefaultCategories = append(cfg.DefaultCategories, models.Category(p))
+			if p == "" {
+				continue
 			}
+			cat := models.Category(p)
+			if !cat.IsValid() {
+				return nil, fmt.Errorf("invalid category %q in DEFAULT_CATEGORIES (valid: %s)",
+					p, joinCategoryNames())
+			}
+			cfg.DefaultCategories = append(cfg.DefaultCategories, cat)
+		}
+		if len(cfg.DefaultCategories) == 0 {
+			return nil, fmt.Errorf("DEFAULT_CATEGORIES set but contained no valid categories")
 		}
 	} else {
 		cfg.DefaultCategories = []models.Category{
@@ -285,6 +294,16 @@ func parseIntOrDefault(raw string, fallback int) int {
 		return fallback
 	}
 	return n
+}
+
+// joinCategoryNames returns a comma-separated list of valid category names,
+// for use in error messages.
+func joinCategoryNames() string {
+	names := make([]string, len(models.AllCategories))
+	for i, c := range models.AllCategories {
+		names[i] = string(c)
+	}
+	return strings.Join(names, ", ")
 }
 
 // parseLogLevel converts a string log level to slog.Level, defaulting to INFO.
