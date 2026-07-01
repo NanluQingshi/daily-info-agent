@@ -1,13 +1,14 @@
 import { useState } from "react";
-import { BarChart2, MessageSquare, Newspaper } from "lucide-react";
+import { BarChart2, MessageSquare, Newspaper, Settings } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { ArticleList } from "./components/ArticleList";
 import { ChatView } from "./components/ChatView";
+import { SettingsPanel } from "./components/SettingsPanel";
 import { StatsPanel } from "./components/StatsPanel";
 
-type Tab = "chat" | "articles" | "stats";
+type Tab = "chat" | "articles" | "stats" | "settings";
 
 const NAV: { id: Tab; label: string; Icon: React.ElementType }[] = [
   { id: "chat",     label: "智能问答", Icon: MessageSquare },
@@ -44,6 +45,20 @@ export default function App() {
               </button>
             ))}
           </nav>
+          <div className="p-3 border-t">
+            <button
+              onClick={() => setTab("settings")}
+              className={cn(
+                "w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors",
+                tab === "settings"
+                  ? "bg-accent text-accent-foreground font-medium"
+                  : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+              )}
+            >
+              <Settings className="w-4 h-4 shrink-0" />
+              设置
+            </button>
+          </div>
         </aside>
 
         {/* Main content */}
@@ -60,6 +75,13 @@ export default function App() {
             <div className="h-full overflow-y-auto">
               <div className="max-w-4xl mx-auto px-6 py-6">
                 <StatsPanel />
+              </div>
+            </div>
+          )}
+          {tab === "settings" && (
+            <div className="h-full overflow-y-auto">
+              <div className="max-w-2xl mx-auto px-6 py-6">
+                <SettingsPanel />
               </div>
             </div>
           )}
