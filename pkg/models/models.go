@@ -261,30 +261,30 @@ type RunResult struct {
 
 // ArticleRow is the flat database projection of a stored article.
 type ArticleRow struct {
-	ID               int64
-	RunID            string
-	SourceURL        string
-	Title            string
-	Description      string
-	Content          string
-	Summary          string
-	Category         Category
-	SourceDomain     string
-	SourceType       string
-	CredibilityScore float64
-	Tags             []string
-	Language         string
-	DetectedLanguage string
-	AgentVersion     string
-	VerificationPass bool
-	SkipReason       SkipReason
-	DomainHit        bool
-	Status           string // "pending" | "published" | "skipped" | "failed"
-	ExternalID       *int64 // nullable; set after publishing to Java API
-	PublishedAt      *time.Time
-	FetchedAt        time.Time
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	ID               int64      `json:"id"`
+	RunID            string     `json:"run_id"`
+	SourceURL        string     `json:"source_url"`
+	Title            string     `json:"title"`
+	Description      string     `json:"description"`
+	Content          string     `json:"content"`
+	Summary          string     `json:"summary"`
+	Category         Category   `json:"category"`
+	SourceDomain     string     `json:"source_domain"`
+	SourceType       string     `json:"source_type"`
+	CredibilityScore float64    `json:"credibility_score"`
+	Tags             []string   `json:"tags"`
+	Language         string     `json:"language"`
+	DetectedLanguage string     `json:"detected_language"`
+	AgentVersion     string     `json:"agent_version"`
+	VerificationPass bool       `json:"verification_pass"`
+	SkipReason       SkipReason `json:"skip_reason"`
+	DomainHit        bool       `json:"domain_hit"`
+	Status           string     `json:"status"` // "pending" | "published" | "skipped" | "failed"
+	ExternalID       *int64     `json:"external_id"` // nullable; set after publishing to Java API
+	PublishedAt      *time.Time `json:"published_at"`
+	FetchedAt        time.Time  `json:"fetched_at"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
 }
 
 // ArticleFilter holds optional filter and pagination parameters for ListArticles.
