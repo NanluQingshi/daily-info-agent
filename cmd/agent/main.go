@@ -74,7 +74,7 @@ func main() {
 	)
 
 	// ---- Build shared HTTP client ----
-	httpClient := &http.Client{Timeout: 10 * time.Second}
+	httpClient := fetcher.WithUserAgent(&http.Client{Timeout: 10 * time.Second}, fetcher.DefaultUserAgent)
 
 	// ---- Build fetchers ----
 	fetchers := []fetcher.Fetcher{fetcher.NewRSSFetcher(httpClient)}
