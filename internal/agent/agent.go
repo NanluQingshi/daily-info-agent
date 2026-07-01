@@ -260,23 +260,38 @@ func (r *Runner) callLLMOnce(ctx context.Context, messages []openai.ChatCompleti
 	httpResp, err := r.httpClient.Do(httpReq)
 	if err != nil {
 		// Network / connection errors are transient — retry.
+		r.logger.Warn("llm http request failed",
+			slog.String("error", err.Error()),
+		)
 		return llmResponse{}, &backoff.RetryableError{Cause: fmt.Errorf("http do: %w", err)}
 	}
 	defer httpResp.Body.Close()
 
 	raw, err := io.ReadAll(httpResp.Body)
 	if err != nil {
+		r.logger.Warn("llm read body failed",
+			slog.Int("status", httpResp.StatusCode),
+			slog.String("error", err.Error()),
+		)
 		return llmResponse{}, &backoff.RetryableError{Cause: fmt.Errorf("read body: %w", err)}
 	}
 
 	var resp llmResponse
 	if err := json.Unmarshal(raw, &resp); err != nil {
-		// A malformed body is most likely a transient proxy/gateway glitch.
+		r.logger.Warn("llm unmarshal failed",
+			slog.Int("status", httpResp.StatusCode),
+			slog.String("body_preview", truncateForLog(string(raw), 200)),
+		)
 		return llmResponse{}, &backoff.RetryableError{Cause: fmt.Errorf("unmarshal response: %w", err)}
 	}
 
 	if resp.Error != nil {
 		// Provider-side error envelope: treat 5xx-class types as retryable.
+		r.logger.Warn("llm api error",
+			slog.String("error_type", resp.Error.Type),
+			slog.String("message", resp.Error.Message),
+			slog.Int("status", httpResp.StatusCode),
+		)
 		if isRetryableErrorType(resp.Error.Type) {
 			return llmResponse{}, &backoff.RetryableError{
 				Cause: fmt.Errorf("api error (%s): %s", resp.Error.Type, resp.Error.Message),
@@ -285,11 +300,19 @@ func (r *Runner) callLLMOnce(ctx context.Context, messages []openai.ChatCompleti
 		return llmResponse{}, fmt.Errorf("api error (%s): %s", resp.Error.Type, resp.Error.Message)
 	}
 	if httpResp.StatusCode == 429 || httpResp.StatusCode >= 500 {
+		r.logger.Warn("llm retryable http error",
+			slog.Int("status", httpResp.StatusCode),
+			slog.String("body_preview", truncateForLog(string(raw), 200)),
+		)
 		return llmResponse{}, &backoff.RetryableError{
 			Cause: fmt.Errorf("api http %d: %s", httpResp.StatusCode, string(raw)),
 		}
 	}
 	if httpResp.StatusCode >= 400 {
+		r.logger.Warn("llm non-retryable http error",
+			slog.Int("status", httpResp.StatusCode),
+			slog.String("body_preview", truncateForLog(string(raw), 200)),
+		)
 		return llmResponse{}, fmt.Errorf("api http %d: %s", httpResp.StatusCode, string(raw))
 	}
 	if len(resp.Choices) == 0 {
@@ -307,4 +330,14 @@ func isRetryableErrorType(t string) bool {
 		return true
 	}
 	return false
+}
+
+// truncateForLog returns the first n runes of s, for embedding in log fields
+// without dumping multi-KB error bodies.
+func truncateForLog(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
 }
