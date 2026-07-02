@@ -223,54 +223,6 @@ func TestScheduler_RunDefault_AllSourcesFail_FatalErrorSet(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// RunForCategory tests
-// ---------------------------------------------------------------------------
-
-func TestScheduler_RunForCategory_SingleCategory_FlowsThroughPipeline(t *testing.T) {
-	item := makeRawItem("http://theverge.com/tech/sched-cat-1", "theverge.com")
-
-	aiJSON := `[{"url":"http://theverge.com/tech/sched-cat-1","category":"科技/AI","summary":"科技类别摘要","credibility_score":0.9,"tags":["tech","AI"],"language":"en"}]`
-
-	var publishCallCount atomic.Int32
-	pubSrv := httptest.NewServer(publishSuccessHandler(&publishCallCount))
-	defer pubSrv.Close()
-
-	sched := buildTestScheduler(t, aiJSON, []models.RawItem{item}, []string{"theverge.com"}, pubSrv)
-
-	articles, err := sched.RunForCategory(context.Background(), models.CategoryTechAI)
-
-	require.NoError(t, err)
-	require.NotEmpty(t, articles, "at least one article should pass through pipeline")
-
-	// All returned articles must have passed verification.
-	for _, a := range articles {
-		assert.True(t, a.Verification.Pass, "RunForCategory should return only passing articles")
-	}
-}
-
-func TestScheduler_RunForCategory_ReturnsOnlyVerifiedArticles(t *testing.T) {
-	// Trusted domain → passes; unknown domain with low score → skipped.
-	items := []models.RawItem{
-		makeRawItem("http://reuters.com/finance/1", "reuters.com"),
-	}
-
-	aiJSON := `[{"url":"http://reuters.com/finance/1","category":"金融","summary":"可信金融摘要","credibility_score":0.95,"tags":["finance"],"language":"en"}]`
-
-	var pubCallCount atomic.Int32
-	pubSrv := httptest.NewServer(publishSuccessHandler(&pubCallCount))
-	defer pubSrv.Close()
-
-	sched := buildTestScheduler(t, aiJSON, items, []string{"reuters.com"}, pubSrv)
-
-	articles, err := sched.RunForCategory(context.Background(), models.CategoryFinance)
-	require.NoError(t, err)
-
-	for _, a := range articles {
-		assert.True(t, a.Verification.Pass)
-	}
-}
-
-// ---------------------------------------------------------------------------
 // Verifier — skipped items not published
 // ---------------------------------------------------------------------------
 

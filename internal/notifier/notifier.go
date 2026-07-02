@@ -61,7 +61,10 @@ type articleEntry struct {
 }
 
 // SendDailySummary renders an HTML email with the top articles per category and sends it.
-func (n *Notifier) SendDailySummary(_ context.Context, articles []models.ProcessedArticle, result models.RunResult) error {
+// The SMTP send runs in a goroutine bounded by ctx; if ctx is cancelled (or the
+// 30 s send deadline elapses) the function returns a context error without
+// blocking the caller further.
+func (n *Notifier) SendDailySummary(ctx context.Context, articles []models.ProcessedArticle, result models.RunResult) error {
 	byCategory := make(map[models.Category][]models.ProcessedArticle)
 	for _, a := range articles {
 		byCategory[a.Category] = append(byCategory[a.Category], a)
@@ -106,10 +109,8 @@ func (n *Notifier) SendDailySummary(_ context.Context, articles []models.Process
 	subject := fmt.Sprintf("每日资讯摘要 %s", data.Date)
 	msg := buildMIMEMessage(n.from, n.to, subject, body.String())
 
-	auth := smtp.PlainAuth("", n.user, n.password, n.host)
-	addr := fmt.Sprintf("%s:%d", n.host, n.port)
-	if err := smtp.SendMail(addr, auth, n.from, []string{n.to}, msg); err != nil {
-		return fmt.Errorf("smtp send: %w", err)
+	if err := n.sendSMTP(ctx, msg); err != nil {
+		return err
 	}
 
 	n.logger.Info("daily summary email sent",
@@ -118,6 +119,34 @@ func (n *Notifier) SendDailySummary(_ context.Context, articles []models.Process
 		slog.Int("articles", len(articles)),
 	)
 	return nil
+}
+
+// sendSMTP delivers msg via smtp.SendMail, bounded by ctx. smtp.SendMail has no
+// context support, so it runs in a goroutine; we select between its result and
+// ctx.Done(), with a hard 30 s ceiling so a hung SMTP server can't pin a
+// pipeline run indefinitely.
+func (n *Notifier) sendSMTP(ctx context.Context, msg []byte) error {
+	type result struct{ err error }
+	resCh := make(chan result, 1)
+
+	go func() {
+		auth := smtp.PlainAuth("", n.user, n.password, n.host)
+		addr := fmt.Sprintf("%s:%d", n.host, n.port)
+		resCh <- result{err: smtp.SendMail(addr, auth, n.from, []string{n.to}, msg)}
+	}()
+
+	sendCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	select {
+	case r := <-resCh:
+		if r.err != nil {
+			return fmt.Errorf("smtp send: %w", r.err)
+		}
+		return nil
+	case <-sendCtx.Done():
+		return fmt.Errorf("smtp send cancelled: %w", sendCtx.Err())
+	}
 }
 
 func buildMIMEMessage(from, to, subject, htmlBody string) []byte {

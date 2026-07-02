@@ -313,3 +313,36 @@ func TestLoad_CustomRSSHubRoutes_SemicolonSeparated(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"/cls/telegraph", "/jin10/flash_news"}, cfg.RSSHubRoutes)
 }
+
+// ---------------------------------------------------------------------------
+// Default categories validation
+// ---------------------------------------------------------------------------
+
+func TestLoad_InvalidDefaultCategory_ReturnsError(t *testing.T) {
+	setRequiredEnvVars(t)
+	t.Setenv("DEFAULT_CATEGORIES", "金融,不存在的分类")
+
+	_, err := config.Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid category")
+}
+
+func TestLoad_ValidCustomDefaultCategories(t *testing.T) {
+	setRequiredEnvVars(t)
+	t.Setenv("DEFAULT_CATEGORIES", "金融,科技/AI")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	require.Len(t, cfg.DefaultCategories, 2)
+	assert.Equal(t, models.CategoryFinance, cfg.DefaultCategories[0])
+	assert.Equal(t, models.CategoryTechAI, cfg.DefaultCategories[1])
+}
+
+func TestLoad_EmptyDefaultCategoriesEntry_ReturnsError(t *testing.T) {
+	setRequiredEnvVars(t)
+	t.Setenv("DEFAULT_CATEGORIES", ",")
+
+	_, err := config.Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no valid categories")
+}

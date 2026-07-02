@@ -17,10 +17,9 @@ import (
 )
 
 const (
-	publishPath         = "/api/agent/articles"
-	maxPublishAttempts  = 3
-	publishBaseDelay    = time.Second
-	interPublishDelay   = 100 * time.Millisecond // rate-limit courtesy
+	publishPath        = "/api/agent/articles"
+	maxPublishAttempts = 3
+	publishBaseDelay   = time.Second
 )
 
 // PublishOutcome is a machine-readable result code.

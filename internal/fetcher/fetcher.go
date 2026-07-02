@@ -10,7 +10,12 @@ import (
 	"github.com/user/daily-info-agent/pkg/models"
 )
 
-const defaultFetchTimeout = 10 * time.Second
+const (
+	defaultFetchTimeout = 10 * time.Second
+	// DefaultUserAgent is sent on every outbound fetcher request. Some RSS
+	// feeds and NewsAPI reject the empty/default Go UA with 403.
+	DefaultUserAgent = "DailyInfoAgent/1.0 (+https://github.com/NanluQingshi/daily-info-agent)"
+)
 
 // Fetcher is the common interface for all data-source adapters.
 type Fetcher interface {
@@ -41,4 +46,33 @@ func newHTTPClient(timeout time.Duration) *http.Client {
 		timeout = defaultFetchTimeout
 	}
 	return &http.Client{Timeout: timeout}
+}
+
+// userAgentTransport sets a default User-Agent header on outgoing requests
+// that do not already carry one.
+type userAgentTransport struct {
+	base http.RoundTripper
+	ua   string
+}
+
+func (t *userAgentTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Header.Get("User-Agent") == "" {
+		req.Header.Set("User-Agent", t.ua)
+	}
+	return t.base.RoundTrip(req)
+}
+
+// WithUserAgent wraps an *http.Client so every request carries userAgent
+// unless the caller sets one explicitly. A nil client gets a fresh default
+// client. This is safe to call on the shared client built in main.
+func WithUserAgent(client *http.Client, userAgent string) *http.Client {
+	if client == nil {
+		client = newHTTPClient(0)
+	}
+	base := client.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	client.Transport = &userAgentTransport{base: base, ua: userAgent}
+	return client
 }

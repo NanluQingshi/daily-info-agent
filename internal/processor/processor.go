@@ -41,13 +41,6 @@ func (e *LLMParseError) Error() string {
 }
 func (e *LLMParseError) Unwrap() error { return e.Cause }
 
-// TopicResult holds the structured output of topic extraction.
-type TopicResult struct {
-	Category models.Category
-	Keywords []string // search terms to pass to FetchForTopic
-	Summary  string   // one-sentence description of what the user wants
-}
-
 // Processor calls DeepSeek for AI enrichment.
 type Processor struct {
 	client  *openai.Client
@@ -256,76 +249,6 @@ func (p *Processor) processBatchIndividually(ctx context.Context, items []models
 		}
 	}
 	return results, nil
-}
-
-// ExtractTopic asks the LLM to identify the topic and most relevant category
-// from a free-form user message (used by the chat handler).
-//
-// It retries once after deepSeekRetryWait on transport/API errors.
-// response_format is intentionally omitted: many OpenAI-compatible endpoints
-// (including the USTC LLM platform) reject that parameter with a 4xx error.
-// Instead, the prompt explicitly requests JSON, and extractJSON strips any
-// accidental markdown code-fence wrappers from the response.
-func (p *Processor) ExtractTopic(ctx context.Context, message string) (TopicResult, error) {
-	prompt := strings.Replace(topicExtractionPromptTemplate, "{{MESSAGE}}", message, 1)
-
-	var lastErr error
-	for attempt := 0; attempt < 2; attempt++ {
-		if attempt > 0 {
-			select {
-			case <-ctx.Done():
-				return TopicResult{}, ctx.Err()
-			case <-time.After(deepSeekRetryWait):
-			}
-		}
-
-		resp, err := p.client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
-			Model: p.modelID,
-			Messages: []openai.ChatCompletionMessage{
-				{Role: openai.ChatMessageRoleSystem, Content: "You are a helpful assistant. Output ONLY valid JSON — no markdown, no explanation."},
-				{Role: openai.ChatMessageRoleUser, Content: prompt},
-			},
-			// response_format is omitted — see function comment.
-		})
-		if err != nil {
-			lastErr = err
-			p.logger.Debug("extract topic call error; will retry",
-				slog.Int("attempt", attempt+1),
-				slog.String("error", err.Error()),
-			)
-			continue
-		}
-		if len(resp.Choices) == 0 {
-			lastErr = fmt.Errorf("empty choices in response")
-			continue
-		}
-
-		raw := extractJSON(resp.Choices[0].Message.Content)
-
-		var parsed struct {
-			Category string   `json:"category"`
-			Keywords []string `json:"keywords"`
-			Summary  string   `json:"summary"`
-		}
-		if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
-			// Parse errors are not retried — the same model would return the
-			// same malformed output. Return immediately.
-			return TopicResult{}, &LLMParseError{Raw: raw, Cause: err}
-		}
-
-		cat := models.Category(parsed.Category)
-		if !cat.IsValid() {
-			cat = models.CategoryTechAI // sensible default
-		}
-
-		return TopicResult{
-			Category: cat,
-			Keywords: parsed.Keywords,
-			Summary:  parsed.Summary,
-		}, nil
-	}
-
-	return TopicResult{}, &LLMUnavailableError{Cause: lastErr}
 }
 
 // -----------------------------------------------------------------------

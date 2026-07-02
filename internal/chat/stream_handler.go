@@ -17,6 +17,9 @@ func (h *Handler) HandleStream(c echo.Context) error {
 	if !h.checkAuth(c) {
 		return h.unauthorized(c)
 	}
+	if !h.checkRateLimit(c) {
+		return h.rateLimited(c)
+	}
 
 	var req models.ChatRequest
 	if err := c.Bind(&req); err != nil {

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/user/daily-info-agent/pkg/models"
 )
 
@@ -92,6 +93,28 @@ func TestByTitle_EmptyInput(t *testing.T) {
 	got, removed := ByTitle(nil, nil)
 	assert.Equal(t, 0, removed)
 	assert.Empty(t, got)
+}
+
+// TestByTitle_OrderIsDeterministicAndInputOrdered verifies that distinct
+// (non-merged) items keep their input order across repeated calls. The
+// previous implementation iterated a map, randomising output order.
+func TestByTitle_OrderIsDeterministicAndInputOrdered(t *testing.T) {
+	items := []models.RawItem{
+		item("Alpha beta gamma delta epsilon zeta headline one", "a.com", ""),
+		item("Eta theta iota kappa lambda mu headline two", "b.com", ""),
+		item("Nu xi omicron pi rho sigma headline three", "c.com", ""),
+	}
+	// No two titles share enough tokens to merge, so all three survive.
+	// Their order must match the input on every call.
+	want := []string{items[0].Title, items[1].Title, items[2].Title}
+
+	for run := 0; run < 50; run++ {
+		got, removed := ByTitle(items, nil)
+		assert.Equal(t, 0, removed)
+		require.Len(t, got, 3)
+		gotTitles := []string{got[0].Title, got[1].Title, got[2].Title}
+		assert.Equal(t, want, gotTitles, "order changed on run %d", run)
+	}
 }
 
 func TestJaccard_IdenticalSets(t *testing.T) {

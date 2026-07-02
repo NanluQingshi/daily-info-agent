@@ -9,9 +9,32 @@ import type {
 } from "../types";
 
 const BASE = "/api";
+const TOKEN_KEY = "dia.chat_api_token";
+
+/** Returns the chat API token stored in localStorage, if any. */
+export function getApiToken(): string {
+  return localStorage.getItem(TOKEN_KEY) ?? "";
+}
+
+/** Stores (or clears, when empty) the chat API token in localStorage. */
+export function setApiToken(token: string): void {
+  const trimmed = token.trim();
+  if (trimmed) localStorage.setItem(TOKEN_KEY, trimmed);
+  else localStorage.removeItem(TOKEN_KEY);
+}
+
+/** Merges the stored API token into a headers object when one is set. */
+function withAuthHeaders(headers: Record<string, string> = {}): Record<string, string> {
+  const token = getApiToken();
+  if (token) headers["X-Api-Token"] = token;
+  return headers;
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(BASE + path, init);
+  const headers = withAuthHeaders(
+    init?.headers as Record<string, string> | undefined
+  );
+  const res = await fetch(BASE + path, { ...init, headers });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.message || `HTTP ${res.status}`);
@@ -61,6 +84,7 @@ export function getStats(since?: string): Promise<StatsResult> {
 export async function deleteSession(sessionId: string): Promise<void> {
   await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
     method: "DELETE",
+    headers: withAuthHeaders(),
   }).catch(() => {/* fire-and-forget */});
 }
 
@@ -83,7 +107,7 @@ export async function sendChatStream(
 ): Promise<void> {
   const res = await fetch("/api/chat/stream", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: withAuthHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ message, session_id: sessionId }),
   });
 
