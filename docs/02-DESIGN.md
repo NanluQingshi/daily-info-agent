@@ -1,8 +1,8 @@
 # Daily Info Agent — Technical Design Document
 
-**Version**: 1.0  
-**Date**: 2026-05-29  
-**Status**: Draft  
+**Version**: 2.0  
+**Date**: 2026-07-03  
+**Status**: Living  
 **Module**: `github.com/user/daily-info-agent`
 
 ---
@@ -14,63 +14,97 @@
 ```mermaid
 flowchart TD
     subgraph triggers["Triggers"]
-        GHA["GitHub Actions\nCron (01:00 UTC / 08:00 CST)"]
-        USER["User\nHTTP Client"]
+        GHA["GitHub Actions\nCron (01:00 UTC / 09:00 CST)"]
+        USER["HTTP Client\n(chat + management)"]
     end
 
     subgraph agent["Agent Binary (Go)"]
         MAIN["cmd/agent/main.go\n--mode=schedule | --mode=server"]
 
-        subgraph sched["Scheduled Path"]
-            SCH["scheduler.Run()"]
+        subgraph sched["Scheduled Pipeline"]
+            SCH["scheduler.Scheduler.runPipeline()"]
         end
 
-        subgraph conv["Conversational Path"]
-            ECHO["Echo HTTP Server\nPOST /api/chat\nGET /health"]
-            CHAT["chat.Handler"]
+        subgraph server["HTTP Server"]
+            API["internal/api.Handler\nREST management endpoints"]
+            CHAT["internal/chat.Handler\nPOST /api/chat\nPOST /api/chat/stream"]
+            STATIC["Static file server\n(React frontend)"]
         end
 
-        subgraph pipeline["Shared Pipeline"]
+        subgraph pipeline["Shared Pipeline Modules"]
             MGR["fetcher.Manager\n(parallel fetch + dedup)"]
             RSS_A["fetcher.RSSFetcher"]
             NEWS_A["fetcher.NewsAPIFetcher"]
             RSSHUB_A["fetcher.RSSHubFetcher"]
-            PROC["processor.Processor\n(DeepSeek AI)"]
-            VER["verifier.Verifier"]
-            PUB["publisher.Client"]
+            DEDUP["dedup.Cache\n(URL fingerprints)"]
+            PROC["processor.Processor\n(LLM AI)"]
+            VER["verifier.Verifier\n(whitelist + score)"]
+            PUB["publisher.Client\n(website API + retry)"]
+            STORE["store.PostgresStore\n(articles + run_logs)"]
+            NOTIF["notifier.Notifier\n(SMTP email)"]
         end
     end
 
     subgraph external["External Services"]
-        RSS_SRC["RSS Feeds\n(Reuters, BBC, etc.)"]
+        LLM_API["LLM API\n(OpenAI-compatible)"]
         NEWSAPI["NewsAPI v2"]
-        RSSHUB["RSSHub Instance\n(WeChat accounts)"]
-        DEEPSEEK["DeepSeek API\n(OpenAI-compat)"]
+        RSS_SRC["RSS Feeds"]
+        RSSHUB["RSSHub Instance"]
         JAVAAPI["Java Spring Boot\nWebsite API"]
+        SMTP["SMTP Server"]
     end
 
     GHA -->|"--mode=schedule"| MAIN
     USER -->|"POST /api/chat"| MAIN
+    USER -->|"GET /api/articles"| MAIN
     MAIN --> SCH
-    MAIN --> ECHO
-    ECHO --> CHAT
+    MAIN --> API
+    MAIN --> CHAT
+    MAIN --> STATIC
     SCH --> MGR
     CHAT --> MGR
-    MGR --> RSS_A
-    MGR --> NEWS_A
-    MGR --> RSSHUB_A
+    MGR --> DEDUP
+    MGR --> RSS_A & NEWS_A & RSSHUB_A
     RSS_A --> RSS_SRC
     NEWS_A --> NEWSAPI
     RSSHUB_A --> RSSHUB
     MGR --> PROC
-    PROC --> DEEPSEEK
+    PROC --> LLM_API
     PROC --> VER
+    VER --> STORE
     VER --> PUB
+    VER --> NOTIF
     PUB --> JAVAAPI
-    PUB -->|"JSON summary"| CHAT
+    NOTIF --> SMTP
+    STORE --> API
+    CHAT --> PROC
+    CHAT --> STORE
 ```
 
-### 1.2 Scheduled Mode Sequence
+### 1.2 Module Dependency Graph
+
+```
+cmd/agent/main.go
+├── pkg/config.Load()           — env var loading
+├── internal/fetcher.Manager     — parallel fetch orchestration
+│   ├── internal/fetcher.RSSFetcher
+│   ├── internal/fetcher.NewsAPIFetcher
+│   ├── internal/fetcher.RSSHubFetcher
+│   └── internal/dedup.Cache
+├── internal/processor.Processor — AI enrichment
+├── internal/verifier.Verifier   — source credibility
+├── internal/publisher.Client    — website API publishing
+├── internal/store.PostgresStore — PostgreSQL persistence
+├── internal/notifier.Notifier   — SMTP email digest
+├── internal/chat.Handler        — conversational API
+├── internal/api.Handler         — management REST API
+└── internal/agent.Runner        — LLM agent orchestration
+    ├── internal/agent/session.go — conversation state
+    ├── internal/agent/stream.go  — SSE streaming
+    └── internal/agent/tools.go   — tool calling
+```
+
+### 1.3 Scheduled Mode Sequence
 
 ```mermaid
 sequenceDiagram
@@ -78,11 +112,13 @@ sequenceDiagram
     participant Main as main.go
     participant Sched as scheduler
     participant Mgr as fetcher.Manager
+    participant Dedup as dedup.Cache
     participant Proc as processor
-    participant DS as DeepSeek API
+    participant LLM as LLM API
     participant Ver as verifier
+    participant DB as PostgreSQL
     participant Pub as publisher
-    participant Java as Java API
+    participant Notif as notifier
 
     GHA->>Main: exec --mode=schedule
     Main->>Sched: Run(ctx, cfg)
@@ -92,48 +128,78 @@ sequenceDiagram
         Mgr->>Mgr: NewsAPI goroutines
         Mgr->>Mgr: RSSHub goroutines
     end
-    Mgr-->>Sched: []RawItem (deduplicated)
+    Mgr->>Dedup: Filter seen URLs
+    Dedup-->>Mgr: deduplicated items
+    Mgr-->>Sched: []RawItem
     Sched->>Proc: ProcessBatch(ctx, items)
     loop batches of 10
-        Proc->>DS: Categorize + Summarize + Score
-        DS-->>Proc: []ProcessedArticle
+        Proc->>LLM: Categorize + Summarize + Score
+        LLM-->>Proc: []AIItemResult
     end
     Proc-->>Sched: []ProcessedArticle
     Sched->>Ver: Verify(articles)
-    Ver-->>Sched: []ProcessedArticle (filtered)
-    loop each article
+    Ver-->>Sched: filtered articles
+    Sched->>DB: SaveArticles(articles)
+    DB-->>Sched: saved count
+    loop each article to publish
         Sched->>Pub: Publish(ctx, article)
-        Pub->>Java: POST /api/agent/articles
-        Java-->>Pub: 201 / 409 / 5xx
-        alt 5xx or network error
-            Pub->>Java: retry (max 3, backoff 1s/2s/4s)
-        end
+        Pub->>Pub: retry logic (max 3, backoff 1s/2s/4s)
     end
+    Sched->>Notif: SendDailySummary(ctx, articles, result)
     Sched-->>Main: RunResult
     Main-->>GHA: exit 0 / exit 1
 ```
 
-### 1.3 Conversational Mode Sequence
+### 1.4 Conversational Mode Sequence
 
 ```mermaid
 sequenceDiagram
     participant Client as HTTP Client
     participant Echo as Echo Server
     participant Chat as chat.Handler
-    participant DS as DeepSeek API
+    participant Agent as agent.Runner
+    participant LLM as LLM API
     participant Mgr as fetcher.Manager
     participant Proc as processor
 
     Client->>Echo: POST /api/chat {"message": "..."}
     Echo->>Chat: Handle(c)
-    Chat->>DS: ExtractTopic(message)
-    DS-->>Chat: TopicResult{category, keywords}
-    Chat->>Mgr: FetchForTopic(ctx, topicResult)
-    Mgr-->>Chat: []RawItem
-    Chat->>Proc: ProcessBatch(ctx, items)
-    Proc-->>Chat: []ProcessedArticle
-    Chat-->>Echo: ChatResponse{topic, sources, summary}
-    Echo-->>Client: 200 OK JSON
+    Chat->>Agent: Run(ctx, message)
+    Agent->>LLM: ExtractTopic(message)
+    LLM-->>Agent: TopicResult{category, keywords}
+    Agent->>Mgr: FetchForTopic(ctx, topicResult)
+    Mgr-->>Agent: []RawItem
+    Agent->>Proc: ProcessBatch(ctx, items)
+    Proc-->>Agent: []ProcessedArticle
+    Agent-->>Chat: ChatResponse
+    Chat-->>Echo: JSON response
+    Echo-->>Client: 200 OK
+```
+
+### 1.5 Management API Sequence
+
+```mermaid
+sequenceDiagram
+    participant UI as Browser(Frontend)
+    participant API as internal/api.Handler
+    participant DB as PostgreSQL
+    participant Sched as scheduler
+
+    UI->>API: GET /api/articles?category=科技/AI&page=1
+    API->>DB: ListArticles(filter)
+    DB-->>API: []ArticleRow, total
+    API-->>UI: {articles, total, page, page_size}
+
+    UI->>API: POST /api/fetch
+    API->>Sched: RunForCategories(ctx, categories)
+    Sched->>Sched: full pipeline execution
+    Sched-->>API: RunResult
+    API-->>UI: {run_id, status}
+
+    UI->>API: GET /api/stats
+    API->>DB: GetStats(since)
+    DB-->>API: StatsResult
+    API-->>UI: {total_fetched, published, ...}
 ```
 
 ---
@@ -144,51 +210,109 @@ sequenceDiagram
 daily-info-agent/
 ├── cmd/
 │   └── agent/
-│       └── main.go                    # Entry point; parses --mode flag; wires dependencies
+│       └── main.go                    # Entry point; parses --mode flag; wires all dependencies
 │
 ├── internal/
-│   ├── fetcher/
-│   │   ├── fetcher.go                 # Fetcher interface + shared HTTP client factory
-│   │   ├── rss.go                     # RSS 2.0 / Atom via gofeed
-│   │   ├── newsapi.go                 # NewsAPI v2/everything client
-│   │   ├── rsshub.go                  # RSSHub adapter (thin wrapper over rss.go)
-│   │   └── manager.go                 # Parallel orchestration + URL deduplication cache
+│   ├── agent/
+│   │   ├── agent.go                   # Runner: core LLM conversation orchestration
+│   │   ├── agent_test.go
+│   │   ├── prompt.go                  # System prompt templates
+│   │   ├── session.go                 # Session management (in-memory)
+│   │   ├── session_test.go
+│   │   ├── stream.go                  # SSE streaming response
+│   │   ├── stream_test.go
+│   │   └── tools.go                   # Tool definitions for LLM function calling
 │   │
-│   ├── processor/
-│   │   ├── processor.go               # DeepSeek calls: categorize + summarize + score
-│   │   └── prompts.go                 # Prompt templates as typed constants
-│   │
-│   ├── verifier/
-│   │   └── verifier.go                # Whitelist check + AI score threshold
-│   │
-│   ├── publisher/
-│   │   └── client.go                  # HTTP POST to Java website API with retry
+│   ├── api/
+│   │   └── handler.go                 # Echo HTTP handlers for management REST API
 │   │
 │   ├── chat/
-│   │   └── handler.go                 # Echo HTTP handler for POST /api/chat
+│   │   ├── handler.go                 # Echo handler for POST /api/chat
+│   │   ├── handler_test.go
+│   │   ├── ratelimit.go               # Per-IP rate limiter (token bucket)
+│   │   ├── ratelimit_test.go
+│   │   └── stream_handler.go          # SSE handler for POST /api/chat/stream
 │   │
-│   └── scheduler/
-│       └── scheduler.go               # Full pipeline orchestration for scheduled mode
+│   ├── dedup/
+│   │   ├── dedup.go                   # URL fingerprint deduplication cache
+│   │   └── dedup_test.go
+│   │
+│   ├── fetcher/
+│   │   ├── fetcher.go                 # Fetcher interface + HTTP client factory
+│   │   ├── fetcher_test.go
+│   │   ├── manager.go                 # Parallel orchestration + dedup integration
+│   │   ├── manager_test.go
+│   │   ├── newsapi.go                 # NewsAPI v2/everything client
+│   │   ├── rss.go                     # RSS 2.0 / Atom via gofeed
+│   │   ├── rss_test.go
+│   │   ├── rsshub.go                  # RSSHub adapter
+│   │   └── rsshub_test.go
+│   │
+│   ├── notifier/
+│   │   ├── notifier.go                # SMTP email digest sender
+│   │   └── notifier_test.go
+│   │
+│   ├── processor/
+│   │   ├── processor.go               # LLM client: batch categorize + summarize + score
+│   │   ├── processor_test.go
+│   │   └── prompts.go                 # Prompt templates
+│   │
+│   ├── publisher/
+│   │   ├── client.go                  # HTTP POST to website API with retry
+│   │   └── client_test.go
+│   │
+│   ├── scheduler/
+│   │   └── scheduler.go               # Full pipeline orchestration for scheduled mode
+│   │
+│   ├── store/
+│   │   ├── store.go                   # ArticleStore interface + PostgresStore implementation
+│   │   └── queries.go                 # Named SQL constants
+│   │
+│   └── verifier/
+│       ├── verifier.go                # Domain whitelist + AI score threshold policy
+│       └── verifier_test.go
 │
 ├── pkg/
+│   ├── backoff/
+│   │   └── backoff.go                 # Exponential backoff retry helper
 │   ├── config/
-│   │   └── config.go                  # Load + validate all env vars into Config struct
-│   ├── models/
-│   │   └── models.go                  # All shared domain structs
-│   └── backoff/
-│       └── backoff.go                 # Exponential backoff helper (no external dep)
+│   │   ├── config.go                  # Load + validate all env vars into Config struct
+│   │   └── config_test.go
+│   └── models/
+│       └── models.go                  # All shared domain structs and types
+│
+├── migrations/
+│   ├── 001_create_articles.up.sql
+│   ├── 001_create_articles.down.sql
+│   ├── 002_create_run_logs.up.sql
+│   ├── 002_create_run_logs.down.sql
+│   ├── 003_add_articles_fts.up.sql
+│   └── 003_add_articles_fts.down.sql
 │
 ├── cache/
-│   └── .gitkeep                       # Deduplication cache dir; dedup.json written here at runtime
+│   └── .gitkeep                       # Dedup cache directory
+│
+├── web/                               # React + TypeScript frontend
+│   ├── src/
+│   │   ├── App.tsx                    # Main layout with sidebar navigation
+│   │   ├── api/client.ts             # HTTP API client
+│   │   ├── components/               # React components
+│   │   └── types/index.ts            # TypeScript types
+│   └── package.json
+│
+├── test/
+│   └── integration/
+│       └── pipeline_test.go           # Build-tagged integration tests
 │
 ├── .github/
 │   └── workflows/
-│       └── daily-fetch.yml            # GitHub Actions cron workflow
+│       ├── ci.yml                     # PR/push CI: go vet + tests + frontend build
+│       └── daily-fetch.yml            # Cron-triggered scheduled pipeline
 │
-├── .env.example                       # All env vars with placeholder values (no real secrets)
-├── go.mod                             # module github.com/user/daily-info-agent; go 1.22
+├── .env.example                       # All env vars with placeholder values
+├── go.mod
 ├── go.sum
-└── Makefile                           # build, test, lint, run-schedule, run-server targets
+└── Makefile
 ```
 
 ---
@@ -197,16 +321,9 @@ daily-info-agent/
 
 All types live in `pkg/models/models.go`.
 
+### Category
+
 ```go
-package models
-
-import "time"
-
-// -----------------------------------------------------------------------
-// Category
-// -----------------------------------------------------------------------
-
-// Category represents one of the five news categories.
 type Category string
 
 const (
@@ -217,221 +334,117 @@ const (
     CategoryInternational Category = "国际"
 )
 
-// AllCategories is the canonical ordered list used for validation and defaults.
-var AllCategories = []Category{
-    CategoryFinance,
-    CategoryPolitics,
-    CategoryEconomy,
-    CategoryTechAI,
-    CategoryInternational,
-}
+var AllCategories = []Category{...}
+```
 
-// CategoryDisplayName returns a bilingual label used in prompts and logs.
-func (c Category) DisplayName() string {
-    switch c {
-    case CategoryFinance:
-        return "金融 (Finance)"
-    case CategoryPolitics:
-        return "政治 (Politics)"
-    case CategoryEconomy:
-        return "经济 (Economy)"
-    case CategoryTechAI:
-        return "科技/AI (Tech/AI)"
-    case CategoryInternational:
-        return "国际 (International)"
-    default:
-        return string(c)
-    }
-}
+### RawItem — output of any Fetcher, before AI processing
 
-// -----------------------------------------------------------------------
-// RawItem — output of any Fetcher, before AI processing
-// -----------------------------------------------------------------------
-
-// SourceType identifies which adapter produced the item.
-type SourceType string
-
-const (
-    SourceTypeRSS     SourceType = "rss"
-    SourceTypeNewsAPI SourceType = "newsapi"
-    SourceTypeRSSHub  SourceType = "rsshub"
-)
-
-// RawItem is the normalised output of any data-source adapter.
-// All fields from heterogeneous sources are mapped into this common shape.
+```go
 type RawItem struct {
-    // Identity
-    URL          string     `json:"url"`           // canonical article URL (used as dedup key)
-    SourceDomain string     `json:"source_domain"` // registered domain, e.g. "reuters.com"
-    SourceType   SourceType `json:"source_type"`
-
-    // Content
-    Title       string `json:"title"`
-    Description string `json:"description"` // raw excerpt / feed description
-    Content     string `json:"content"`     // full text if available; may be empty
-
-    // Timing
-    PublishedAt time.Time `json:"published_at"`
-    FetchedAt   time.Time `json:"fetched_at"`
-
-    // Language hint from feed metadata (BCP-47, e.g. "en", "zh")
-    Language string `json:"language"`
+    URL          string     // dedup key
+    SourceDomain string     // e.g. "reuters.com"
+    SourceType   SourceType // "rss", "newsapi", "rsshub"
+    Title        string
+    Description  string
+    Content      string     // truncated to 500 chars for AI
+    PublishedAt  time.Time
+    FetchedAt    time.Time
+    Language     string     // BCP-47, e.g. "en", "zh"
 }
+```
 
-// -----------------------------------------------------------------------
-// FetchConfig — per-source configuration
-// -----------------------------------------------------------------------
+### AIItemResult — output of LLM processing for one item
 
-// FetchConfig holds all parameters for a single source endpoint.
-type FetchConfig struct {
-    Type       SourceType
-    URL        string            // feed URL or NewsAPI endpoint
-    Categories []Category        // categories this source is expected to cover
-    Params     map[string]string // extra query params (e.g. NewsAPI "q", "language")
-    Timeout    time.Duration     // defaults to 10s if zero
-}
-
-// -----------------------------------------------------------------------
-// AIBatchRequest / AIBatchResponse — internal processor types
-// -----------------------------------------------------------------------
-
-// AIBatchRequest groups up to 10 RawItems for a single DeepSeek API call.
-type AIBatchRequest struct {
-    Items []*RawItem
-    RunID string
-}
-
-// AIItemResult holds the AI output for one RawItem.
+```go
 type AIItemResult struct {
-    URL              string   // echoed back for correlation
+    URL              string
     Category         Category
-    Summary          string   // 100–200 Chinese characters
-    CredibilityScore float64  // 0.0 – 1.0
-    Tags             []string // up to 10 keywords
-    Language         string   // detected BCP-47 language
+    Summary          string   // 100–200 Chinese chars
+    CredibilityScore float64  // 0.0–1.0
+    Tags             []string // up to 10
+    Language         string   // BCP-47
 }
+```
 
-// -----------------------------------------------------------------------
-// VerificationResult
-// -----------------------------------------------------------------------
+### ProcessedArticle — fully enriched, ready-to-publish item
 
-// SkipReason is a machine-readable explanation for why an item was not published.
-type SkipReason string
-
-const (
-    SkipReasonLowScore       SkipReason = "low_credibility_score"
-    SkipReasonNotWhitelisted SkipReason = "domain_not_whitelisted_and_score_below_threshold"
-)
-
-// VerificationResult is produced by the verifier for every processed article.
-type VerificationResult struct {
-    Pass       bool
-    SkipReason SkipReason // empty when Pass == true
-    DomainHit  bool       // true if domain was in whitelist
-}
-
-// -----------------------------------------------------------------------
-// ProcessedArticle — fully enriched, ready-to-publish item
-// -----------------------------------------------------------------------
-
-// ProcessedArticle is a RawItem enriched with AI outputs and verification.
+```go
 type ProcessedArticle struct {
-    // Embedded raw data
-    Raw *RawItem
-
-    // AI results
+    Raw              *RawItem
     Category         Category
     Summary          string
     CredibilityScore float64
     Tags             []string
     DetectedLanguage string
-
-    // Verification
-    Verification VerificationResult
-
-    // Pipeline provenance
-    RunID        string
-    AgentVersion string
+    Verification     VerificationResult
+    RunID            string
+    AgentVersion     string
 }
+```
 
-// -----------------------------------------------------------------------
-// PublishRequest — wire format POSTed to the Java website API
-// -----------------------------------------------------------------------
+### ArticleRow — database row representation
 
-// PublishRequest is the exact JSON body sent to POST /api/agent/articles.
-// Field names use snake_case to match the Java API contract (Section 6 of PRD).
-type PublishRequest struct {
-    SourceURL        string   `json:"source_url"`
-    Title            string   `json:"title"`
-    Summary          string   `json:"summary"`
-    Category         string   `json:"category"`          // string, not Category type, for JSON portability
-    SourceDomain     string   `json:"source_domain"`
-    CredibilityScore float64  `json:"credibility_score"`
-    PublishedAt      string   `json:"published_at"`      // ISO 8601 UTC, e.g. "2026-05-29T01:30:00Z"
-    FetchedAt        string   `json:"fetched_at"`        // ISO 8601 UTC
-    RunID            string   `json:"run_id"`
-    Tags             []string `json:"tags,omitempty"`
-    Language         string   `json:"language,omitempty"`
-    AgentVersion     string   `json:"agent_version,omitempty"`
+```go
+type ArticleRow struct {
+    ID               int64
+    Title            string
+    Summary          string
+    SourceURL        string
+    SourceDomain     string
+    Category         Category
+    CredibilityScore float64
+    Status           string   // "pending", "published", "skipped", "failed"
+    Tags             []string
+    Language         string
+    RunID            string
+    FetchedAt        time.Time
+    PublishedAt      *time.Time
+    CreatedAt        time.Time
+    UpdatedAt        time.Time
 }
+```
 
-// PublishResponse is the HTTP 201 body returned by the Java API.
-type PublishResponse struct {
-    ID        int64  `json:"id"`
-    SourceURL string `json:"source_url"`
-    CreatedAt string `json:"created_at"`
-    Status    string `json:"status"`
-}
+### RunResult — pipeline execution summary
 
-// PublishErrorResponse is the body of 4xx / 5xx responses.
-type PublishErrorResponse struct {
-    Error      string `json:"error"`
-    Message    string `json:"message"`
-    Field      string `json:"field,omitempty"`       // validation errors
-    ExistingID int64  `json:"existing_id,omitempty"` // 409 only
-}
-
-// -----------------------------------------------------------------------
-// Chat API types
-// -----------------------------------------------------------------------
-
-// ChatRequest is the JSON body of POST /api/chat.
-type ChatRequest struct {
-    Message string `json:"message"`
-}
-
-// ChatSource is a single source article referenced in a chat response.
-type ChatSource struct {
-    URL          string  `json:"url"`
-    Title        string  `json:"title"`
-    SourceDomain string  `json:"source_domain"`
-    CredScore    float64 `json:"credibility_score"`
-}
-
-// ChatResponse is the JSON body returned by POST /api/chat.
-type ChatResponse struct {
-    ExtractedTopic string       `json:"extracted_topic"`
-    Category       string       `json:"category"`
-    Summary        string       `json:"summary"`        // AI-generated aggregate summary in Chinese
-    Sources        []ChatSource `json:"sources"`
-    FetchedAt      string       `json:"fetched_at"`     // ISO 8601
-    LatencyMs      int64        `json:"latency_ms"`
-}
-
-// -----------------------------------------------------------------------
-// RunResult — summary returned by scheduler after a scheduled run
-// -----------------------------------------------------------------------
-
-// RunResult is returned by scheduler.Run and used for exit-code decisions.
+```go
 type RunResult struct {
     RunID          string
     TotalFetched   int
     TotalProcessed int
+    TotalSaved     int      // DB persistence
     TotalPublished int
     TotalSkipped   int
     TotalFailed    int
     DurationMs     int64
-    FatalError     error // non-nil causes exit 1
+    FatalError     error    // non-nil causes exit 1
+}
+```
+
+### Chat API types
+
+```go
+type ChatRequest struct {
+    Message string `json:"message"`
+}
+
+type ChatResponse struct {
+    ExtractedTopic string       `json:"extracted_topic"`
+    Category       string       `json:"category"`
+    Summary        string       `json:"summary"`
+    Sources        []ChatSource `json:"sources"`
+    FetchedAt      string       `json:"fetched_at"`
+    LatencyMs      int64        `json:"latency_ms"`
+}
+```
+
+### ProgressEvent — SSE progress reporting
+
+```go
+type ProgressEvent struct {
+    Type    string `json:"type"`    // "fetch_start", "fetch_done", "ai_start", ...
+    Message string `json:"message"`
+    Current int    `json:"current"`
+    Total   int    `json:"total"`
 }
 ```
 
@@ -441,47 +454,43 @@ type RunResult struct {
 
 ### 4.1 `pkg/config` — Configuration Loading
 
-**Responsibility**: Load, validate, and expose all environment variables as a typed `Config` struct. Called once at startup; panics on missing required vars.
+**Responsibility**: Load, validate, and expose all environment variables as a typed `Config` struct. Called once at startup; exits on missing required vars.
 
 ```go
 package config
 
-// Config holds all runtime configuration loaded from environment variables.
 type Config struct {
-    // AI
-    DeepSeekAPIKey  string
-    DeepSeekModelID string
-    DeepSeekBaseURL string // default: "https://api.deepseek.com/v1"
-
-    // Data sources
-    NewsAPIKey    string
-    RSSHubBaseURL string   // default: "https://rsshub.app"
-    RSSFeeds      []string // parsed from semicolon-separated env var
-
-    // Verification
-    TrustedDomains     []string // parsed from comma-separated env var
-    SkipVerification   bool
-    DefaultCategories  []models.Category
-
-    // Publishing
-    WebsiteAPIBaseURL string
-    WebsiteAPIToken   string
-
-    // HTTP server
-    BindAddr string // default: "127.0.0.1:8080"
-
-    // Observability
-    LogLevel    slog.Level
-    AgentVersion string // injected at build time via -ldflags
-
-    // Runtime
-    CacheFilePath string // default: "cache/dedup.json"
+    LLMAPIKey       string
+    LLMModelID      string
+    LLMBaseURL      string           // default: "https://api.deepseek.com/v1"
+    NewsAPIKey      string
+    RSSHubBaseURL   string           // default: "https://rsshub.app"
+    RSSFeeds        []string
+    RSSHubRoutes    []string
+    TrustedDomains  []string
+    SkipVerification bool
+    DefaultCategories []Category
+    WebsiteAPIBaseURL  string
+    WebsiteAPIToken    string
+    DisableJavaPublisher bool
+    DatabaseDSN     string
+    SMTPHost/SMTPPort/SMTPUser/...
+    NotifyEmail     string
+    BindAddr        string           // default: "127.0.0.1:8080"
+    ChatAPIToken    string
+    ChatRateLimitPerMin int
+    LogLevel        slog.Level
+    AgentVersion    string
+    CacheFilePath   string           // default: "cache/dedup.json"
 }
 
-// Load reads all environment variables and returns a validated Config.
-// Returns an error listing all missing required variables (fail-fast, not first-error).
 func Load() (*Config, error)
 ```
+
+Key design decisions:
+- Supports `.env` file loading via `godotenv.Load()` (ignores error if file doesn't exist)
+- Collects all missing required vars before returning, not first-error
+- Masks secret values before they reach any log handler
 
 ### 4.2 `internal/fetcher` — Data Source Adapters
 
@@ -490,734 +499,672 @@ func Load() (*Config, error)
 ```go
 package fetcher
 
-// Fetcher is the common interface for all data-source adapters.
 type Fetcher interface {
-    // Fetch retrieves items from the source. Returns a typed FetchError on failure;
-    // never panics. An empty slice with nil error is valid (source returned no items).
     Fetch(ctx context.Context, cfg models.FetchConfig) ([]models.RawItem, error)
-    // Name returns a human-readable identifier used in logs.
     Name() string
 }
 
-// NewRSSFetcher constructs a Fetcher backed by gofeed for RSS 2.0 / Atom.
 func NewRSSFetcher(httpClient *http.Client) Fetcher
-
-// NewNewsAPIFetcher constructs a Fetcher for the NewsAPI v2/everything endpoint.
 func NewNewsAPIFetcher(apiKey string, httpClient *http.Client) Fetcher
-
-// NewRSSHubFetcher constructs a Fetcher that delegates to NewRSSFetcher
-// but prepends the RSSHub base URL to relative route paths.
 func NewRSSHubFetcher(baseURL string, httpClient *http.Client) Fetcher
 
-// Manager orchestrates parallel fetching across all configured sources
-// and applies URL-based deduplication against the cache file.
-type Manager struct { /* unexported fields */ }
+type Manager struct { /* unexported */ }
 
-// NewManager creates a Manager wired with the provided fetchers and cache path.
-func NewManager(fetchers []Fetcher, cacheFile string, logger *slog.Logger) *Manager
+func NewManager(fetchers []Fetcher, rssFeeds, rsshubRoutes []string,
+    cacheFile string, logger *slog.Logger) *Manager
 
-// FetchAll fetches from all sources in parallel and returns deduplicated items.
-// categories filters which FetchConfigs to activate; nil means all.
 func (m *Manager) FetchAll(ctx context.Context, cfgs []models.FetchConfig) ([]models.RawItem, error)
-
-// FetchForTopic fetches items relevant to the given keywords across all sources.
-// Used by the conversational handler; returns at most maxItems results.
 func (m *Manager) FetchForTopic(ctx context.Context, keywords []string, maxItems int) ([]models.RawItem, error)
-
-// FetchError is the typed error returned by adapters on source failure.
-type FetchError struct {
-    Source  string
-    URL     string
-    Wrapped error
-}
-func (e *FetchError) Error() string
-func (e *FetchError) Unwrap() error
 ```
 
-**Dependencies**: `gofeed` (RSS/Atom), `net/http`, `pkg/models`, `log/slog`.
+Key design decisions:
+- All fetchers share the same HTTP client (configured via `fetcher.WithUserAgent`)
+- Manager orchestrates parallel fetch with goroutines + error handling per source
+- Built-in default RSS feeds and RSSHub routes for Chinese news sources
+- `FetchForTopic` searches across sources for specific keywords (used by chat handler)
 
-### 4.3 `internal/processor` — AI Processing
+### 4.3 `internal/dedup` — URL Deduplication
 
-**Responsibility**: Send batches of `RawItem` to DeepSeek API; return `ProcessedArticle` slices with category, Chinese summary, credibility score, and tags.
+**Responsibility**: Maintain a rolling file cache of seen article URLs to prevent re-publishing duplicates within a window.
+
+```go
+package dedup
+
+type Cache struct { /* unexported */ }
+
+func NewCache(filePath string) (*Cache, error)
+func (c *Cache) Filter(ctx context.Context, items []*models.RawItem) ([]*models.RawItem, error)
+func (c *Cache) Save(ctx context.Context) error
+```
+
+Key design decisions:
+- JSON file-based: simple, no external dependency
+- Rolling 7-day window: entries expire by age
+- Thread-safe: mutex-protected for parallel fetch access
+
+### 4.4 `internal/processor` — AI Processing
+
+**Responsibility**: Send batches of `RawItem` to an OpenAI-compatible LLM API; return `ProcessedArticle` slices with category, Chinese summary, credibility score, and tags.
 
 ```go
 package processor
 
-// Processor calls DeepSeek for AI enrichment.
 type Processor struct { /* unexported */ }
 
-// New creates a Processor using the given go-openai client pointed at DeepSeek.
 func New(client *openai.Client, modelID string, logger *slog.Logger) *Processor
 
-// ProcessBatch enriches a batch of raw items with AI outputs.
-// Items are split internally into sub-batches of up to 10 before each API call.
-// If DeepSeek is unavailable, affected items are returned with zero-value AI fields
-// and a DeepSeekUnavailableError logged; the function does not return an error in
-// that case to enable graceful degradation.
 func (p *Processor) ProcessBatch(ctx context.Context, items []models.RawItem, runID string) ([]models.ProcessedArticle, error)
-
-// ExtractTopic asks DeepSeek to identify the topic and most relevant category
-// from a free-form user message (used by the chat handler).
 func (p *Processor) ExtractTopic(ctx context.Context, message string) (TopicResult, error)
 
-// TopicResult holds the structured output of topic extraction.
 type TopicResult struct {
     Category models.Category
-    Keywords []string // search terms to pass to FetchForTopic
-    Summary  string   // one-sentence description of what the user wants
-}
-
-// DeepSeekUnavailableError is returned (and logged) when all retries to
-// DeepSeek fail. Individual ProcessBatch items still return; this error
-// is informational, not fatal.
-type DeepSeekUnavailableError struct {
-    Cause error
+    Keywords []string
+    Summary  string
 }
 ```
 
-**Dependencies**: `github.com/sashabaranov/go-openai`, `pkg/models`, `log/slog`.
+Key design decisions:
+- Uses `github.com/sashabaranov/go-openai` (OpenAI-compatible client)
+- Batches up to 10 items per LLM call to reduce API costs
+- Combines categorization, summarization, and scoring in a single prompt per batch
+- 100ms inter-call delay to respect rate limits
+- Graceful degradation: if LLM is unavailable, returns articles with empty zero-value AI fields
+- Truncates item content to 500 characters to stay within token budget
 
-### 4.4 `internal/verifier` — Source Credibility
+### 4.5 `internal/verifier` — Source Credibility
 
-**Responsibility**: Apply the two-path credibility policy (whitelist OR AI score >= 0.7) and annotate each article with a `VerificationResult`.
+**Responsibility**: Apply the two-path credibility policy (whitelist OR AI score >= 0.7) and annotate each article.
 
 ```go
 package verifier
 
-// Verifier applies source credibility rules to processed articles.
 type Verifier struct { /* unexported */ }
 
-// New creates a Verifier with the given whitelist domains and skip flag.
 func New(trustedDomains []string, skipVerification bool, logger *slog.Logger) *Verifier
 
-// Verify filters a slice of ProcessedArticles, setting Verification on each.
-// All items are returned; callers should check article.Verification.Pass to decide
-// whether to publish.
 func (v *Verifier) Verify(articles []models.ProcessedArticle) []models.ProcessedArticle
-
-// IsTrustedDomain reports whether the given registered domain is in the whitelist.
-// Exported for use in tests.
 func (v *Verifier) IsTrustedDomain(domain string) bool
 ```
 
-**Dependencies**: `pkg/models`, `log/slog`. No external network calls.
+Policy:
+| Condition | Result |
+|-----------|--------|
+| Domain in whitelist | ✅ Pass (regardless of AI score) |
+| Domain not in whitelist, AI score >= 0.7 | ✅ Pass |
+| Domain not in whitelist, AI score < 0.7 | ❌ Skip (reason: `domain_not_whitelisted_and_score_below_threshold`) |
+| `SKIP_VERIFICATION=true` | ✅ All pass |
 
-### 4.5 `internal/publisher` — Website API Client
+### 4.6 `internal/publisher` — Website API Client
 
-**Responsibility**: POST `PublishRequest` to the Java website API; handle retry logic; return a typed `PublishResult`.
+**Responsibility**: POST `PublishRequest` to the Java website API; handle retry logic.
 
 ```go
 package publisher
 
-// Client posts articles to the Java website API.
 type Client struct { /* unexported */ }
 
-// New creates a Client for the given base URL, auth token, and HTTP client.
 func New(baseURL, token string, httpClient *http.Client, logger *slog.Logger) *Client
 
-// Publish sends a single ProcessedArticle to the website API.
-// Implements 3-attempt exponential backoff (1s / 2s / 4s) for 5xx and network errors.
-// Returns a PublishResult whose Outcome field signals success, duplicate, or failure.
-func (c *Client) Publish(ctx context.Context, article models.ProcessedArticle, runID string) PublishResult
+func (c *Client) Publish(ctx context.Context, article models.ProcessedArticle) PublishResult
 
-// PublishOutcome is a machine-readable result code.
 type PublishOutcome string
-
 const (
     OutcomePublished      PublishOutcome = "published"
-    OutcomeDuplicate      PublishOutcome = "duplicate"        // HTTP 409
-    OutcomePermanentFail  PublishOutcome = "permanent_fail"   // 4xx (non-409)
-    OutcomeMaxRetriesHit  PublishOutcome = "max_retries_hit"  // 5xx after 3 attempts
+    OutcomeDuplicate      PublishOutcome = "duplicate"
+    OutcomePermanentFail  PublishOutcome = "permanent_fail"
+    OutcomeMaxRetriesHit  PublishOutcome = "max_retries_hit"
 )
-
-// PublishResult describes the outcome of a single publish attempt.
-type PublishResult struct {
-    Outcome    PublishOutcome
-    ArticleURL string
-    Attempts   int
-    StatusCode int   // final HTTP status code; 0 on network error
-    RemoteID   int64 // populated on OutcomePublished (from 201 response)
-    Err        error
-}
 ```
 
-**Dependencies**: `net/http`, `encoding/json`, `pkg/models`, `pkg/backoff`, `log/slog`.
+Retry policy:
+| HTTP Status | Action |
+|-------------|--------|
+| 2xx | Success |
+| 409 | Duplicate (no retry) |
+| 4xx (non-409) | Permanent fail (no retry) |
+| 5xx / network error | Retry up to 3x (1s, 2s, 4s backoff) |
 
-### 4.6 `internal/scheduler` — Scheduled Pipeline Orchestration
+### 4.7 `internal/store` — Database Persistence
 
-**Responsibility**: Wire fetcher → processor → verifier → publisher into a single `Run()` call; build the `RunResult` summary; exit non-zero on fatal errors.
+**Responsibility**: Provide a PostgreSQL-backed store for articles, run logs, and statistics.
 
 ```go
-package scheduler
+package store
 
-// Scheduler owns the full scheduled pipeline.
-type Scheduler struct { /* unexported */ }
+type ArticleStore interface {
+    SaveArticles(ctx context.Context, articles []models.ProcessedArticle, runID string) (int, error)
+    SaveRunLog(ctx context.Context, log models.RunLogRow) error
+    GetRunLog(ctx context.Context, runID string) (models.RunLogRow, error)
+    ListArticles(ctx context.Context, f models.ArticleFilter) ([]models.ArticleRow, int, error)
+    GetArticle(ctx context.Context, id int64) (models.ArticleRow, error)
+    DeleteArticle(ctx context.Context, id int64) error
+    MarkPublished(ctx context.Context, id int64, externalID int64) error
+    MarkFailed(ctx context.Context, id int64) error
+    MarkPending(ctx context.Context, id int64) error
+    GetStats(ctx context.Context, since time.Time) (models.StatsResult, error)
+    Ping(ctx context.Context) error
+    Close()
+}
 
-// New wires all pipeline stages together.
-func New(
-    mgr     *fetcher.Manager,
-    proc    *processor.Processor,
-    ver     *verifier.Verifier,
-    pub     *publisher.Client,
-    cfg     *config.Config,
-    logger  *slog.Logger,
-) *Scheduler
+type PostgresStore struct { /* unexported */ }
 
-// Run executes the full pipeline for the configured default categories.
-// It is designed to be called from main() in scheduled mode.
-// Returns a RunResult; RunResult.FatalError != nil signals exit 1.
-func (s *Scheduler) Run(ctx context.Context) models.RunResult
+func NewPostgresStore(ctx context.Context, dsn string) (*PostgresStore, error)
 ```
 
-### 4.7 `internal/chat` — Conversational HTTP Handler
+Key design decisions:
+- Uses `pgx` (pure Go PostgreSQL driver, no CGO)
+- Connection string configured via `DATABASE_DSN`
+- Article dedup via `source_url` UNIQUE constraint at DB level (second line of defense)
+- Full-text search via PostgreSQL FTS with Chinese + English configuration
+- Auto-run SQL migrations on startup (embedded via `//go:embed`)
+- Pagination support across all list queries
 
-**Responsibility**: Implement `POST /api/chat` — extract topic, fetch, process, and return a structured JSON response within 30 seconds.
+### 4.8 `internal/notifier` — Email Digest
+
+**Responsibility**: Send a daily summary email via SMTP after the scheduled pipeline completes.
+
+```go
+package notifier
+
+type Notifier struct { /* unexported */ }
+
+func New(host string, port int, user, password, from, notifyEmail string, logger *slog.Logger) *Notifier
+
+func (n *Notifier) SendDailySummary(ctx context.Context, articles []models.ProcessedArticle, result models.RunResult) error
+```
+
+Key design decisions:
+- Uses `net/smtp` (stdlib, no external dependency)
+- STARTTLS on port 587; supports port 465 for SSL
+- Gracefully disabled when SMTP host/user/password/notify-email are empty
+
+### 4.9 `internal/chat` — Conversational HTTP Handler
+
+**Responsibility**: Implement `POST /api/chat` and `POST /api/chat/stream` — extract topic, fetch, process, and return structured response.
 
 ```go
 package chat
 
-// Handler implements the Echo handler for POST /api/chat.
 type Handler struct { /* unexported */ }
 
-// New creates a Handler wired to the processor and fetcher manager.
-func New(
-    proc   *processor.Processor,
-    mgr    *fetcher.Manager,
-    cfg    *config.Config,
-    logger *slog.Logger,
-) *Handler
+func New(proc *processor.Processor, mgr *fetcher.Manager, store store.ArticleStore,
+    cfg *config.Config, logger *slog.Logger) *Handler
 
-// Handle is the Echo HandlerFunc registered at POST /api/chat.
 func (h *Handler) Handle(c echo.Context) error
+func (h *Handler) HandleStream(c echo.Context) error
 ```
 
----
+Key design decisions:
+- Delegates core conversation logic to `agent.Runner` for tool calling and session management
+- `HandleStream` uses SSE for progressive rendering
+- Rate limiting via `internal/chat/ratelimit.RateLimiter` (token bucket per IP)
+- Optional token-based auth via `CHAT_API_TOKEN`
 
-## 5. DeepSeek API Integration
+### 4.10 `internal/api` — Management REST API
 
-### 5.1 Client Construction
-
-DeepSeek exposes an OpenAI-compatible REST API. The `go-openai` library is used with a custom `BaseURL`:
+**Responsibility**: Expose CRUD operations for articles, fetch triggers, and statistics.
 
 ```go
-// internal/processor/processor.go
-import openai "github.com/sashabaranov/go-openai"
+package api
 
-func NewDeepSeekClient(apiKey, baseURL string) *openai.Client {
-    cfg := openai.DefaultConfig(apiKey)
-    cfg.BaseURL = baseURL // e.g. "https://api.deepseek.com/v1"
-    return openai.NewClientWithConfig(cfg)
-}
+type Handler struct { /* unexported */ }
+
+func New(proc *processor.Processor, mgr *fetcher.Manager, sched *scheduler.Scheduler,
+    ver *verifier.Verifier, pub *publisher.Client, store store.ArticleStore,
+    cfg *config.Config, logger *slog.Logger) *Handler
+
+func (h *Handler) Register(g *echo.Group)
+// Registers:
+//   GET    /api/articles
+//   GET    /api/articles/:id
+//   POST   /api/articles/:id/publish
+//   POST   /api/articles/:id/retry
+//   DELETE /api/articles/:id
+//   POST   /api/fetch
+//   POST   /api/fetch/:category
+//   GET    /api/fetch/status/:runID
+//   GET    /api/fetch/stream
+//   GET    /api/stats
 ```
 
-The model ID is never hardcoded; it is read from `DEEPSEEK_MODEL_ID` (e.g. `deepseek-chat` or a future model ID).
+### 4.11 `internal/agent` — LLM Agent Orchestration
 
-### 5.2 Batch AI Call Strategy
+**Responsibility**: Manage the LLM conversation loop with tool calling, session state, and streaming.
 
-To satisfy FR-AI-005 (max 15 calls for 50 items), `ProcessBatch` splits the input into sub-batches of at most 10 items and makes one API call per sub-batch. Each call asks DeepSeek to return structured JSON for all items in that batch simultaneously.
+```go
+package agent
 
-```
-50 items → 5 sub-batches of 10 → 5 categorisation calls (one per batch)
-         → 5 summarisation calls OR combined with categorisation if token budget allows
-```
+type Runner struct { /* unexported */ }
 
-To further reduce API calls, categorisation, summarisation, and credibility scoring are combined into **a single prompt per batch**, requesting a JSON array back.
+func New(client *openai.Client, modelID string, mgr *fetcher.Manager,
+    store store.ArticleStore, cfg *config.Config, logger *slog.Logger) *Runner
 
-### 5.3 Prompt Design
-
-#### System Prompt (shared across all batch calls)
-
-```
-You are a professional news analyst. You will receive a JSON array of news items.
-For each item, return a JSON array with the same length, in the same order.
-Output ONLY valid JSON — no markdown, no explanation, no code fences.
+func (r *Runner) Run(ctx context.Context, req models.ChatRequest) (models.ChatResponse, error)
+func (r *Runner) RunStream(ctx context.Context, req models.ChatRequest, w http.ResponseWriter) error
+func (r *Runner) DeleteSession(sessionID string)
 ```
 
-#### Batch Processing User Prompt Template
+Key design decisions:
+- Full LLM agent loop: system prompt → user message → tool calls → response generation
+- Registered tools: `fetch_news`, `search_articles`, `get_article`, `get_stats`
+- In-memory session storage for multi-turn conversations
+- SSE streaming via `RunStream` for real-time token-by-token output
+- Structured JSON parsing from tool call arguments
 
+### 4.12 `internal/scheduler` — Pipeline Orchestration
+
+**Responsibility**: Wire fetcher → processor → verifier → store → publisher → notifier into a single `Run()` call.
+
+```go
+package scheduler
+
+type Scheduler struct { /* unexported */ }
+
+func New(mgr *fetcher.Manager, proc *processor.Processor, ver *verifier.Verifier,
+    pub *publisher.Client, st store.ArticleStore, cfg *config.Config,
+    logger *slog.Logger) *Scheduler
+
+func (s *Scheduler) Run(ctx context.Context) models.RunResult
+func (s *Scheduler) RunForCategories(ctx context.Context, categories []models.Category) models.RunResult
+func (s *Scheduler) RunWithProgress(ctx context.Context, categories []models.Category,
+    emit func(models.ProgressEvent)) models.RunResult
+func (s *Scheduler) RunWithProgressAndID(ctx context.Context, categories []models.Category,
+    emit func(models.ProgressEvent), runID string) models.RunResult
 ```
-Analyse the following {{N}} news items and return a JSON array of objects.
-Each object must have exactly these fields:
-  "url":               string  — copy from input, used for correlation
-  "category":          string  — exactly one of: 金融, 政治, 经济, 科技/AI, 国际
-  "summary":           string  — concise Chinese summary, 100–200 Chinese characters
-  "credibility_score": number  — float 0.0–1.0 rating the source reliability of the domain
-  "tags":              array   — up to 10 keyword strings (English or Chinese)
-  "language":          string  — BCP-47 language code of the original article (e.g. "en", "zh")
-
-Credibility scoring guidance:
-  1.0 = authoritative government or major wire service (xinhua.net, reuters.com, bbc.com)
-  0.8 = established mainstream media (theverge.com, people.com.cn)
-  0.5 = mid-tier or regional outlet, content farm, or unverifiable source
-  0.0 = known misinformation source or spam
-
-Input items:
-{{JSON_ARRAY_OF_RAW_ITEMS}}
-```
-
-The `RawItem` fields sent to DeepSeek include: `url`, `source_domain`, `title`, `description`, `language`. The `content` field is truncated to 500 characters to stay within token budget.
-
-#### Topic Extraction Prompt (conversational mode)
-
-```
-The user sent this message: "{{USER_MESSAGE}}"
-
-Return a JSON object with:
-  "category": one of 金融, 政治, 经济, 科技/AI, 国际
-  "keywords": array of 3–5 English search keywords suitable for a news query
-  "summary":  one sentence describing what the user wants to know
-
-Output ONLY valid JSON.
-```
-
-### 5.4 Token Budget
-
-| Call type | Input tokens (est.) | Output tokens (est.) | Calls per 200-item run |
-|-----------|--------------------|--------------------|----------------------|
-| Batch process (10 items) | ~1 500 | ~800 | 20 |
-| Topic extraction | ~200 | ~100 | 1 (conversational only) |
-
-At ~20 batch calls per scheduled run, total token usage is approximately 46 000 tokens per run, well within typical rate limits.
-
-### 5.5 Rate Limiting
-
-- A **100 ms minimum inter-call delay** is enforced between consecutive DeepSeek requests using `time.Sleep` within the batch loop.
-- The processor respects `ctx` cancellation so the full pipeline can be aborted if the 15-minute GitHub Actions timeout approaches.
-- On a non-2xx response, the processor retries **once** after a 2-second delay before declaring `DeepSeekUnavailableError`.
-
-### 5.6 Response Parsing & Fallback
-
-DeepSeek output is parsed with `encoding/json` into `[]AIItemResult`. If parsing fails for a batch (malformed JSON), the processor falls back to processing items individually in that batch. If individual retries also fail, those items are marked with zero-value AI fields and logged at `WARN`. Items with no AI summary are still eligible for publication if their domain is whitelisted (graceful degradation per FR-AI-006).
 
 ---
 
-## 6. HTTP API Design (Conversational Mode)
+## 5. LLM Integration
 
-The HTTP server uses the **Echo** framework (`github.com/labstack/echo/v4`).
+### 5.1 API Client
+
+The LLM API client is built on `github.com/sashabaranov/go-openai` with configurable `BaseURL`:
+
+```go
+openAICfg := openai.DefaultConfig(cfg.LLMAPIKey)
+openAICfg.BaseURL = cfg.LLMBaseURL // e.g. "https://api.deepseek.com/v1"
+client := openai.NewClientWithConfig(openAICfg)
+```
+
+The model ID is never hardcoded; it is read from `LLM_MODEL_ID`.
+
+### 5.2 Batch Processing Prompt
+
+```text
+System: You are a professional news analyst. You will receive a JSON array of news items.
+For each item, return a JSON array with the same length, in the same order.
+Output ONLY valid JSON — no markdown, no explanation, no code fences.
+
+User: Analyse the following {{N}} news items and return a JSON array of objects.
+Each object must have exactly these fields:
+  "url":               string  — copy from input
+  "category":          string  — exactly one of: 金融, 政治, 经济, 科技/AI, 国际
+  "summary":           string  — concise Chinese summary, 100–200 Chinese characters
+  "credibility_score": number  — float 0.0–1.0
+  "tags":              array   — up to 10 keyword strings
+  "language":          string  — BCP-47 language code
+
+Input items:
+{{JSON_ARRAY}}
+```
+
+### 5.3 Token Budget
+
+| Call type | Input tokens | Output tokens | Calls per 200-item run |
+|-----------|-------------|---------------|----------------------|
+| Batch process (10 items) | ~1,500 | ~800 | 20 |
+| Topic extraction (chat) | ~200 | ~100 | 1 (per chat request) |
+| Agent conversation | ~500–2,000 | ~200–1,000 | 1–5 per chat request |
+
+### 5.4 Rate Limiting & Retry
+
+- 100ms minimum inter-call delay between consecutive LLM requests
+- Respects `ctx` cancellation for pipeline timeout
+- On non-2xx response: retry once after 2s before declaring `LLMUnavailableError`
+- Graceful degradation: items with no AI output still pass verification if domain is whitelisted
+
+---
+
+## 6. HTTP API Design
+
+The HTTP server uses **Echo** framework (`github.com/labstack/echo/v4`).
 
 ### 6.1 Server Bootstrap
 
 ```go
-// cmd/agent/main.go (server mode)
 e := echo.New()
 e.HideBanner = true
 e.Use(middleware.RequestID())
 e.Use(middleware.TimeoutWithConfig(middleware.TimeoutConfig{
-    Timeout: 30 * time.Second, // enforces FR-CON-004
+    Timeout: 30 * time.Second, // per-request timeout
 }))
-e.Use(slogMiddleware(logger)) // structured request logging
+e.Use(slogMiddleware(logger))
 
-e.POST("/api/chat", chatHandler.Handle)
+// Register chat + management + static file handlers
+chatHandler.Register(e)
+apiHandler.Register(e.Group("/api"))
+serveStaticFrontend(e)
+
 e.GET("/health", healthHandler)
-
 e.Logger.Fatal(e.Start(cfg.BindAddr))
 ```
 
-The server binds to `127.0.0.1:8080` by default. Overriding `BIND_ADDR=0.0.0.0:8080` exposes it externally.
-
 ### 6.2 `POST /api/chat`
 
-**Request**
+**Request**: `{"message": "..."}` (1–500 chars)
 
-```
-POST /api/chat
-Content-Type: application/json
-
-{
-  "message": "Tell me about AI chip news today"
-}
-```
-
-| Field | Type | Required | Constraints |
-|-------|------|----------|-------------|
-| `message` | string | Yes | 1–500 characters |
-
-**Success Response — HTTP 200**
-
+**Success Response — HTTP 200**:
 ```json
 {
   "extracted_topic": "AI chip semiconductor news",
   "category":        "科技/AI",
-  "summary":         "今日AI芯片领域...(100–200汉字AI生成摘要)...",
+  "summary":         "今日AI芯片领域...(中文摘要)...",
   "sources": [
-    {
-      "url":               "https://www.theverge.com/...",
-      "title":             "NVIDIA announces next-gen GPU",
-      "source_domain":     "theverge.com",
-      "credibility_score": 0.85
-    }
+    {"url": "...", "title": "...", "source_domain": "...", "credibility_score": 0.85}
   ],
-  "fetched_at":  "2026-05-29T09:01:12Z",
+  "fetched_at":  "2026-07-03T01:05:12Z",
   "latency_ms":  4230
 }
 ```
 
-**Error Responses**
+**Error Responses**:
 
-| HTTP Status | Condition | Body `error` field |
-|-------------|-----------|---------------------|
-| 400 | Missing or empty `message` | `"validation_error"` |
-| 400 | Message exceeds 500 chars | `"message_too_long"` |
-| 504 | Pipeline exceeded 30s timeout | `"timeout"` |
-| 500 | Unexpected internal error | `"internal_error"` |
+| Status | Condition | Error |
+|--------|-----------|-------|
+| 400 | Missing/empty message | `validation_error` |
+| 400 | Message > 500 chars | `message_too_long` |
+| 401 | Invalid/absent `CHAT_API_TOKEN` | `unauthorized` |
+| 429 | Rate limit exceeded | `rate_limit_exceeded` |
+| 504 | Pipeline timeout | `timeout` |
+| 500 | Internal error | `internal_error` |
 
-**Behaviour**:
-1. Validate request body; return 400 on violation.
-2. Call `processor.ExtractTopic` to get category and keywords.
-3. Call `manager.FetchForTopic(ctx, keywords, maxItems=20)`.
-4. Call `processor.ProcessBatch` on fetched items.
-5. Apply verifier; filter to passing items.
-6. Build `ChatResponse` with up to 5 top-scoring sources and an aggregate Chinese summary.
-7. Return 200; the `latency_ms` field reflects wall-clock time from request receipt.
+### 6.3 `POST /api/chat/stream` (SSE)
 
-**Conversational mode does NOT publish to the Java website API**. It returns results directly to the HTTP caller only.
-
-### 6.3 `GET /health`
-
-**Request**
+Same request as `/api/chat`. Returns SSE events:
 
 ```
-GET /health
+data: {"type": "token", "content": "今日"}
+data: {"type": "token", "content": "AI芯"}
+data: {"type": "token", "content": "片领域..."}
+data: {"type": "source", "url": "...", "title": "..."}
+data: {"type": "done", "latency_ms": 4230}
+data: [DONE]
 ```
 
-**Response — HTTP 200**
+### 6.4 Management API Endpoints
+
+All under `/api/` prefix:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/articles` | List articles (query: page, page_size, category, status, q) |
+| `GET` | `/api/articles/:id` | Get single article detail |
+| `POST` | `/api/articles/:id/publish` | Publish article to website API |
+| `POST` | `/api/articles/:id/retry` | Retry a failed publish |
+| `DELETE` | `/api/articles/:id` | Soft-delete an article |
+| `POST` | `/api/fetch` | Trigger full scheduled fetch |
+| `POST` | `/api/fetch/:category` | Trigger fetch for one category |
+| `GET` | `/api/fetch/status/:runID` | Get fetch run status |
+| `GET` | `/api/fetch/stream` | SSE: real-time fetch progress |
+| `GET` | `/api/stats` | Get pipeline statistics |
+
+### 6.5 `GET /health`
 
 ```json
 {
-  "status":  "ok",
-  "version": "1.0.0",
-  "time":    "2026-05-29T09:00:00Z"
+  "status": "ok",
+  "version": "2.0.0",
+  "time": "2026-07-03T07:27:00Z"
 }
 ```
 
-This endpoint performs no I/O (no DeepSeek or website API pings). It is suitable for Docker / load-balancer health probes.
+---
+
+## 7. Database Schema
+
+### 7.1 `articles` Table
+
+```sql
+CREATE TABLE articles (
+    id                BIGSERIAL PRIMARY KEY,
+    title             TEXT NOT NULL,
+    summary           TEXT NOT NULL DEFAULT '',
+    source_url        TEXT NOT NULL UNIQUE,  -- dedup at DB level
+    source_domain     TEXT NOT NULL DEFAULT '',
+    category          TEXT NOT NULL DEFAULT '',
+    credibility_score DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    status            TEXT NOT NULL DEFAULT 'pending',
+                  -- CHECK IN ('pending', 'published', 'skipped', 'failed', 'deleted')
+    tags              TEXT[] NOT NULL DEFAULT '{}',
+    language          TEXT NOT NULL DEFAULT 'en',
+    external_id       BIGINT,   -- Java website article ID
+    run_id            TEXT NOT NULL DEFAULT '',
+    fetched_at        TIMESTAMPTZ,
+    published_at      TIMESTAMPTZ,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_articles_category ON articles(category);
+CREATE INDEX idx_articles_status ON articles(status);
+CREATE INDEX idx_articles_fetched_at ON articles(fetched_at);
+```
+
+### 7.2 `run_logs` Table
+
+```sql
+CREATE TABLE run_logs (
+    id              BIGSERIAL PRIMARY KEY,
+    run_id          TEXT NOT NULL UNIQUE,
+    status          TEXT NOT NULL DEFAULT 'running',  -- running / completed / failed
+    total_fetched   INT NOT NULL DEFAULT 0,
+    total_processed INT NOT NULL DEFAULT 0,
+    total_published INT NOT NULL DEFAULT 0,
+    total_skipped   INT NOT NULL DEFAULT 0,
+    total_failed    INT NOT NULL DEFAULT 0,
+    duration_ms     INT NOT NULL DEFAULT 0,
+    error_message   TEXT NOT NULL DEFAULT '',
+    details         JSONB NOT NULL DEFAULT '{}',
+    started_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    finished_at     TIMESTAMPTZ
+);
+```
+
+### 7.3 Full-Text Search Index (migration 003)
+
+```sql
+ALTER TABLE articles ADD COLUMN fts_vector tsvector
+    GENERATED ALWAYS AS (
+        to_tsvector('simple', coalesce(title, '')) ||
+        to_tsvector('simple', coalesce(summary, ''))
+    ) STORED;
+
+CREATE INDEX idx_articles_fts ON articles USING GIN(fts_vector);
+```
 
 ---
 
-## 7. Website API Contract
+## 8. GitHub Actions Workflows
 
-The Go `PublishRequest` struct (defined in Section 3) maps directly to the JSON contract specified in PRD Section 6. The publisher constructs it as follows:
+### 8.1 CI (`ci.yml`)
 
-```go
-func articleToPublishRequest(a models.ProcessedArticle) models.PublishRequest {
-    return models.PublishRequest{
-        SourceURL:        a.Raw.URL,
-        Title:            a.Raw.Title,
-        Summary:          a.Summary,
-        Category:         string(a.Category),
-        SourceDomain:     a.Raw.SourceDomain,
-        CredibilityScore: a.CredibilityScore,
-        PublishedAt:      a.Raw.PublishedAt.UTC().Format(time.RFC3339),
-        FetchedAt:        a.Raw.FetchedAt.UTC().Format(time.RFC3339),
-        RunID:            a.RunID,
-        Tags:             a.Tags,
-        Language:         a.DetectedLanguage,
-        AgentVersion:     a.AgentVersion,
-    }
-}
-```
+- Trigger: push/PR to `main`
+- Jobs:
+  1. **Go test**: `go vet ./...` + `go test -race ./...`
+  2. **Frontend**: `npm ci` + `npm run build` (TypeScript check)
 
-**Authentication header** (set on every request):
+### 8.2 Daily Fetch (`daily-fetch.yml`)
 
-```
-Authorization: Bearer <cfg.WebsiteAPIToken>
-Content-Type: application/json
-```
-
-**Retry policy** (implemented in `publisher.Client.Publish`):
-
-| HTTP Status | Action |
-|-------------|--------|
-| 2xx | Record `OutcomePublished`; done |
-| 409 | Record `OutcomeDuplicate`; log `already_published=true`; done (no retry) |
-| 4xx (not 409) | Record `OutcomePermanentFail`; log `skip_reason=client_error`; done (no retry) |
-| 5xx or network error | Retry with backoff: attempt 1 after 1s, attempt 2 after 2s, attempt 3 after 4s |
-| 5xx after 3 retries | Record `OutcomeMaxRetriesHit`; log error |
-
-**Rate limiting courtesy delay**: 100 ms `time.Sleep` between consecutive `Publish` calls to stay within the Java API's 60 req/min limit.
+- Trigger: cron `0 1 * * *` (01:00 UTC = 09:00 CST) or `workflow_dispatch`
+- Timeout: 20 minutes
+- Steps:
+  1. Checkout + setup Go 1.25
+  2. Run `go test ./...`
+  3. Restore deduplication cache
+  4. Build agent binary
+  5. Run `./agent --mode=schedule` with all env vars
+  6. Save dedup cache (even on failure)
+  7. Write run summary to `$GITHUB_STEP_SUMMARY`
 
 ---
 
-## 8. GitHub Actions Workflow
+## 9. Frontend Architecture
 
-### `.github/workflows/daily-fetch.yml`
+### 9.1 Tech Stack
 
-```yaml
-name: Daily News Fetch
+| Layer | Technology |
+|-------|-----------|
+| Framework | React 19 + TypeScript |
+| Build tool | Vite |
+| Styling | Tailwind CSS 4 |
+| UI kit | shadcn/ui (Radix UI primitives) |
+| Icons | Lucide React |
+| API client | Custom `fetch`-based client |
 
-on:
-  schedule:
-    # 01:00 UTC = 08:00 CST (UTC+8) — satisfies FR-SCH-001
-    - cron: '0 1 * * *'
-  workflow_dispatch: {} # allows manual trigger for testing
+### 9.2 Component Structure
 
-permissions:
-  contents: read
-
-jobs:
-  fetch-and-publish:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20   # hard cap; agent self-limits to 15 min
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.22'
-          cache: true
-
-      - name: Restore deduplication cache
-        uses: actions/cache@v4
-        with:
-          path: cache/dedup.json
-          # Key includes a 7-day window so old entries expire naturally
-          key: dedup-cache-${{ github.run_id }}
-          restore-keys: |
-            dedup-cache-
-
-      - name: Build
-        run: go build -ldflags="-X main.version=1.0.0" -o agent ./cmd/agent
-
-      - name: Run scheduled fetch
-        run: ./agent --mode=schedule
-        env:
-          DEEPSEEK_API_KEY:      ${{ secrets.DEEPSEEK_API_KEY }}
-          DEEPSEEK_MODEL_ID:     ${{ secrets.DEEPSEEK_MODEL_ID }}
-          NEWSAPI_KEY:           ${{ secrets.NEWSAPI_KEY }}
-          RSSHUB_BASE_URL:       ${{ vars.RSSHUB_BASE_URL }}
-          RSS_FEEDS:             ${{ vars.RSS_FEEDS }}
-          TRUSTED_DOMAINS:       ${{ vars.TRUSTED_DOMAINS }}
-          DEFAULT_CATEGORIES:    ${{ vars.DEFAULT_CATEGORIES }}
-          WEBSITE_API_BASE_URL:  ${{ secrets.WEBSITE_API_BASE_URL }}
-          WEBSITE_API_TOKEN:     ${{ secrets.WEBSITE_API_TOKEN }}
-          LOG_LEVEL:             INFO
-
-      - name: Save deduplication cache
-        if: always() # save even if the run step fails, to preserve dedup state
-        uses: actions/cache@v4
-        with:
-          path: cache/dedup.json
-          key: dedup-cache-${{ github.run_id }}
+```
+App.tsx (layout + sidebar navigation)
+├── ChatView           — 智能问答 tab
+│   ├── ChatPanel      — message input + history
+│   └── ConversationList
+├── ArticleList        — 文章管理 tab
+│   ├── FilterBar      — category/status/search filters
+│   ├── ArticleCard    — single article summary card
+│   └── ArticleDetail  — expanded article view
+├── StatsPanel         — 统计 tab
+│   ├── FetchButton    — trigger manual fetch
+│   └── ... metrics displays
+└── SettingsPanel      — 设置 tab
 ```
 
-### Required GitHub Secrets
+### 9.3 Build & Serve
 
-| Secret Name | Description |
-|-------------|-------------|
-| `DEEPSEEK_API_KEY` | DeepSeek authentication key |
-| `DEEPSEEK_MODEL_ID` | DeepSeek model identifier |
-| `NEWSAPI_KEY` | NewsAPI v2 key |
-| `WEBSITE_API_BASE_URL` | Base URL of the Java website (no trailing slash) |
-| `WEBSITE_API_TOKEN` | Bearer token for the website API |
-
-### Required GitHub Variables (non-secret)
-
-| Variable Name | Description |
-|---------------|-------------|
-| `RSSHUB_BASE_URL` | RSSHub instance URL |
-| `RSS_FEEDS` | Semicolon-separated RSS feed URLs |
-| `TRUSTED_DOMAINS` | Comma-separated trusted domain whitelist |
-| `DEFAULT_CATEGORIES` | Comma-separated category list |
+- Development: `cd web && npm run dev` (Vite dev server, proxies `/api` to backend)
+- Production: `cd web && npm run build` → outputs to `web/dist/`
+- Go server serves `web/dist/` as static files at `/` in server mode
 
 ---
 
-## 9. Configuration Reference
+## 10. Configuration Reference
 
-All configuration is loaded by `pkg/config.Load()` from OS environment variables. The binary never reads `.env` files directly in production; the `.env.example` file documents available variables for local development (loaded via `source .env` or a tool like `direnv`).
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `LLM_API_KEY` | ✅ | — | LLM API authentication key |
+| `LLM_MODEL_ID` | ✅ | — | LLM model identifier |
+| `LLM_BASE_URL` | ❌ | `https://api.deepseek.com/v1` | API base URL |
+| `NEWSAPI_KEY` | ✅ | — | NewsAPI v2 key |
+| `RSSHUB_BASE_URL` | ❌ | `https://rsshub.app` | RSSHub instance URL |
+| `RSS_FEEDS` | ❌ | built-in list | Semicolon-separated RSS feed URLs |
+| `RSSHUB_ROUTES` | ❌ | built-in list | Semicolon-separated RSSHub routes |
+| `TRUSTED_DOMAINS` | ❌ | built-in list | Comma-separated domain whitelist |
+| `SKIP_VERIFICATION` | ❌ | `false` | Bypass credibility checks |
+| `DEFAULT_CATEGORIES` | ❌ | all five | Comma-separated categories |
+| `WEBSITE_API_BASE_URL` | ❌ | — | Website API (blank = no publish) |
+| `WEBSITE_API_TOKEN` | ❌ | — | Website API bearer token |
+| `DATABASE_DSN` | ❌ | — | PostgreSQL DSN (blank = no persistence) |
+| `SMTP_HOST` | ❌ | — | SMTP host (blank = no email) |
+| `SMTP_PORT` | ❌ | `587` | SMTP port |
+| `SMTP_USER` | ❌ | — | SMTP user |
+| `SMTP_PASSWORD` | ❌ | — | SMTP password |
+| `SMTP_FROM` | ❌ | `SMTP_USER` | Sender address |
+| `NOTIFY_EMAIL` | ❌ | — | Digest recipient |
+| `BIND_ADDR` | ❌ | `127.0.0.1:8080` | HTTP listen address |
+| `CHAT_API_TOKEN` | ❌ | — | Chat auth token |
+| `CHAT_RATE_LIMIT_PER_MIN` | ❌ | `0` | Per-IP rate limit |
+| `LOG_LEVEL` | ❌ | `INFO` | Minimum log level |
+| `CACHE_FILE_PATH` | ❌ | `cache/dedup.json` | Dedup cache path |
+| `AGENT_VERSION` | ❌ | `1.0.0` | Version string |
 
-| Variable | Required | Default | Description | Example |
-|----------|----------|---------|-------------|---------|
-| `DEEPSEEK_API_KEY` | Yes | — | DeepSeek API authentication key | `sk-...` |
-| `DEEPSEEK_MODEL_ID` | Yes | — | DeepSeek model identifier | `deepseek-chat` |
-| `DEEPSEEK_BASE_URL` | No | `https://api.deepseek.com/v1` | Override for proxy or future API versions | `https://api.deepseek.com/v1` |
-| `NEWSAPI_KEY` | Yes | — | NewsAPI v2 key | `abc123...` |
-| `RSSHUB_BASE_URL` | No | `https://rsshub.app` | Self-hosted RSSHub base URL | `https://rsshub.example.com` |
-| `RSS_FEEDS` | No | built-in list | Semicolon-separated RSS feed URLs | `https://feeds.reuters.com/reuters/...;https://...` |
-| `TRUSTED_DOMAINS` | No | built-in list | Comma-separated domain whitelist | `xinhua.net,people.com.cn,reuters.com,bbc.com` |
-| `DEFAULT_CATEGORIES` | No | `金融,政治,经济,科技/AI,国际` | Categories processed in scheduled mode | `科技/AI,金融` |
-| `WEBSITE_API_BASE_URL` | Yes | — | Java website base URL (no trailing slash) | `https://mysite.example.com` |
-| `WEBSITE_API_TOKEN` | Yes | — | Bearer token for website API | `eyJ...` |
-| `SKIP_VERIFICATION` | No | `false` | Bypass credibility checks (debug only) | `true` |
-| `BIND_ADDR` | No | `127.0.0.1:8080` | HTTP server listen address | `0.0.0.0:8080` |
-| `LOG_LEVEL` | No | `INFO` | Minimum log level | `DEBUG` |
-| `CACHE_FILE_PATH` | No | `cache/dedup.json` | Path to URL deduplication cache file | `/tmp/dedup.json` |
-
-**Built-in RSS feed defaults** (compiled into the binary, overridable at runtime):
-
+**Built-in RSS feed defaults** (Chinese-focused):
+```text
+https://36kr.com/feed
+https://rss.huxiu.com/
+https://www.guancha.cn/rss.xml
+https://feed.cnbeta.com/
+https://sspai.com/feed
+https://www.ifanr.com/feed
+https://www.people.com.cn/rss/politics.xml
+https://www.people.com.cn/rss/finance.xml
 ```
-https://feeds.reuters.com/reuters/topNews
-https://feeds.bbci.co.uk/news/world/rss.xml
-https://www.theverge.com/rss/index.xml
-http://www.xinhuanet.com/rss/world.xml
-http://www.people.com.cn/rss/finance.xml
+
+**Built-in RSSHub routes**:
+```text
+/wallstreetcn/news/global
+/cls/telegraph
+/jin10/flash_news
+/36kr/news/technology
+/zaobao/realtime
+/xinhua/english
 ```
 
 **Built-in trusted domain defaults**:
-
-```
+```text
 xinhua.net, people.com.cn, gov.cn, reuters.com, bbc.com,
 theverge.com, apnews.com, ft.com, wsj.com, economist.com
 ```
 
 ---
 
-## 10. Error Handling & Retry Strategy
+## 11. Error Handling & Retry Strategy
 
-### 10.1 Per-Module Error Types
+### 11.1 Per-Module Error Types
 
-Each module defines its own sentinel errors. All implement the standard `error` interface and are designed for use with `errors.Is` / `errors.As`.
+| Package | Error Type | Description |
+|---------|-----------|-------------|
+| `fetcher` | `FetchError{Source, URL, Wrapped}` | Source unavailability |
+| `processor` | `LLMUnavailableError{Cause}` | LLM API failure |
+| `publisher` | `PublishHTTPError{StatusCode, Body, URL, Attempt}` | Website API failure |
+| `config` | `MissingConfigError{Vars}` | Required env vars missing |
 
-```go
-// fetcher package
-type FetchError struct {
-    Source  string
-    URL     string
-    Wrapped error
-}
+### 11.2 Retry Policy
 
-// processor package
-type DeepSeekUnavailableError struct{ Cause error }
-type DeepSeekParseError struct{ Raw string; Cause error }
+| Component | Retries | Backoff | Non-retryable |
+|-----------|---------|---------|---------------|
+| Publisher (website API) | 3 | 1s, 2s, 4s | HTTP 4xx (except 409) |
+| Processor (LLM API) | 1 | 2s | N/A (graceful degradation) |
+| Scheduler (catch-all) | 0 | N/A | All sources unavailable → exit 1 |
 
-// publisher package
-type PublishHTTPError struct {
-    StatusCode int
-    Body       string
-    URL        string
-    Attempt    int
-}
+### 11.3 Graceful Degradation Paths
 
-// config package
-type MissingConfigError struct{ Vars []string }
-```
+| Failure | Behaviour |
+|---------|-----------|
+| LLM API unavailable | Items get zero-value AI fields; whitelisted domains still publish |
+| Individual RSS feed fails | Log WARN, continue with other sources |
+| NewsAPI fails | Log WARN, continue with RSS-only |
+| All sources fail | Log FATAL, exit 1 |
+| Database unavailable | Log FATAL, exit 1 |
+| Website API unavailable | Log ERROR, items stay in DB as `pending` |
+| SMTP unavailable | Log WARN, pipeline continues |
 
-### 10.2 Retry Policy
+### 11.4 Structured Logging
 
-The `pkg/backoff` package provides a reusable `Retry` function used by the publisher:
+All packages receive `*slog.Logger` via constructor injection. JSON format in CI, text format locally.
 
-```go
-package backoff
+**Standard fields**: `time`, `level`, `msg`, `run_id`, `component`
 
-// Retry calls fn up to maxAttempts times. It waits baseDelay * 2^(attempt-1)
-// between retries (exponential backoff). It only retries when fn returns a
-// RetryableError. On success or a non-retryable error, it returns immediately.
-func Retry(ctx context.Context, maxAttempts int, baseDelay time.Duration, fn func() error) error
-
-// RetryableError wraps an error to signal that the operation should be retried.
-type RetryableError struct{ Cause error }
-```
-
-Publisher retry schedule:
-
-| Attempt | Delay before this attempt |
-|---------|--------------------------|
-| 1 | 0 s (immediate) |
-| 2 | 1 s |
-| 3 | 2 s |
-| 4 | 4 s (then give up) |
-
-### 10.3 DeepSeek Unavailability (Graceful Degradation)
-
-When DeepSeek returns non-2xx responses on all retry attempts:
-
-1. `processor.ProcessBatch` logs `WARN` with `deepseek_unavailable=true` and the error.
-2. Each affected `RawItem` is promoted to a `ProcessedArticle` with:
-   - `Category`: empty string (will fail category validation at the Java side).
-   - `Summary`: empty string.
-   - `CredibilityScore`: `0.0`.
-3. The verifier runs as normal. Items with empty summary but whitelisted domain **pass** verification (the publisher will send them; the Java side may accept or reject based on its own validation).
-4. Items from non-whitelisted domains score `0.0` and are filtered out by the verifier.
-5. The scheduled run continues without AI processing for the remainder of the batch.
-6. `RunResult.FatalError` is **not** set; the run exits 0 with a `WARN`-level summary noting AI degradation.
-
-### 10.4 Source Unavailability
-
-If an individual RSS feed, NewsAPI, or RSSHub endpoint fails:
-
-- The `FetchError` is logged at `WARN` with `source`, `url`, and `error` fields.
-- The pipeline continues with items from all other available sources.
-- If **all** sources fail, a `FatalError` is set in `RunResult` and the process exits 1.
-
-### 10.5 Structured Logging Approach
-
-All packages receive a `*slog.Logger` via constructor injection. No package uses a global logger. Log format is JSON for production (GitHub Actions) and text for local development.
-
-```go
-// main.go — logger construction
-var handler slog.Handler
-if isCI() {
-    handler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel})
-} else {
-    handler = slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel})
-}
-logger := slog.New(handler)
-```
-
-**Standard log fields** (present on every log line):
-
-| Field | Description |
-|-------|-------------|
-| `time` | RFC 3339 UTC timestamp |
-| `level` | `DEBUG`, `INFO`, `WARN`, `ERROR` |
-| `msg` | Human-readable message |
-| `run_id` | UUID for the current pipeline run (propagated via context) |
-| `component` | Package name: `fetcher`, `processor`, `verifier`, `publisher`, `chat` |
-
-**Stage timing** (logged at `INFO` on completion of each phase):
-
+**Stage timing** (logged at INFO):
 ```json
-{"time":"...","level":"INFO","msg":"stage_complete","run_id":"...","stage":"fetch","duration_ms":3210,"items_fetched":312}
-{"time":"...","level":"INFO","msg":"stage_complete","run_id":"...","stage":"process","duration_ms":8540,"items_processed":280}
-{"time":"...","level":"INFO","msg":"stage_complete","run_id":"...","stage":"verify","duration_ms":12,"items_passed":241,"items_skipped":39}
-{"time":"...","level":"INFO","msg":"stage_complete","run_id":"...","stage":"publish","duration_ms":4320,"items_published":241,"items_failed":0}
-```
-
-**Secret sanitisation**: The `config.Load()` function masks any log value whose key matches `*_key`, `*_token`, or `*_secret` by replacing the value with `[REDACTED]` before it can reach any log handler. This is enforced at the config layer, not per log call.
-
----
-
-## Appendix A: Key Dependencies
-
-| Package | Version (min) | Purpose |
-|---------|---------------|---------|
-| `github.com/labstack/echo/v4` | v4.12 | HTTP server for conversational mode |
-| `github.com/mmcdole/gofeed` | v1.3 | RSS 2.0 / Atom feed parsing |
-| `github.com/sashabaranov/go-openai` | v1.24 | DeepSeek API client (OpenAI-compatible) |
-| `github.com/google/uuid` | v1.6 | Run ID generation |
-| `log/slog` | stdlib (Go 1.21+) | Structured logging |
-
-All other required functionality (HTTP client, JSON, context, time) uses Go standard library only.
-
----
-
-## Appendix B: Local Development Quick-Start
-
-```bash
-# 1. Copy and fill in env vars
-cp .env.example .env
-# edit .env with real keys
-
-# 2. Source env vars
-source .env
-
-# 3. Run scheduled pipeline (dry-run against real APIs)
-go run ./cmd/agent --mode=schedule
-
-# 4. Run conversational HTTP server
-go run ./cmd/agent --mode=server
-
-# 5. Test conversational endpoint
-curl -X POST http://127.0.0.1:8080/api/chat \
-  -H 'Content-Type: application/json' \
-  -d '{"message": "今天AI芯片有什么新闻？"}'
-
-# 6. Run tests
-go test ./...
+{"level":"INFO","msg":"stage_complete","stage":"fetch","duration_ms":3210,"items_fetched":312}
+{"level":"INFO","msg":"stage_complete","stage":"process","duration_ms":8540,"items_processed":280}
+{"level":"INFO","msg":"stage_complete","stage":"verify","duration_ms":12,"items_passed":241,"items_skipped":39}
+{"level":"INFO","msg":"stage_complete","stage":"publish","duration_ms":4320,"items_published":241}
 ```
 
 ---
 
-*End of DESIGN.md v1.0*
+## 12. Key Dependencies
+
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `github.com/labstack/echo/v4` | v4 | HTTP server |
+| `github.com/mmcdole/gofeed` | v1.3 | RSS/Atom feed parsing |
+| `github.com/sashabaranov/go-openai` | v1.24+ | OpenAI-compatible LLM client |
+| `github.com/jackc/pgx/v5` | v5 | PostgreSQL driver |
+| `github.com/google/uuid` | v1.6 | UUID generation |
+| `github.com/joho/godotenv` | v1.5 | `.env` file loading (dev only) |
+| `log/slog` | stdlib | Structured logging |
+
+---
+
+*End of DESIGN.md v2.0*
