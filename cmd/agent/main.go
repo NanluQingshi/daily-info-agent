@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -81,9 +82,14 @@ func main() {
 	// ---- Build fetchers ----
 	fetchers := []fetcher.Fetcher{fetcher.NewRSSFetcher(httpClient)}
 
-	// Only register NewsAPI when the key looks like a real token (not empty
-	// and not the placeholder URL from .env.example).
-	if cfg.NewsAPIKey != "" && !strings.HasPrefix(cfg.NewsAPIKey, "http") {
+	// Only register NewsAPI when the key looks like a real token (not empty,
+	// not a placeholder URL from .env.example, and not a dummy placeholder).
+	placeholder := cfg.NewsAPIKey == "" ||
+	 strings.HasPrefix(cfg.NewsAPIKey, "http") ||
+	 strings.EqualFold(cfg.NewsAPIKey, "placeholder") ||
+	 strings.EqualFold(cfg.NewsAPIKey, "test-key") ||
+	 strings.EqualFold(cfg.NewsAPIKey, "test")
+	if !placeholder {
 		fetchers = append(fetchers, fetcher.NewNewsAPIFetcher(cfg.NewsAPIKey, httpClient))
 		logger.Info("NewsAPI fetcher enabled")
 	} else {
@@ -103,6 +109,14 @@ func main() {
 	// ---- Build processor ----
 	openAICfg := openai.DefaultConfig(cfg.LLMAPIKey)
 	openAICfg.BaseURL = cfg.LLMBaseURL
+	openAICfg.HTTPClient = &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			DialContext:           (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: 15 * time.Second,
+		},
+	}
 	aiClient := openai.NewClientWithConfig(openAICfg)
 
 	proc := processor.New(

@@ -72,6 +72,9 @@ func (s *PostgresStore) SaveArticles(ctx context.Context, articles []models.Proc
 			t := a.Raw.PublishedAt
 			pubAt = &t
 		}
+		if a.Tags == nil {
+			a.Tags = []string{}
+		}
 		batch.Queue(sqlInsertArticle,
 			runID,
 			a.Raw.URL,
