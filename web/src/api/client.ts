@@ -36,8 +36,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   );
   const res = await fetch(BASE + path, { ...init, headers });
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.message || `HTTP ${res.status}`);
+    let message = `HTTP ${res.status}`;
+    // Only try JSON parsing when Content-Type looks like JSON.
+    const ct = res.headers.get("Content-Type") ?? "";
+    if (ct.includes("application/json")) {
+      try {
+        const body = await res.json();
+        if (body.message) message = body.message;
+      } catch { /* keep status-based message */ }
+    } else if (res.status === 404) {
+      message = "API endpoint not found — is the backend running?";
+    }
+    throw new Error(message);
   }
   if (res.status === 204) return undefined as unknown as T;
   return res.json();

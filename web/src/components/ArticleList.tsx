@@ -64,8 +64,13 @@ export function ArticleList() {
       <FilterBar filter={filter} onChange={setFilter} />
 
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl p-4">
-          {error}
+        <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl p-4 space-y-1">
+          <p>{error}</p>
+          {error.includes("DATABASE_DSN") && (
+            <p className="text-xs text-red-500">
+              在 <code className="bg-red-100 px-1 rounded">.env</code> 中配置 DATABASE_DSN 并重启服务端即可启用文章管理功能。
+            </p>
+          )}
         </div>
       )}
 

@@ -18,7 +18,16 @@ export function StatsPanel() {
   }, []);
 
   if (loading) return <div className="text-center py-16 text-muted-foreground">加载中…</div>;
-  if (error) return <div className="bg-destructive/10 text-destructive text-sm rounded-xl p-4">{error}</div>;
+  if (error) return (
+    <div className="bg-destructive/10 text-destructive text-sm rounded-xl p-4 space-y-1">
+      <p>{error}</p>
+      {error.includes("DATABASE_DSN") && (
+        <p className="text-xs opacity-75">
+          在 <code className="bg-destructive/10 px-1 rounded">.env</code> 中配置 DATABASE_DSN 并重启服务端即可启用统计功能。
+        </p>
+      )}
+    </div>
+  );
   if (!data) return null;
 
   const byDay = data.by_day ?? [];
