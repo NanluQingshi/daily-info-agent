@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { getStats } from "../api/client";
@@ -105,8 +105,8 @@ export function StatsPanel() {
                 </thead>
                 <tbody>
                   {recentRuns.map((r, i) => (
-                    <>
-                      <tr key={r.run_id} className="text-foreground">
+                    <Fragment key={r.run_id}>
+                      <tr className="text-foreground">
                         <td className="py-2 font-mono">{r.run_id.slice(0, 8)}…</td>
                         <td className="py-2 text-right">{r.total_fetched}</td>
                         <td className="py-2 text-right">{r.total_processed}</td>
@@ -118,7 +118,7 @@ export function StatsPanel() {
                       {i < recentRuns.length - 1 && (
                         <tr key={`sep-${r.run_id}`}><td colSpan={7}><Separator /></td></tr>
                       )}
-                    </>
+                    </Fragment>
                   ))}
                 </tbody>
               </table>
