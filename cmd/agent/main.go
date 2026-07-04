@@ -267,15 +267,14 @@ func runServerMode(
 	e.DELETE("/api/sessions/:id", chatHandler.HandleDeleteSession)
 	e.GET("/health", healthHandler(version, st))
 
-	// New article management API (requires database)
-	if st != nil {
-		sched := scheduler.New(
-			mgr, proc, ver, pub, st, cfg,
-			logger.With(slog.String("component", "scheduler")),
-		)
-		apiHandler := api.New(st, sched, pub, cfg, logger.With(slog.String("component", "api")))
-		apiHandler.Register(e.Group("/api"))
-	}
+	// Article management API (database-dependent endpoints return clear
+	// errors when DATABASE_DSN is not configured).
+	sched := scheduler.New(
+		mgr, proc, ver, pub, st, cfg,
+		logger.With(slog.String("component", "scheduler")),
+	)
+	apiHandler := api.New(st, sched, pub, cfg, logger.With(slog.String("component", "api")))
+	apiHandler.Register(e.Group("/api"))
 
 	// Serve React frontend static files
 	serveStaticFrontend(e)
