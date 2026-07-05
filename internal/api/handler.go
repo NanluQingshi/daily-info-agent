@@ -53,6 +53,15 @@ func New(
 	}
 }
 
+// requireStore returns an error response if the database is not configured.
+func (h *Handler) requireStore(c echo.Context) error {
+	if h.store == nil {
+		return errJSON(c, http.StatusServiceUnavailable, "db_disabled",
+			"Database not configured. Set DATABASE_DSN to enable article management and statistics.")
+	}
+	return nil
+}
+
 // Register attaches all article management routes to the given Echo group.
 func (h *Handler) Register(g *echo.Group) {
 	g.GET("/articles", h.ListArticles)
@@ -68,6 +77,10 @@ func (h *Handler) Register(g *echo.Group) {
 
 // ListArticles handles GET /api/articles
 func (h *Handler) ListArticles(c echo.Context) error {
+	if err := h.requireStore(c); err != nil {
+		return err
+	}
+
 	f := models.ArticleFilter{}
 
 	if v := c.QueryParam("category"); v != "" {
@@ -135,6 +148,10 @@ func (h *Handler) ListArticles(c echo.Context) error {
 
 // GetArticle handles GET /api/articles/:id
 func (h *Handler) GetArticle(c echo.Context) error {
+	if err := h.requireStore(c); err != nil {
+		return err
+	}
+
 	id, err := parseID(c)
 	if err != nil {
 		return errJSON(c, http.StatusBadRequest, "invalid_id", "id must be a positive integer")
@@ -154,6 +171,10 @@ func (h *Handler) GetArticle(c echo.Context) error {
 
 // PublishArticle handles POST /api/articles/:id/publish
 func (h *Handler) PublishArticle(c echo.Context) error {
+	if err := h.requireStore(c); err != nil {
+		return err
+	}
+
 	if h.publisher == nil {
 		return errJSON(c, http.StatusServiceUnavailable, "publisher_disabled",
 			"Java API publishing is not configured (WEBSITE_API_BASE_URL / WEBSITE_API_TOKEN not set)")
@@ -194,6 +215,10 @@ func (h *Handler) PublishArticle(c echo.Context) error {
 // RetryArticle handles POST /api/articles/:id/retry — resets a failed article
 // to 'pending' so it can be published again.
 func (h *Handler) RetryArticle(c echo.Context) error {
+	if err := h.requireStore(c); err != nil {
+		return err
+	}
+
 	id, err := parseID(c)
 	if err != nil {
 		return errJSON(c, http.StatusBadRequest, "invalid_id", "id must be a positive integer")
@@ -220,6 +245,10 @@ func (h *Handler) RetryArticle(c echo.Context) error {
 
 // DeleteArticle handles DELETE /api/articles/:id
 func (h *Handler) DeleteArticle(c echo.Context) error {
+	if err := h.requireStore(c); err != nil {
+		return err
+	}
+
 	id, err := parseID(c)
 	if err != nil {
 		return errJSON(c, http.StatusBadRequest, "invalid_id", "id must be a positive integer")
@@ -432,6 +461,10 @@ func fetchStatusFromResult(r models.RunResult) map[string]any {
 
 // GetStats handles GET /api/stats?since=YYYY-MM-DD (default: 30 days ago)
 func (h *Handler) GetStats(c echo.Context) error {
+	if err := h.requireStore(c); err != nil {
+		return err
+	}
+
 	since := time.Now().UTC().AddDate(0, -1, 0)
 	if v := c.QueryParam("since"); v != "" {
 		t, err := time.Parse(time.DateOnly, v)

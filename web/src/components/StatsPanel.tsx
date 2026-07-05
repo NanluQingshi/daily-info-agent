@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { getStats } from "../api/client";
@@ -18,7 +18,16 @@ export function StatsPanel() {
   }, []);
 
   if (loading) return <div className="text-center py-16 text-muted-foreground">加载中…</div>;
-  if (error) return <div className="bg-destructive/10 text-destructive text-sm rounded-xl p-4">{error}</div>;
+  if (error) return (
+    <div className="bg-destructive/10 text-destructive text-sm rounded-xl p-4 space-y-1">
+      <p>{error}</p>
+      {error.includes("DATABASE_DSN") && (
+        <p className="text-xs opacity-75">
+          在 <code className="bg-destructive/10 px-1 rounded">.env</code> 中配置 DATABASE_DSN 并重启服务端即可启用统计功能。
+        </p>
+      )}
+    </div>
+  );
   if (!data) return null;
 
   const byDay = data.by_day ?? [];
@@ -105,8 +114,8 @@ export function StatsPanel() {
                 </thead>
                 <tbody>
                   {recentRuns.map((r, i) => (
-                    <>
-                      <tr key={r.run_id} className="text-foreground">
+                    <Fragment key={r.run_id}>
+                      <tr className="text-foreground">
                         <td className="py-2 font-mono">{r.run_id.slice(0, 8)}…</td>
                         <td className="py-2 text-right">{r.total_fetched}</td>
                         <td className="py-2 text-right">{r.total_processed}</td>
@@ -118,7 +127,7 @@ export function StatsPanel() {
                       {i < recentRuns.length - 1 && (
                         <tr key={`sep-${r.run_id}`}><td colSpan={7}><Separator /></td></tr>
                       )}
-                    </>
+                    </Fragment>
                   ))}
                 </tbody>
               </table>

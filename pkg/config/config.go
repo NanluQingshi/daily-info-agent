@@ -150,9 +150,6 @@ func Load() (*Config, error) {
 	}
 
 	cfg.NewsAPIKey = os.Getenv("NEWSAPI_KEY")
-	if cfg.NewsAPIKey == "" {
-		missing = append(missing, "NEWSAPI_KEY")
-	}
 
 	if len(missing) > 0 {
 		return nil, &MissingConfigError{Vars: missing}
