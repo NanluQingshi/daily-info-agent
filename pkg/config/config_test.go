@@ -75,16 +75,13 @@ func TestLoad_MissingLLMModelID_ReturnsError(t *testing.T) {
 	assert.Contains(t, missingErr.Vars, "LLM_MODEL_ID")
 }
 
-func TestLoad_MissingNewsAPIKey_ReturnsError(t *testing.T) {
+func TestLoad_MissingNewsAPIKey_Succeeds(t *testing.T) {
 	setRequiredEnvVars(t)
 	t.Setenv("NEWSAPI_KEY", "")
 
-	_, err := config.Load()
-	require.Error(t, err)
-
-	var missingErr *config.MissingConfigError
-	require.ErrorAs(t, err, &missingErr)
-	assert.Contains(t, missingErr.Vars, "NEWSAPI_KEY")
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Empty(t, cfg.NewsAPIKey)
 }
 
 func TestLoad_MissingWebsiteBaseURL_DisablesPublisher(t *testing.T) {
@@ -113,10 +110,9 @@ func TestLoad_MultipleFieldsMissing_AllListedInError(t *testing.T) {
 
 	var missingErr *config.MissingConfigError
 	require.ErrorAs(t, err, &missingErr)
-	assert.Len(t, missingErr.Vars, 3)
+	assert.Len(t, missingErr.Vars, 2)
 	assert.Contains(t, missingErr.Vars, "LLM_API_KEY")
 	assert.Contains(t, missingErr.Vars, "LLM_MODEL_ID")
-	assert.Contains(t, missingErr.Vars, "NEWSAPI_KEY")
 }
 
 func TestLoad_MissingConfigError_ErrorMessage(t *testing.T) {
