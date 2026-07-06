@@ -98,6 +98,18 @@ func main() {
 
 	fetchers = append(fetchers, fetcher.NewRSSHubFetcher(cfg.RSSHubBaseURL, httpClient))
 
+	// Search engine fetcher (optional — set SEARCH_ENGINE_URL to enable)
+	if cfg.SearchEngineEnabled {
+		fetchers = append(fetchers, fetcher.NewSearchFetcher(
+			cfg.SearchEngineURL,
+			httpClient,
+			logger.With(slog.String("component", "search")),
+		))
+		logger.Info("search engine fetcher enabled", slog.String("url", cfg.SearchEngineURL))
+	} else {
+		logger.Info("search engine fetcher disabled (SEARCH_ENGINE_URL not set)")
+	}
+
 	mgr := fetcher.NewManager(
 		fetchers,
 		cfg.RSSFeeds,

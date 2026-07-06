@@ -358,6 +358,18 @@ func buildFetchConfigs(cfg *config.Config, categories []models.Category) []model
 		})
 	}
 
+	// Search engine — one query per category
+	if cfg.SearchEngineEnabled {
+		for _, cat := range categories {
+			cfgs = append(cfgs, models.FetchConfig{
+				Type:       models.SourceTypeSearch,
+				URL:        categoryToSearchQuery(cat),
+				Categories: []models.Category{cat},
+				Timeout:    15 * time.Second,
+			})
+		}
+	}
+
 	return cfgs
 }
 
@@ -376,5 +388,23 @@ func categoryToNewsAPIQuery(cat models.Category) string {
 		return "international world news"
 	default:
 		return string(cat)
+	}
+}
+
+// categoryToSearchQuery returns a search-engine query string for the given category.
+func categoryToSearchQuery(cat models.Category) string {
+	switch cat {
+	case models.CategoryFinance:
+		return "finance stock market economy news today"
+	case models.CategoryPolitics:
+		return "politics government policy news today"
+	case models.CategoryEconomy:
+		return "economy GDP trade business news today"
+	case models.CategoryTechAI:
+		return "technology AI artificial intelligence news today"
+	case models.CategoryInternational:
+		return "world international breaking news today"
+	default:
+		return "latest news today " + string(cat)
 	}
 }

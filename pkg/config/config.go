@@ -77,6 +77,10 @@ type Config struct {
 	RSSFeeds      []string // parsed from semicolon-separated env var
 	RSSHubRoutes  []string // parsed from semicolon-separated env var (route paths)
 
+	// Search engine (optional — set to enable web search via DuckDuckGo etc.)
+	SearchEngineURL   string // default: "https://html.duckduckgo.com/html"
+	SearchEngineEnabled bool // true when SearchEngineURL is set
+
 	// Verification
 	TrustedDomains    []string // parsed from comma-separated env var
 	SkipVerification  bool
@@ -212,6 +216,10 @@ func Load() (*Config, error) {
 	} else {
 		cfg.RSSFeeds = defaultRSSFeeds
 	}
+
+	// Search engine
+	cfg.SearchEngineURL = envOr("SEARCH_ENGINE_URL", "")
+	cfg.SearchEngineEnabled = cfg.SearchEngineURL != ""
 
 	// Trusted domains
 	if raw := os.Getenv("TRUSTED_DOMAINS"); raw != "" {
