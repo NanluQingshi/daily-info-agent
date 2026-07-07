@@ -65,6 +65,7 @@ const (
 	SourceTypeRSS     SourceType = "rss"
 	SourceTypeNewsAPI SourceType = "newsapi"
 	SourceTypeRSSHub  SourceType = "rsshub"
+	SourceTypeSearch  SourceType = "search"
 )
 
 // RawItem is the normalised output of any data-source adapter.

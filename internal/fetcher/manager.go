@@ -254,6 +254,8 @@ func (m *Manager) fetchConcurrent(ctx context.Context, cfgs []models.FetchConfig
 			fetcherMap[models.SourceTypeNewsAPI] = f
 		case "rsshub":
 			fetcherMap[models.SourceTypeRSSHub] = f
+		case "search":
+			fetcherMap[models.SourceTypeSearch] = f
 		}
 	}
 
