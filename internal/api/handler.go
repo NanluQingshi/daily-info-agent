@@ -462,13 +462,13 @@ func fetchStatusFromResult(r models.RunResult) map[string]any {
 	}
 }
 
-// GetStats handles GET /api/stats?since=YYYY-MM-DD (default: 30 days ago)
+// GetStats handles GET /api/stats?since=YYYY-MM-DD (default: 90 days ago)
 func (h *Handler) GetStats(c echo.Context) error {
 	if err := h.requireStore(c); err != nil {
 		return err
 	}
 
-	since := time.Now().UTC().AddDate(0, -1, 0)
+	since := time.Now().UTC().AddDate(0, -3, 0) // default: 90 days
 	if v := c.QueryParam("since"); v != "" {
 		t, err := time.Parse(time.DateOnly, v)
 		if err != nil {
