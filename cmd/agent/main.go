@@ -287,6 +287,19 @@ func runServerMode(
 	e.Use(slogMiddleware(logger))
 	e.Use(middleware.Recover())
 
+	// CORS — allow the configured origin(s) or all in development.
+	corsOrigins := cfg.CORSOrigins
+	if corsOrigins == "" {
+		corsOrigins = "*"
+	}
+	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+		AllowOrigins:     strings.Split(corsOrigins, ","),
+		AllowMethods:     []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodOptions},
+		AllowHeaders:     []string{"Content-Type", "Authorization", "X-Api-Token"},
+		AllowCredentials: true,
+		MaxAge:           300,
+	}))
+
 	// Chat endpoints
 	e.POST("/api/chat", chatHandler.Handle)
 	e.POST("/api/chat/stream", chatHandler.HandleStream)

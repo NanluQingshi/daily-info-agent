@@ -106,6 +106,9 @@ type Config struct {
 	// HTTP server
 	BindAddr string // default: "127.0.0.1:8080"
 
+	// CORS origins (comma-separated, default: "*" allows all)
+	CORSOrigins string
+
 	// Chat API auth (optional — leave blank to disable)
 	// When set, /api/chat and /api/chat/stream require a matching
 	// "X-Api-Token" request header (or "Authorization: Bearer <token>").
