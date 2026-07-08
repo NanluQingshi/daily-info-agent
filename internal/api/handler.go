@@ -54,10 +54,13 @@ func New(
 }
 
 // requireStore returns an error response if the database is not configured.
+// It writes the JSON error body to the response AND returns a non-nil error
+// so the caller stops processing (c.JSON alone may return nil on success).
 func (h *Handler) requireStore(c echo.Context) error {
 	if h.store == nil {
-		return errJSON(c, http.StatusServiceUnavailable, "db_disabled",
+		errJSON(c, http.StatusServiceUnavailable, "db_disabled",
 			"Database not configured. Set DATABASE_DSN to enable article management and statistics.")
+		return errors.New("store: database not configured")
 	}
 	return nil
 }
