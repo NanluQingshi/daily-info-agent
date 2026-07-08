@@ -1,0 +1,81 @@
+# Daily Info Agent — container orchestration
+#
+# Usage:
+#   docker compose up -d          # start all services (daemon)
+#   docker compose down           # stop all services
+#   docker compose logs -f        # tail logs
+#
+# Environment variables are loaded from .env by default.
+# Copy .env.example → .env and fill in your secrets first.
+
+services:
+  # ── PostgreSQL ─────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: dia-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: daily_info
+      POSTGRES_USER: dia
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dia -d daily_info"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Agent (server mode) ────────────────────────────────────────────────
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dia-agent
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${BIND_ADDR:-127.0.0.1:8080}:8080"
+    environment:
+      # LLM
+      LLM_API_KEY:     ${LLM_API_KEY:?LLM_API_KEY is required}
+      LLM_MODEL_ID:    ${LLM_MODEL_ID:?LLM_MODEL_ID is required}
+      LLM_BASE_URL:    ${LLM_BASE_URL:-https://api.deepseek.com/v1}
+      # Data sources
+      NEWSAPI_KEY:          ${NEWSAPI_KEY:-}
+      RSSHUB_BASE_URL:      ${RSSHUB_BASE_URL:-https://rsshub.app}
+      RSS_FEEDS:            ${RSS_FEEDS:-}
+      RSSHUB_ROUTES:        ${RSSHUB_ROUTES:-}
+      # Verification
+      TRUSTED_DOMAINS:      ${TRUSTED_DOMAINS:-}
+      SKIP_VERIFICATION:    ${SKIP_VERIFICATION:-false}
+      DEFAULT_CATEGORIES:   ${DEFAULT_CATEGORIES:-}
+      # Publishing (optional)
+      WEBSITE_API_BASE_URL: ${WEBSITE_API_BASE_URL:-}
+      WEBSITE_API_TOKEN:    ${WEBSITE_API_TOKEN:-}
+      # Database
+      DATABASE_DSN:         postgres://dia:${POSTGRES_PASSWORD:-changeme}@postgres:5432/daily_info?sslmode=disable
+      # Email notifications (optional)
+      SMTP_HOST:            ${SMTP_HOST:-}
+      SMTP_PORT:            ${SMTP_PORT:-587}
+      SMTP_USER:            ${SMTP_USER:-}
+      SMTP_PASSWORD:        ${SMTP_PASSWORD:-}
+      SMTP_FROM:            ${SMTP_FROM:-}
+      NOTIFY_EMAIL:         ${NOTIFY_EMAIL:-}
+      # HTTP server
+      BIND_ADDR:            0.0.0.0:8080
+      CORS_ORIGINS:         ${CORS_ORIGINS:-*}
+      # Chat
+      CHAT_API_TOKEN:       ${CHAT_API_TOKEN:-}
+      CHAT_RATE_LIMIT:      ${CHAT_RATE_LIMIT:-0}
+      # Observability
+      LOG_LEVEL:            ${LOG_LEVEL:-INFO}
+      # Runtime
+      CACHE_FILE_PATH:      /app/cache/dedup.json
+
+volumes:
+  pgdata:
