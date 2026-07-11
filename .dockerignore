@@ -1,0 +1,36 @@
+# ── Version Control ─────────────────────────────────────────────────────────
+.git/
+.gitignore
+.github/
+
+# ── Environment & Secrets ──────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Go Build Artifacts ─────────────────────────────────────────────────────
+/agent
+*.test
+*.out
+/bin/
+/coverage.html
+/coverage/
+
+# ── Node / Frontend (built separately, only web/dist is needed) ────────────
+web/node_modules/
+web/dist/
+
+# ── Cache / Runtime Data ───────────────────────────────────────────────────
+cache/*.json
+cache/*.db
+
+# ── Documentation & IDE ────────────────────────────────────────────────────
+.claude/
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ── OS ─────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db

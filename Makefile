@@ -1,9 +1,17 @@
-.PHONY: build test lint run-schedule run-server dev clean tidy web-install web-build web-dev build-full db-create
+.PHONY: build test lint run-schedule run-server dev clean tidy web-install web-build web-dev build-full db-create help
 
 # Build flags — override version at build time
 VERSION ?= 1.0.0
 LDFLAGS := -ldflags="-X main.version=$(VERSION)"
 BINARY  := agent
+
+## help: Print this help message
+help:
+	@echo "Usage: make <target>"
+	@echo ""
+	@grep -E '^## [a-zA-Z._-]+: .*' $(MAKEFILE_LIST) | \
+		sort | \
+		awk 'BEGIN {FS = ": "}; /^## / {sub(/^## /, "", $$1); printf "  %-20s %s\n", $$1, $$2}'
 
 ## build: Compile the agent binary
 build:
@@ -41,6 +49,10 @@ web-build:
 web-dev:
 	cd web && npm run dev
 
+## web-lint: Run TypeScript type-check
+web-lint:
+	cd web && npx tsc --noEmit
+
 ## dev: Start both Go backend (8080) and Vite dev server (5173) together
 dev: build
 	@echo "==> backend  → http://localhost:8080"
@@ -53,9 +65,21 @@ dev: build
 ## build-full: Build React frontend then compile Go binary (embeds web/dist)
 build-full: web-build build
 
+## docker-build: Build the Docker image
+docker-build:
+	docker build -t daily-info-agent .
+
 ## db-create: Create the local PostgreSQL database
 db-create:
 	createdb daily_info
+
+## db-drop: Drop the local PostgreSQL database (caution!)
+db-drop:
+	dropdb daily_info
+
+## db-connect: Connect to the local PostgreSQL database
+db-connect:
+	psql daily_info
 
 ## clean: Remove build artifacts and cache
 clean:

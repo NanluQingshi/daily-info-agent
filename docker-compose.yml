@@ -71,7 +71,7 @@ services:
       CORS_ORIGINS:         ${CORS_ORIGINS:-*}
       # Chat
       CHAT_API_TOKEN:       ${CHAT_API_TOKEN:-}
-      CHAT_RATE_LIMIT:      ${CHAT_RATE_LIMIT:-0}
+      CHAT_RATE_LIMIT_PER_MIN: ${CHAT_RATE_LIMIT_PER_MIN:-0}
       # Observability
       LOG_LEVEL:            ${LOG_LEVEL:-INFO}
       # Runtime

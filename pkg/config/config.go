@@ -189,6 +189,10 @@ func Load() (*Config, error) {
 	cfg.LLMBaseURL = envOr("LLM_BASE_URL", "https://api.deepseek.com/v1")
 	cfg.RSSHubBaseURL = envOr("RSSHUB_BASE_URL", "https://rsshub.app")
 	cfg.BindAddr = envOr("BIND_ADDR", "127.0.0.1:8080")
+
+	// CORS origins (comma-separated, default: "*" allows all)
+	cfg.CORSOrigins = envOr("CORS_ORIGINS", "*")
+
 	cfg.CacheFilePath = envOr("CACHE_FILE_PATH", "cache/dedup.json")
 	cfg.AgentVersion = envOr("AGENT_VERSION", "1.0.0")
 
