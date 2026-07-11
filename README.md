@@ -42,6 +42,8 @@ go run ./cmd/agent --mode=schedule # 定时抓取模式（一次性）
 | 02 | [docs/02-DESIGN.md](docs/02-DESIGN.md) | 技术设计：系统架构、模块接口、数据模型、错误处理策略 |
 | 03 | [docs/03-DEV-GUIDE.md](docs/03-DEV-GUIDE.md) | 开发指南：环境搭建、配置说明、启动方式、测试、常用命令 |
 | 04 | [docs/04-ROADMAP.md](docs/04-ROADMAP.md) | 项目规划：整体架构、GUI 选型、待补充 API、分阶段开发计划 |
+| — | [CHANGELOG.md](CHANGELOG.md) | 版本发布历史 |
+| — | [CONTRIBUTING.md](CONTRIBUTING.md) | 贡献指南 |
 
 ## 项目结构
 
@@ -49,19 +51,31 @@ go run ./cmd/agent --mode=schedule # 定时抓取模式（一次性）
 daily-info-agent/
 ├── cmd/agent/main.go              # 程序入口
 ├── internal/
-│   ├── fetcher/                   # 数据抓取（RSS / NewsAPI / RSSHub）
-│   ├── processor/                 # AI 处理（分类 + 摘要）
-│   ├── verifier/                  # 来源可信度校验
-│   ├── publisher/                 # 发布到网站 API
-│   ├── chat/                      # 对话 HTTP handler
-│   └── scheduler/                 # 流水线编排
+│   ├── agent/                     # LLM Agent（会话管理、流式响应、工具调用）
+│   ├── api/                       # REST 管理 API（文章 CRUD、抓取触发、统计）
+│   ├── chat/                      # 对话 HTTP handler（鉴权、限流、SSE 流式）
+│   ├── dedup/                     # 标题级近似去重（Jaccard + Union-Find）
+│   ├── fetcher/                   # 数据抓取（RSS / NewsAPI / RSSHub / 搜索引擎）
+│   ├── notifier/                  # 邮件通知（SMTP HTML 摘要）
+│   ├── processor/                 # AI 批处理（分类 + 摘要 + 可信度评分）
+│   ├── publisher/                 # 发布到网站 API（带指数退避重试）
+│   ├── scheduler/                 # 流水线编排
+│   ├── store/                     # PostgreSQL 持久化（文章/运行日志/统计）
+│   └── verifier/                  # 来源可信度校验（域名白名单 + AI 评分阈值）
 ├── pkg/
-│   ├── config/                    # 环境变量加载
-│   ├── models/                    # 共享数据结构
-│   └── backoff/                   # 指数退避工具
+│   ├── backoff/                   # 指数退避重试工具
+│   ├── config/                    # 环境变量加载与校验
+│   └── models/                    # 共享数据结构与类型
+├── web/                           # React 前端（Vite + shadcn/ui）
+├── migrations/                    # SQL 数据库迁移
 ├── test/integration/              # 端到端集成测试
 ├── .github/workflows/             # GitHub Actions 调度配置
 ├── docs/                          # 项目文档（见上方文档索引）
 ├── .env.example                   # 环境变量模板
+├── .dockerignore                  # Docker 构建上下文排除
+├── Dockerfile                     # 多阶段 Docker 构建
+├── docker-compose.yml             # 容器编排（PostgreSQL + Agent）
+├── CHANGELOG.md                   # 版本发布历史
+├── CONTRIBUTING.md                # 贡献指南
 └── Makefile
 ```

@@ -7,12 +7,24 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/user/daily-info-agent/pkg/models"
 )
 
 // ErrNotFound is returned when a requested record does not exist.
 var ErrNotFound = errors.New("store: record not found")
+
+// pool is the subset of *pgxpool.Pool methods used by PostgresStore.
+// Defined as an interface so tests can inject a mock.
+type pool interface {
+	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
+	Ping(ctx context.Context) error
+	Close()
+}
 
 // ArticleStore is the persistence interface used by the scheduler and API handlers.
 type ArticleStore interface {
@@ -31,7 +43,7 @@ type ArticleStore interface {
 
 // PostgresStore implements ArticleStore using pgx/v5.
 type PostgresStore struct {
-	pool *pgxpool.Pool
+	pool pool
 }
 
 // NewPostgresStore creates a connection pool and returns a PostgresStore.
