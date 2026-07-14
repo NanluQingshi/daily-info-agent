@@ -135,7 +135,7 @@ func TestVerifier_Verify_ScoreJustBelowThreshold_Fails(t *testing.T) {
 	results := v.Verify([]models.ProcessedArticle{article})
 	require.Len(t, results, 1)
 	assert.False(t, results[0].Verification.Pass)
-	assert.Equal(t, models.SkipReasonNotWhitelisted, results[0].Verification.SkipReason)
+	assert.Equal(t, models.SkipReasonLowScore, results[0].Verification.SkipReason)
 	assert.False(t, results[0].Verification.DomainHit)
 }
 
@@ -146,7 +146,7 @@ func TestVerifier_Verify_LowScore_Skipped(t *testing.T) {
 	results := v.Verify([]models.ProcessedArticle{article})
 	require.Len(t, results, 1)
 	assert.False(t, results[0].Verification.Pass)
-	assert.Equal(t, models.SkipReasonNotWhitelisted, results[0].Verification.SkipReason)
+	assert.Equal(t, models.SkipReasonLowScore, results[0].Verification.SkipReason)
 }
 
 func TestVerifier_Verify_ZeroScore_Skipped(t *testing.T) {
