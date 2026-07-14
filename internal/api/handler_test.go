@@ -609,18 +609,125 @@ func TestTriggerFetch_AlreadyRunning(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetFetchStatus_MissingRunID(t *testing.T) {
-	h := newHandler(nil, nil, nil)
-	e := newEcho()
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
-	c.SetParamNames("run_id")
-	c.SetParamValues("")
+  h := newHandler(nil, nil, nil)
+  e := newEcho()
+  req := httptest.NewRequest(http.MethodGet, "/", nil)
+  rec := httptest.NewRecorder()
+  c := e.NewContext(req, rec)
+  c.SetParamNames("run_id")
+  c.SetParamValues("")
 
-	err := h.GetFetchStatus(c)
-	require.NoError(t, err)
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
+  err := h.GetFetchStatus(c)
+  require.NoError(t, err)
+  assert.Equal(t, http.StatusBadRequest, rec.Code)
+ }
+
+ func TestGetFetchStatus_InMemoryResult(t *testing.T) {
+  h := newHandler(nil, nil, nil)
+  h.runs["test-run-1"] = models.RunResult{
+   RunID:          "test-run-1",
+   TotalFetched:   42,
+   TotalPublished: 10,
+  }
+
+  e := newEcho()
+  req := httptest.NewRequest(http.MethodGet, "/", nil)
+  rec := httptest.NewRecorder()
+  c := e.NewContext(req, rec)
+  c.SetParamNames("run_id")
+  c.SetParamValues("test-run-1")
+
+  err := h.GetFetchStatus(c)
+  require.NoError(t, err)
+  assert.Equal(t, http.StatusOK, rec.Code)
+
+  var body map[string]any
+  require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+  assert.Equal(t, "done", body["status"])
+  assert.Equal(t, float64(42), body["fetched"])
+ }
+
+ func TestGetFetchStatus_Running_NoResultYet(t *testing.T) {
+  h := newHandler(nil, nil, nil)
+  h.pipelineRunning = true
+
+  e := newEcho()
+  req := httptest.NewRequest(http.MethodGet, "/", nil)
+  rec := httptest.NewRecorder()
+  c := e.NewContext(req, rec)
+  c.SetParamNames("run_id")
+  c.SetParamValues("fresh-run")
+
+  err := h.GetFetchStatus(c)
+  require.NoError(t, err)
+  assert.Equal(t, http.StatusOK, rec.Code)
+
+  var body map[string]any
+  require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+  assert.Equal(t, "running", body["status"])
+ }
+
+ func TestGetFetchStatus_DBFallback(t *testing.T) {
+  m := &mockStore{
+   runLogs: map[string]models.RunLogRow{
+    "db-run": {
+     RunID:          "db-run",
+     TotalFetched:   99,
+     TotalPublished: 50,
+     StartedAt:      time.Now().UTC().Add(-5 * time.Minute),
+     FinishedAt:     time.Now().UTC(),
+    },
+   },
+  }
+  h := newHandler(m, nil, nil)
+
+  e := newEcho()
+  req := httptest.NewRequest(http.MethodGet, "/", nil)
+  rec := httptest.NewRecorder()
+  c := e.NewContext(req, rec)
+  c.SetParamNames("run_id")
+  c.SetParamValues("db-run")
+
+  err := h.GetFetchStatus(c)
+  require.NoError(t, err)
+  assert.Equal(t, http.StatusOK, rec.Code)
+
+  var body map[string]any
+  require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+  assert.Equal(t, "done", body["status"])
+  assert.Equal(t, float64(99), body["fetched"])
+ }
+
+ func TestGetFetchStatus_DBNotFound_NoDB(t *testing.T) {
+  h := newHandler(nil, nil, nil)
+
+  e := newEcho()
+  req := httptest.NewRequest(http.MethodGet, "/", nil)
+  rec := httptest.NewRecorder()
+  c := e.NewContext(req, rec)
+  c.SetParamNames("run_id")
+  c.SetParamValues("nonexistent")
+
+  err := h.GetFetchStatus(c)
+  require.NoError(t, err)
+  assert.Equal(t, http.StatusNotFound, rec.Code)
+ }
+
+ func TestGetFetchStatus_DBNotFound_WithDB(t *testing.T) {
+  m := &mockStore{} // no run logs configured
+  h := newHandler(m, nil, nil)
+
+  e := newEcho()
+  req := httptest.NewRequest(http.MethodGet, "/", nil)
+  rec := httptest.NewRecorder()
+  c := e.NewContext(req, rec)
+  c.SetParamNames("run_id")
+  c.SetParamValues("nonexistent")
+
+  err := h.GetFetchStatus(c)
+  require.NoError(t, err)
+  assert.Equal(t, http.StatusNotFound, rec.Code)
+ }
 
 // ---------------------------------------------------------------------------
 // fetchStatusFromResult
