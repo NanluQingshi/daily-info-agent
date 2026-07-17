@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { deleteSession, sendChatStream } from "../api/client";
 import type { Conversation } from "../types";
 import {
@@ -9,7 +9,40 @@ import {
 } from "./ChatPanel";
 import { ConversationList } from "./ConversationList";
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── localStorage persistence ─────────────────────────────────────────────
+
+const STORAGE_KEY = "dia.chat_state";
+
+interface PersistedState {
+  conversations: Conversation[];
+  messagesMap: Record<string, Message[]>;
+  activeId: string;
+  inputMap: Record<string, string>;
+}
+
+function loadState(): PersistedState | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as PersistedState;
+  } catch {
+    return null;
+  }
+}
+
+function saveState(state: PersistedState) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // localStorage full or unavailable — silently ignore
+  }
+}
+
+export function clearChatHistory() {
+  localStorage.removeItem(STORAGE_KEY);
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────
 
 let convCounter = 0;
 
@@ -21,34 +54,62 @@ function makeConversation(): Conversation {
   };
 }
 
-// ── Component ─────────────────────────────────────────────────────────────────
+// ── Component ────────────────────────────────────────────────────────────
 
 export function ChatView() {
-  const initial = makeConversation();
-
-  const [conversations, setConversations] = useState<Conversation[]>([initial]);
-  const [activeId, setActiveId] = useState<string>(initial.localId);
-  const [messagesMap, setMessagesMap] = useState<Record<string, Message[]>>({
-    [initial.localId]: [],
-  });
+  const [initialized, setInitialized] = useState(false);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [activeId, setActiveId] = useState<string>("");
+  const [messagesMap, setMessagesMap] = useState<Record<string, Message[]>>({});
   const [loadingMap, setLoadingMap] = useState<Record<string, boolean>>({});
   const [inputMap, setInputMap] = useState<Record<string, string>>({});
 
-  const activeConv = conversations.find((c) => c.localId === activeId)!;
-  const messages = messagesMap[activeId] ?? [];
-  const loading = loadingMap[activeId] ?? false;
-  const input = inputMap[activeId] ?? "";
+  // Load persisted state on mount
+  useEffect(() => {
+    const saved = loadState();
+    if (saved && saved.conversations.length > 0) {
+      setConversations(saved.conversations);
+      setMessagesMap(saved.messagesMap);
+      setActiveId(saved.activeId);
+      setInputMap(saved.inputMap ?? {});
+    } else {
+      const fresh = makeConversation();
+      setConversations([fresh]);
+      setActiveId(fresh.localId);
+      setMessagesMap({ [fresh.localId]: [] });
+    }
+    setInitialized(true);
+  }, []);
 
-  // ── Mutation helpers ────────────────────────────────────────────────────────
+  // Persist to localStorage whenever state changes (with debounce)
+  const persistTimer = useRef<ReturnType<typeof setTimeout>>();
+  useEffect(() => {
+    if (!initialized) return;
+    if (persistTimer.current) clearTimeout(persistTimer.current);
+    persistTimer.current = setTimeout(() => {
+      saveState({
+        conversations,
+        messagesMap,
+        activeId,
+        inputMap,
+      });
+    }, 300);
+    return () => {
+      if (persistTimer.current) clearTimeout(persistTimer.current);
+    };
+  }, [conversations, messagesMap, activeId, inputMap, initialized]);
+
+  const activeConv = conversations.find((c) => c.localId === activeId);
+  const messages = activeId ? (messagesMap[activeId] ?? []) : [];
+  const loading = activeId ? (loadingMap[activeId] ?? false) : false;
+  const input = activeId ? (inputMap[activeId] ?? "") : "";
+
+  // ── Mutation helpers ───────────────────────────────────────────────────
 
   const updateConv = useCallback((localId: string, patch: Partial<Conversation>) => {
     setConversations((prev) =>
       prev.map((c) => (c.localId === localId ? { ...c, ...patch } : c))
     );
-  }, []);
-
-  const setMessages = useCallback((localId: string, msgs: Message[]) => {
-    setMessagesMap((prev) => ({ ...prev, [localId]: msgs }));
   }, []);
 
   const updateLastMessage = useCallback(
@@ -65,9 +126,10 @@ export function ChatView() {
     []
   );
 
-  // ── Send message ────────────────────────────────────────────────────────────
+  // ── Send message ───────────────────────────────────────────────────────
 
   const handleSend = useCallback(() => {
+    if (!activeId) return;
     const text = (inputMap[activeId] ?? "").trim();
     if (!text || loadingMap[activeId]) return;
 
@@ -140,7 +202,7 @@ export function ChatView() {
     });
   }, [activeId, inputMap, loadingMap, conversations, updateConv, updateLastMessage]);
 
-  // ── Conversation management ─────────────────────────────────────────────────
+  // ── Conversation management ────────────────────────────────────────────
 
   const handleCreate = useCallback(() => {
     const conv = makeConversation();
@@ -176,7 +238,9 @@ export function ChatView() {
     [activeId, conversations]
   );
 
-  // ── Render ──────────────────────────────────────────────────────────────────
+  // ── Render ─────────────────────────────────────────────────────────────
+
+  if (!activeConv) return null;
 
   return (
     <div className="flex h-full">
