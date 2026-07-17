@@ -144,9 +144,6 @@ func jaccard(a, b map[string]struct{}) float64 {
 		}
 	}
 	union := len(a) + len(b) - intersection
-	if union == 0 {
-		return 0
-	}
 	return float64(intersection) / float64(union)
 }
 

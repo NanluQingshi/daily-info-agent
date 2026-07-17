@@ -71,8 +71,8 @@ func (v *Verifier) verify(article *models.ProcessedArticle) models.VerificationR
 		return models.VerificationResult{Pass: true, DomainHit: false}
 	}
 
-	// Skip.
-	reason := models.SkipReasonNotWhitelisted
+	// Skip — domain not whitelisted AND credibility score below threshold.
+	reason := models.SkipReasonLowScore
 	v.logger.Warn("verification skip",
 		slog.String("domain", domain),
 		slog.Float64("credibility_score", article.CredibilityScore),

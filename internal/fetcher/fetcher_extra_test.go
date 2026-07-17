@@ -1,8 +1,11 @@
 package fetcher
 
 import (
+	"context"
 	"errors"
+	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -363,4 +366,325 @@ func TestNewRSSHubFetcher_CustomBaseURL(t *testing.T) {
 func TestNewRSSHubFetcher_BaseURLTrailingSlashTrimmed(t *testing.T) {
 	f := NewRSSHubFetcher("https://rsshub.app/", nil)
 	assert.NotNil(t, f)
+}
+
+// ---------------------------------------------------------------------------
+// SearchFetcher
+// ---------------------------------------------------------------------------
+
+func TestSearchFetcher_Name(t *testing.T) {
+	f := NewSearchFetcher("https://example.com", nil, slog.Default())
+	assert.Equal(t, "search", f.Name())
+}
+
+func TestNewSearchFetcher_NilClient_CreatesDefault(t *testing.T) {
+	f := NewSearchFetcher("https://example.com", nil, slog.Default())
+	assert.NotNil(t, f)
+}
+
+// ---------------------------------------------------------------------------
+// decodeDuckDuckGoURL
+// ---------------------------------------------------------------------------
+
+func TestDecodeDuckDuckGoURL_WithUddgParam_Decodes(t *testing.T) {
+	href := "//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Farticle&rut=abc123"
+	got := decodeDuckDuckGoURL(href)
+	assert.Equal(t, "https://example.com/article", got)
+}
+
+func TestDecodeDuckDuckGoURL_NoUddgParam_ReturnsAsIs(t *testing.T) {
+	// Protocol-relative URL without uddg param falls through to the // prefix handler.
+	href := "//duckduckgo.com/l/?rut=abc123"
+	got := decodeDuckDuckGoURL(href)
+	assert.Equal(t, "https://duckduckgo.com/l/?rut=abc123", got)
+}
+
+func TestDecodeDuckDuckGoURL_DirectHttpURL_ReturnsAsIs(t *testing.T) {
+	href := "https://example.com/article"
+	got := decodeDuckDuckGoURL(href)
+	assert.Equal(t, href, got)
+}
+
+func TestDecodeDuckDuckGoURL_ProtocolRelativeURL_PrefixesHTTPS(t *testing.T) {
+	href := "//example.com/article"
+	got := decodeDuckDuckGoURL(href)
+	assert.Equal(t, "https://example.com/article", got)
+}
+
+func TestDecodeDuckDuckGoURL_RelativePath_ReturnsAsIs(t *testing.T) {
+	href := "/relative/path"
+	got := decodeDuckDuckGoURL(href)
+	assert.Equal(t, href, got)
+}
+
+// ---------------------------------------------------------------------------
+// detectLanguage
+// ---------------------------------------------------------------------------
+
+func TestDetectLanguage_ChineseText_ReturnsZh(t *testing.T) {
+	assert.Equal(t, "zh", detectLanguage("这是一段中文文本"))
+}
+
+func TestDetectLanguage_EnglishText_ReturnsEn(t *testing.T) {
+	assert.Equal(t, "en", detectLanguage("This is an English text"))
+}
+
+func TestDetectLanguage_MixedText_ChineseFirst_ReturnsZh(t *testing.T) {
+	assert.Equal(t, "zh", detectLanguage("中文 English mixed"))
+}
+
+func TestDetectLanguage_EmptyText_ReturnsEn(t *testing.T) {
+	assert.Equal(t, "en", detectLanguage(""))
+}
+
+// ---------------------------------------------------------------------------
+// buildSearchQuery
+// ---------------------------------------------------------------------------
+
+func TestBuildSearchQuery_FinanceCategory(t *testing.T) {
+	q := buildSearchQuery([]models.Category{models.CategoryFinance})
+	assert.Contains(t, q, "finance")
+	assert.Contains(t, q, "stock")
+}
+
+func TestBuildSearchQuery_TechAICategory(t *testing.T) {
+	q := buildSearchQuery([]models.Category{models.CategoryTechAI})
+	assert.Contains(t, q, "technology")
+	assert.Contains(t, q, "AI")
+}
+
+func TestBuildSearchQuery_UnknownCategory(t *testing.T) {
+	q := buildSearchQuery([]models.Category{"unknown"})
+	assert.Contains(t, q, "latest")
+	assert.Contains(t, q, "unknown")
+}
+
+func TestBuildSearchQuery_EmptyCategories_ReturnsEmpty(t *testing.T) {
+	assert.Equal(t, "", buildSearchQuery(nil))
+}
+
+// ---------------------------------------------------------------------------
+// catTargetDomain
+// ---------------------------------------------------------------------------
+
+func TestCatTargetDomain_WithDomain_ReturnsDomain(t *testing.T) {
+	assert.Equal(t, "example.com", catTargetDomain("科技/AI", "example.com"))
+}
+
+func TestCatTargetDomain_TechCategory_NoDomain_ReturnsTechSearch(t *testing.T) {
+	assert.Equal(t, "tech-search", catTargetDomain("科技/AI", ""))
+}
+
+func TestCatTargetDomain_FinanceCategory_NoDomain_ReturnsFinanceSearch(t *testing.T) {
+	assert.Equal(t, "finance-search", catTargetDomain("金融", ""))
+}
+
+func TestCatTargetDomain_UnknownCategory_NoDomain_ReturnsWebSearch(t *testing.T) {
+	assert.Equal(t, "web-search", catTargetDomain("其他", ""))
+}
+
+// ---------------------------------------------------------------------------
+// extractSearchDomain
+// ---------------------------------------------------------------------------
+
+func TestExtractSearchDomain_StandardURL(t *testing.T) {
+	assert.Equal(t, "example.com", extractSearchDomain("https://www.example.com/article"))
+}
+
+func TestExtractSearchDomain_Subdomain(t *testing.T) {
+	assert.Equal(t, "example.com", extractSearchDomain("https://blog.example.com/article"))
+}
+
+func TestExtractSearchDomain_InvalidURL_ReturnsEmpty(t *testing.T) {
+	assert.Equal(t, "", extractSearchDomain("://invalid"))
+}
+
+func TestExtractSearchDomain_SingleWord_ReturnsAsIs(t *testing.T) {
+	assert.Equal(t, "localhost", extractSearchDomain("http://localhost"))
+}
+
+// ---------------------------------------------------------------------------
+// truncateText
+// ---------------------------------------------------------------------------
+
+func TestTruncateText_ShortEnough_ReturnsFull(t *testing.T) {
+	assert.Equal(t, "hello", truncateText("hello", 10))
+}
+
+func TestTruncateText_ExactLength_ReturnsFull(t *testing.T) {
+	assert.Equal(t, "hello", truncateText("hello", 5))
+}
+
+func TestTruncateText_TruncatesWithEllipsis(t *testing.T) {
+	assert.Equal(t, "hello...", truncateText("hello world", 5))
+}
+
+func TestTruncateText_MultibyteSafe(t *testing.T) {
+	assert.Equal(t, "你好...", truncateText("你好世界", 2))
+}
+
+func TestTruncateText_Empty_ReturnsEmpty(t *testing.T) {
+	assert.Equal(t, "", truncateText("", 10))
+}
+
+// ---------------------------------------------------------------------------
+// NewsAPI Fetcher — HTTP mock tests
+// ---------------------------------------------------------------------------
+
+func TestNewsAPIFetcher_Fetch_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "test-key", r.URL.Query().Get("apiKey"))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{
+			"status": "ok",
+			"totalResults": 2,
+			"articles": [
+				{
+					"source": {"id": "test", "name": "Test Source"},
+					"title": "Article One",
+					"description": "Description one",
+					"url": "https://example.com/article1",
+					"publishedAt": "2026-07-14T08:00:00Z",
+					"content": "Content one"
+				},
+				{
+					"source": {"id": "test", "name": "Test Source"},
+					"title": "Article Two",
+					"description": "Description two",
+					"url": "https://example.com/article2",
+					"publishedAt": "2026-07-14T09:00:00Z",
+					"content": "Content two"
+				}
+			]
+		}`))
+	}))
+	defer srv.Close()
+
+	f := NewNewsAPIFetcher("test-key", srv.Client())
+	items, err := f.Fetch(context.Background(), models.FetchConfig{
+		URL:     srv.URL,
+		Params:  map[string]string{"language": "en"},
+		Timeout: 5 * time.Second,
+	})
+	require.NoError(t, err)
+	require.Len(t, items, 2)
+	assert.Equal(t, "Article One", items[0].Title)
+	assert.Equal(t, "Article Two", items[1].Title)
+	assert.Equal(t, "example.com", items[0].SourceDomain)
+}
+
+func TestNewsAPIFetcher_Fetch_APIError_ReturnsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status": "error", "code": "apiKeyInvalid", "message": "Your API key is invalid"}`))
+	}))
+	defer srv.Close()
+
+	f := NewNewsAPIFetcher("bad-key", srv.Client())
+	_, err := f.Fetch(context.Background(), models.FetchConfig{
+		URL:     srv.URL,
+		Timeout: 5 * time.Second,
+	})
+	require.Error(t, err)
+	var fetchErr *FetchError
+	assert.ErrorAs(t, err, &fetchErr)
+	assert.Contains(t, err.Error(), "apiKeyInvalid")
+}
+
+func TestNewsAPIFetcher_Fetch_RemovedTitleSkipped(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{
+			"status": "ok",
+			"totalResults": 2,
+			"articles": [
+				{
+					"source": {"id": "test", "name": "Test"},
+					"title": "[Removed]",
+					"description": "Should be skipped",
+					"url": "https://example.com/removed",
+					"publishedAt": "2026-07-14T08:00:00Z",
+					"content": "removed"
+				},
+				{
+					"source": {"id": "test", "name": "Test"},
+					"title": "Valid Article",
+					"description": "Valid",
+					"url": "https://example.com/valid",
+					"publishedAt": "2026-07-14T09:00:00Z",
+					"content": "valid content"
+				}
+			]
+		}`))
+	}))
+	defer srv.Close()
+
+	f := NewNewsAPIFetcher("test-key", srv.Client())
+	items, err := f.Fetch(context.Background(), models.FetchConfig{
+		URL:     srv.URL,
+		Timeout: 5 * time.Second,
+	})
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	assert.Equal(t, "Valid Article", items[0].Title)
+}
+
+func TestNewsAPIFetcher_Fetch_EmptyTitleOrURL_Skipped(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{
+			"status": "ok",
+			"totalResults": 3,
+			"articles": [
+				{"source": {"id": "test"}, "title": "", "url": "", "publishedAt": "2026-07-14T08:00:00Z"},
+				{"source": {"id": "test"}, "title": "Valid", "description": "desc", "url": "https://example.com/valid", "publishedAt": "2026-07-14T09:00:00Z"},
+				{"source": {"id": "test"}, "title": "No URL", "description": "desc", "url": "", "publishedAt": "2026-07-14T10:00:00Z"}
+			]
+		}`))
+	}))
+	defer srv.Close()
+
+	f := NewNewsAPIFetcher("test-key", srv.Client())
+	items, err := f.Fetch(context.Background(), models.FetchConfig{
+		URL:     srv.URL,
+		Timeout: 5 * time.Second,
+	})
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	assert.Equal(t, "Valid", items[0].Title)
+}
+
+func TestNewsAPIFetcher_Fetch_HTTPError_ReturnsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	f := NewNewsAPIFetcher("test-key", srv.Client())
+	_, err := f.Fetch(context.Background(), models.FetchConfig{
+		URL:     srv.URL,
+		Timeout: 5 * time.Second,
+	})
+	require.Error(t, err)
+}
+
+func TestNewsAPIFetcher_DefaultParams(t *testing.T) {
+	// Verify that default language and pageSize are set when not provided.
+	var capturedParams string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedParams = r.URL.RawQuery
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status": "ok", "totalResults": 0, "articles": []}`))
+	}))
+	defer srv.Close()
+
+	f := NewNewsAPIFetcher("test-key", srv.Client())
+	_, err := f.Fetch(context.Background(), models.FetchConfig{
+		URL:     srv.URL,
+		Timeout: 5 * time.Second,
+	})
+	require.NoError(t, err)
+	assert.Contains(t, capturedParams, "language=en")
+	assert.Contains(t, capturedParams, "pageSize=20")
+	assert.Contains(t, capturedParams, "apiKey=test-key")
 }
