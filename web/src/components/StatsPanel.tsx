@@ -1,4 +1,6 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
+import { RefreshCw } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { getStats } from "../api/client";
@@ -25,13 +27,16 @@ export function StatsPanel() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     setLoading(true);
+    setError(null);
     getStats()
       .then(setData)
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => { load(); }, [load]);
 
   if (loading) return <div className="text-center py-16 text-muted-foreground">加载中…</div>;
   if (error) return (
@@ -57,7 +62,12 @@ export function StatsPanel() {
 
   return (
     <div className="space-y-6">
-      <h2 className="text-lg font-semibold">统计</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold">统计</h2>
+        <Button variant="ghost" size="sm" onClick={load} disabled={loading} className="h-8 px-2">
+          <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+        </Button>
+      </div>
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
