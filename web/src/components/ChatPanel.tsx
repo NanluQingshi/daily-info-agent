@@ -1,5 +1,5 @@
-import { useEffect, useRef } from "react";
-import { Loader2, Send } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Copy, Loader2, Send, Square, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
@@ -51,6 +51,7 @@ interface Props {
   input: string;
   onInputChange: (v: string) => void;
   onSend: () => void;
+  onStop?: () => void;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -62,6 +63,7 @@ export function ChatPanel({
   input,
   onInputChange,
   onSend,
+  onStop,
 }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -122,10 +124,18 @@ export function ChatPanel({
             placeholder="输入问题… (Enter 发送，Shift+Enter 换行)"
             rows={1}
             className="flex-1 resize-none min-h-[42px] max-h-32"
+            disabled={loading}
           />
-          <Button onClick={onSend} disabled={loading || !input.trim()}>
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-          </Button>
+          {loading ? (
+            <Button variant="secondary" onClick={onStop} className="gap-2">
+              <Square className="w-4 h-4 fill-current" />
+              停止
+            </Button>
+          ) : (
+            <Button onClick={onSend} disabled={!input.trim()}>
+              <Send className="w-4 h-4" />
+            </Button>
+          )}
         </div>
       </div>
     </div>
@@ -145,6 +155,17 @@ function UserBubble({ text }: { text: string }) {
 }
 
 function AssistantBubble({ msg }: { msg: AssistantMessage }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    if (msg.text) {
+      navigator.clipboard.writeText(msg.text).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }).catch(() => {});
+    }
+  };
+
   return (
     <div className="flex justify-start">
       <div className="max-w-2xl w-full">
@@ -165,6 +186,15 @@ function AssistantBubble({ msg }: { msg: AssistantMessage }) {
               )}
               {!msg.streaming && msg.latencyMs !== undefined && (
                 <span className="ml-auto">{msg.latencyMs}ms</span>
+              )}
+              {!msg.streaming && msg.text && (
+                <button
+                  onClick={handleCopy}
+                  className="ml-2 p-1 rounded hover:bg-accent transition-colors"
+                  title="复制回答"
+                >
+                  {copied ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
+                </button>
               )}
             </div>
 

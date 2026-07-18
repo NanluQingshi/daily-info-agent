@@ -113,12 +113,14 @@ export function sendChat(message: string, sessionId?: string): Promise<ChatRespo
 export async function sendChatStream(
   message: string,
   sessionId: string | undefined,
-  onEvent: (ev: StreamEvent) => void
+  onEvent: (ev: StreamEvent) => void,
+  signal?: AbortSignal
 ): Promise<void> {
   const res = await fetch("/api/chat/stream", {
     method: "POST",
     headers: withAuthHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ message, session_id: sessionId }),
+    signal,
   });
 
   if (!res.ok || !res.body) {

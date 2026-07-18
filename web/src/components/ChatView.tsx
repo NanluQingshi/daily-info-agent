@@ -128,6 +128,32 @@ export function ChatView() {
 
   // ── Send message ───────────────────────────────────────────────────────
 
+  const abortRef = useRef<AbortController | null>(null);
+
+  const handleStop = useCallback(() => {
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+    // Mark all loading conversations as done
+    setLoadingMap((prev) => {
+      const next = { ...prev };
+      for (const k of Object.keys(next)) {
+        if (next[k]) {
+          next[k] = false;
+          // Update the last message to show it was stopped
+          updateLastMessage(k, (m) => ({
+            ...m,
+            streaming: false,
+            activeTool: undefined,
+            text: m.text || "（已取消）",
+          }));
+        }
+      }
+      return next;
+    });
+  }, [updateLastMessage]);
+
   const handleSend = useCallback(() => {
     if (!activeId) return;
     const text = (inputMap[activeId] ?? "").trim();
@@ -154,6 +180,9 @@ export function ChatView() {
       });
     }
 
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     sendChatStream(text, conv.sessionId, (ev) => {
       switch (ev.type) {
         case "tool":
@@ -171,6 +200,7 @@ export function ChatView() {
           }));
           break;
         case "done":
+          abortRef.current = null;
           if (ev.session_id) updateConv(convId, { sessionId: ev.session_id });
           updateLastMessage(convId, (m) => ({
             ...m,
@@ -183,6 +213,7 @@ export function ChatView() {
           setLoadingMap((prev) => ({ ...prev, [convId]: false }));
           break;
         case "error":
+          abortRef.current = null;
           updateLastMessage(convId, (m) => ({
             ...m,
             streaming: false,
@@ -192,7 +223,10 @@ export function ChatView() {
           setLoadingMap((prev) => ({ ...prev, [convId]: false }));
           break;
       }
-    }).catch((e: unknown) => {
+    }, controller.signal).catch((e: unknown) => {
+      abortRef.current = null;
+      // Ignore abort errors
+      if ((e as Error).name === "AbortError") return;
       updateLastMessage(convId, (m) => ({
         ...m,
         streaming: false,
@@ -262,6 +296,7 @@ export function ChatView() {
             setInputMap((prev) => ({ ...prev, [activeId]: v }))
           }
           onSend={handleSend}
+          onStop={handleStop}
         />
       </div>
     </div>
