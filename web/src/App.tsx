@@ -7,6 +7,7 @@ import { ArticleList } from "./components/ArticleList";
 import { ChatView } from "./components/ChatView";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { StatsPanel } from "./components/StatsPanel";
+import { ThemeToggle } from "./components/ThemeToggle";
 
 type Tab = "chat" | "articles" | "stats" | "settings";
 
@@ -45,7 +46,7 @@ export default function App() {
               </button>
             ))}
           </nav>
-          <div className="p-3 border-t">
+          <div className="p-3 border-t flex flex-col gap-1">
             <button
               onClick={() => setTab("settings")}
               className={cn(
@@ -58,6 +59,7 @@ export default function App() {
               <Settings className="w-4 h-4 shrink-0" />
               设置
             </button>
+            <ThemeToggle className="w-full" />
           </div>
         </aside>
 

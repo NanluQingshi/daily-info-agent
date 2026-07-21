@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { listArticles } from "../api/client";
 import type { ArticleFilter, ArticleListResponse, ArticleRow } from "../types";
@@ -58,7 +59,12 @@ export function ArticleList() {
           文章列表
           {data && <span className="ml-2 text-sm font-normal text-slate-400">共 {data.total} 篇</span>}
         </h2>
-        <FetchButton onComplete={load} />
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" size="sm" onClick={load} disabled={loading} className="h-8 px-2">
+            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+          </Button>
+          <FetchButton onComplete={load} />
+        </div>
       </div>
 
       <FilterBar filter={filter} onChange={setFilter} />
