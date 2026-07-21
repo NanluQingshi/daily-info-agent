@@ -561,7 +561,70 @@ func TestGetStats_DBError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// TriggerFetch
+// StreamFetch
+// ---------------------------------------------------------------------------
+
+func TestStreamFetch_AlreadyRunning_ReturnsErrorEvent(t *testing.T) {
+	h := newHandler(nil, nil, nil)
+	h.pipelineRunning = true
+
+	e := newEcho()
+	req := httptest.NewRequest(http.MethodGet, "/api/fetch/stream", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	err := h.StreamFetch(c)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	// Should have SSE event with error message
+	body := rec.Body.String()
+	assert.Contains(t, body, `"stage":"error"`)
+	assert.Contains(t, body, `"status":"error"`)
+	assert.Contains(t, body, "pipeline already running")
+}
+
+func TestStreamFetch_Success_WithRealScheduler(t *testing.T) {
+	sched := scheduler.New(nil, nil, nil, nil, nil, &config.Config{}, slog.Default())
+	h := newHandler(nil, sched, nil)
+
+	e := newEcho()
+	req := httptest.NewRequest(http.MethodGet, "/api/fetch/stream", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	err := h.StreamFetch(c)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	// Check SSE headers
+	assert.Contains(t, rec.Header().Get("Content-Type"), "text/event-stream")
+	assert.Equal(t, "no-cache", rec.Header().Get("Cache-Control"))
+
+	// Should have at least one SSE event (fetch stage will fire before failing)
+	body := rec.Body.String()
+	assert.Contains(t, body, "data: ")
+	assert.Contains(t, body, `"stage"`)
+}
+
+func TestStreamFetch_ResetsPipelineRunning(t *testing.T) {
+	sched := scheduler.New(nil, nil, nil, nil, nil, &config.Config{}, slog.Default())
+	h := newHandler(nil, sched, nil)
+
+	e := newEcho()
+	req := httptest.NewRequest(http.MethodGet, "/api/fetch/stream", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	_ = h.StreamFetch(c)
+
+	// Pipeline should be marked as not running after completion
+	time.Sleep(50 * time.Millisecond)
+	h.pipelineMu.Lock()
+	running := h.pipelineRunning
+	h.pipelineMu.Unlock()
+	assert.False(t, running, "pipeline should be marked as not running after stream completion")
+}
 // ---------------------------------------------------------------------------
 
 func TestTriggerFetch_Success(t *testing.T) {
