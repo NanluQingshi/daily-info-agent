@@ -388,6 +388,50 @@ func TestPublishArticle_NotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
 
+func TestPublishArticle_Success(t *testing.T) {
+	// Mock website API that returns 201
+	websiteSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/agent/articles", r.URL.Path)
+		assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"id":42,"source_url":"https://example.com/article","status":"published"}`))
+	}))
+	t.Cleanup(websiteSrv.Close)
+
+	pub := publisher.New(websiteSrv.URL, "test-token", nil, slog.Default())
+
+	m := &mockStore{
+		getResp: struct {
+			article models.ArticleRow
+			err     error
+		}{
+			article: models.ArticleRow{
+				ID: 1, SourceURL: "https://example.com/article",
+				Title: "Test Article", SourceDomain: "example.com",
+				RunID: "run-1",
+			},
+		},
+		markPubErr: nil,
+	}
+	h := newHandler(m, nil, pub)
+	e := newEcho()
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("id")
+	c.SetParamValues("1")
+
+	err := h.PublishArticle(c)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, true, body["published"])
+	assert.Equal(t, float64(42), body["external_id"])
+}
+
 // ---------------------------------------------------------------------------
 // RetryArticle
 // ---------------------------------------------------------------------------
