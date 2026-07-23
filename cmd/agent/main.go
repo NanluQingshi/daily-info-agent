@@ -271,6 +271,8 @@ func runServerMode(
 		logger.With(slog.String("component", "chat")),
 	)
 
+	startTime := time.Now()
+
 	e := echo.New()
 	e.HideBanner = true
 	e.HidePort = true
@@ -304,7 +306,7 @@ func runServerMode(
 	e.POST("/api/chat", chatHandler.Handle)
 	e.POST("/api/chat/stream", chatHandler.HandleStream)
 	e.DELETE("/api/sessions/:id", chatHandler.HandleDeleteSession)
-	e.GET("/health", healthHandler(version, st))
+	e.GET("/health", healthHandler(version, st, startTime))
 
 	// Article management API (database-dependent endpoints return clear
 	// errors when DATABASE_DSN is not configured).
@@ -390,12 +392,13 @@ func runMigrations(dsn string, logger *slog.Logger) error {
 }
 
 // healthHandler returns a /health endpoint that also reports DB connectivity.
-func healthHandler(ver string, st store.ArticleStore) echo.HandlerFunc {
+func healthHandler(ver string, st store.ArticleStore, startTime time.Time) echo.HandlerFunc {
 	return func(c echo.Context) error {
-		body := map[string]string{
+		body := map[string]interface{}{
 			"status":  "ok",
 			"version": ver,
 			"time":    time.Now().UTC().Format(time.RFC3339),
+			"uptime":  time.Since(startTime).String(),
 		}
 		if st != nil {
 			if err := st.Ping(c.Request().Context()); err != nil {
