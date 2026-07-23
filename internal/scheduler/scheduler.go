@@ -111,7 +111,7 @@ func (s *Scheduler) runPipeline(ctx context.Context, categories []models.Categor
 	// ---- Fetch stage ----
 	fire(models.ProgressEvent{Stage: "fetch", Status: "running", Message: "正在抓取新闻…"})
 	fetchStart := time.Now()
-	cfgs := buildFetchConfigs(s.cfg, categories)
+	cfgs := s.buildFetchConfigs(categories)
 
 	items, err := s.mgr.FetchAll(ctx, cfgs)
 	fetchDuration := time.Since(fetchStart)
@@ -331,11 +331,11 @@ func (s *Scheduler) runPipeline(ctx context.Context, categories []models.Categor
 
 // buildFetchConfigs constructs the slice of FetchConfig from the app config and
 // the requested categories.
-func buildFetchConfigs(cfg *config.Config, categories []models.Category) []models.FetchConfig {
+func (s *Scheduler) buildFetchConfigs(categories []models.Category) []models.FetchConfig {
 	var cfgs []models.FetchConfig
 
 	// RSS feeds
-	for _, feedURL := range cfg.RSSFeeds {
+	for _, feedURL := range s.cfg.RSSFeeds {
 		cfgs = append(cfgs, models.FetchConfig{
 			Type:       models.SourceTypeRSS,
 			URL:        feedURL,
@@ -359,7 +359,7 @@ func buildFetchConfigs(cfg *config.Config, categories []models.Category) []model
 	}
 
 	// Search engine — one query per category
-	if cfg.SearchEngineEnabled {
+	if s.cfg.SearchEngineEnabled {
 		for _, cat := range categories {
 			cfgs = append(cfgs, models.FetchConfig{
 				Type:       models.SourceTypeSearch,

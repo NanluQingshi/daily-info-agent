@@ -55,22 +55,27 @@ func TestCategoryToSearchQuery_UnknownCategory(t *testing.T) {
 }
 
 func TestBuildFetchConfigs_EmptyCategories(t *testing.T) {
-	cfgs := buildFetchConfigs(&config.Config{}, nil)
+	s := &Scheduler{cfg: &config.Config{}}
+	cfgs := s.buildFetchConfigs(nil)
 	assert.Empty(t, cfgs)
 }
 
 func TestBuildFetchConfigs_WithRSSFeeds(t *testing.T) {
-	cfg := &config.Config{
-		RSSFeeds: []string{"https://feeds.example.com/rss"},
+	s := &Scheduler{
+		cfg: &config.Config{
+			RSSFeeds: []string{"https://feeds.example.com/rss"},
+		},
 	}
-	cfgs := buildFetchConfigs(cfg, []models.Category{models.CategoryFinance})
+	cfgs := s.buildFetchConfigs([]models.Category{models.CategoryFinance})
 	assert.NotEmpty(t, cfgs)
 }
 
 func TestBuildFetchConfigs_WithSearchEngine(t *testing.T) {
-	cfg := &config.Config{
-		SearchEngineEnabled: true,
+	s := &Scheduler{
+		cfg: &config.Config{
+			SearchEngineEnabled: true,
+		},
 	}
-	cfgs := buildFetchConfigs(cfg, []models.Category{models.CategoryTechAI})
+	cfgs := s.buildFetchConfigs([]models.Category{models.CategoryTechAI})
 	assert.NotEmpty(t, cfgs)
 }
