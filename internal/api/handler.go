@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -33,6 +34,25 @@ type Handler struct {
 	pipelineRunning bool
 	runsMu          sync.RWMutex
 	runs            map[string]models.RunResult // runID -> result (populated when a run finishes)
+}
+
+// parseCategoriesFromQuery parses the optional "categories" query parameter
+// into a slice of Category. Returns nil when the parameter is absent (caller
+// should use the default categories).
+func parseCategoriesFromQuery(c echo.Context) []models.Category {
+	v := c.QueryParam("categories")
+	if v == "" {
+		return nil
+	}
+	parts := strings.Split(v, ",")
+	cats := make([]models.Category, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			cats = append(cats, models.Category(p))
+		}
+	}
+	return cats
 }
 
 // New creates a Handler.
@@ -289,7 +309,11 @@ func (h *Handler) TriggerFetch(c echo.Context) error {
 		}()
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 		defer cancel()
-		result := h.scheduler.RunWithProgressAndID(ctx, h.cfg.DefaultCategories, nil, runID)
+		cats := parseCategoriesFromQuery(c)
+		if cats == nil {
+			cats = h.cfg.DefaultCategories
+		}
+		result := h.scheduler.RunWithProgressAndID(ctx, cats, nil, runID)
 		h.runsMu.Lock()
 		h.runs[runID] = result
 		h.runsMu.Unlock()
@@ -352,7 +376,11 @@ func (h *Handler) StreamFetch(c echo.Context) error {
 
 	go func() {
 		defer close(eventCh)
-		h.scheduler.RunWithProgress(ctx, h.cfg.DefaultCategories, func(e models.ProgressEvent) {
+		cats := parseCategoriesFromQuery(c)
+		if cats == nil {
+			cats = h.cfg.DefaultCategories
+		}
+		h.scheduler.RunWithProgress(ctx, cats, func(e models.ProgressEvent) {
 			select {
 			case eventCh <- e:
 			case <-ctx.Done():
