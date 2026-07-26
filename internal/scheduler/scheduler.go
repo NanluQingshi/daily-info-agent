@@ -92,6 +92,7 @@ func (s *Scheduler) RunWithProgressAndID(ctx context.Context, categories []model
 }
 
 // runPipeline is the shared implementation of RunForCategories and RunWithProgress.
+// Each stage is delegated to its own method for testability and readability.
 func (s *Scheduler) runPipeline(ctx context.Context, categories []models.Category, emit func(models.ProgressEvent), runID string) models.RunResult {
 	fire := func(e models.ProgressEvent) {
 		if emit != nil {
@@ -100,7 +101,6 @@ func (s *Scheduler) runPipeline(ctx context.Context, categories []models.Categor
 	}
 
 	start := time.Now()
-
 	s.logger.Info("scheduler run starting",
 		slog.String("run_id", runID),
 		slog.Int("categories", len(categories)),
@@ -109,9 +109,53 @@ func (s *Scheduler) runPipeline(ctx context.Context, categories []models.Categor
 	result := models.RunResult{RunID: runID}
 
 	// ---- Fetch stage ----
+	items, abort := s.fetchStage(ctx, categories, runID, fire)
+	if abort {
+		result.FatalError = fmt.Errorf("fetch stage failed")
+		result.DurationMs = time.Since(start).Milliseconds()
+		return result
+	}
+	result.TotalFetched = len(items)
+
+	if len(items) == 0 {
+		s.logger.Info("no new items fetched; run complete", slog.String("run_id", runID))
+		result.DurationMs = time.Since(start).Milliseconds()
+		fire(models.ProgressEvent{Stage: "done", Status: "done", RunID: runID, Message: "任务完成（无新内容）"})
+		return result
+	}
+
+	// ---- Process stage ----
+	articles := s.processStage(ctx, items, runID, fire)
+	result.TotalProcessed = len(articles)
+
+	// ---- Verify stage ----
+	passing := s.verifyStage(articles, &result, fire)
+
+	// ---- Persist stage ----
+	s.persistStage(ctx, articles, runID, &result)
+
+	// ---- Publish stage ----
+	s.publishStage(ctx, passing, runID, &result, fire)
+
+	result.DurationMs = time.Since(start).Milliseconds()
+
+	// ---- Log run summary ----
+	s.logRunSummary(ctx, &result, start)
+
+	fire(models.ProgressEvent{Stage: "done", Status: "done", RunID: runID, Message: "任务完成"})
+
+	// ---- Notify stage ----
+	s.notifyStage(ctx, passing, result)
+
+	return result
+}
+
+// fetchStage fetches items from all sources and deduplicates them.
+// Returns (items, shouldAbort) where shouldAbort is true on fatal error.
+func (s *Scheduler) fetchStage(ctx context.Context, categories []models.Category, runID string, fire func(models.ProgressEvent)) ([]models.RawItem, bool) {
 	fire(models.ProgressEvent{Stage: "fetch", Status: "running", Message: "正在抓取新闻…"})
 	fetchStart := time.Now()
-	cfgs := buildFetchConfigs(s.cfg, categories)
+	cfgs := s.buildFetchConfigs(categories)
 
 	items, err := s.mgr.FetchAll(ctx, cfgs)
 	fetchDuration := time.Since(fetchStart)
@@ -122,19 +166,10 @@ func (s *Scheduler) runPipeline(ctx context.Context, categories []models.Categor
 			slog.String("error", err.Error()),
 		)
 		fire(models.ProgressEvent{Stage: "error", Status: "error", Message: err.Error()})
-		result.FatalError = err
-		result.DurationMs = time.Since(start).Milliseconds()
-		return result
+		return nil, true
 	}
 
-	result.TotalFetched = len(items)
-	s.logger.Info("stage_complete",
-		slog.String("stage", "fetch"),
-		slog.String("run_id", runID),
-		slog.Int64("duration_ms", fetchDuration.Milliseconds()),
-		slog.Int("items_fetched", len(items)),
-	)
-	// ---- Dedup stage (title-similarity deduplication) ----
+	// Dedup stage
 	dedupedItems, dedupRemoved := dedup.ByTitle(items, s.cfg.TrustedDomains)
 	if dedupRemoved > 0 {
 		s.logger.Info("stage_complete",
@@ -145,6 +180,13 @@ func (s *Scheduler) runPipeline(ctx context.Context, categories []models.Categor
 		)
 	}
 	items = dedupedItems
+
+	s.logger.Info("stage_complete",
+		slog.String("stage", "fetch"),
+		slog.String("run_id", runID),
+		slog.Int64("duration_ms", fetchDuration.Milliseconds()),
+		slog.Int("items_fetched", len(items)),
+	)
 
 	fetchMsg := fmt.Sprintf("抓取完成：%d 条", len(items))
 	if dedupRemoved > 0 {
@@ -157,14 +199,11 @@ func (s *Scheduler) runPipeline(ctx context.Context, categories []models.Categor
 		Message: fetchMsg,
 	})
 
-	if len(items) == 0 {
-		s.logger.Info("no new items fetched; run complete", slog.String("run_id", runID))
-		result.DurationMs = time.Since(start).Milliseconds()
-		fire(models.ProgressEvent{Stage: "done", Status: "done", RunID: runID, Message: "任务完成（无新内容）"})
-		return result
-	}
+	return items, false
+}
 
-	// ---- Process stage ----
+// processStage sends items through AI processing.
+func (s *Scheduler) processStage(ctx context.Context, items []models.RawItem, runID string, fire func(models.ProgressEvent)) []models.ProcessedArticle {
 	fire(models.ProgressEvent{Stage: "process", Status: "running", Message: "AI 处理中…"})
 	procStart := time.Now()
 	articles, procErr := s.proc.ProcessBatch(ctx, items, runID)
@@ -177,7 +216,6 @@ func (s *Scheduler) runPipeline(ctx context.Context, categories []models.Categor
 		)
 	}
 
-	result.TotalProcessed = len(articles)
 	s.logger.Info("stage_complete",
 		slog.String("stage", "process"),
 		slog.String("run_id", runID),
@@ -191,7 +229,11 @@ func (s *Scheduler) runPipeline(ctx context.Context, categories []models.Categor
 		Message: fmt.Sprintf("AI 处理完成：%d 条", len(articles)),
 	})
 
-	// ---- Verify stage ----
+	return articles
+}
+
+// verifyStage runs source verification and returns passing articles.
+func (s *Scheduler) verifyStage(articles []models.ProcessedArticle, result *models.RunResult, fire func(models.ProgressEvent)) []models.ProcessedArticle {
 	verStart := time.Now()
 	articles = s.ver.Verify(articles)
 	verDuration := time.Since(verStart)
@@ -199,9 +241,6 @@ func (s *Scheduler) runPipeline(ctx context.Context, categories []models.Categor
 	var passing []models.ProcessedArticle
 	for _, a := range articles {
 		if a.LLMSkipped {
-			// The processor never produced AI output for this item (e.g.
-			// DeepSeek unavailable). Never publish raw, uncategorised
-			// articles to the website — count as skipped and move on.
 			result.TotalSkipped++
 			continue
 		}
@@ -214,7 +253,6 @@ func (s *Scheduler) runPipeline(ctx context.Context, categories []models.Categor
 
 	s.logger.Info("stage_complete",
 		slog.String("stage", "verify"),
-		slog.String("run_id", runID),
 		slog.Int64("duration_ms", verDuration.Milliseconds()),
 		slog.Int("items_passed", len(passing)),
 		slog.Int("items_skipped", result.TotalSkipped),
@@ -227,26 +265,34 @@ func (s *Scheduler) runPipeline(ctx context.Context, categories []models.Categor
 		Message: fmt.Sprintf("验证完成：%d 通过，%d 跳过", len(passing), result.TotalSkipped),
 	})
 
-	// ---- Persist stage ----
-	if s.st != nil {
-		saved, err := s.st.SaveArticles(ctx, articles, runID)
-		if err != nil {
-			s.logger.Warn("failed to save articles to database",
-				slog.String("run_id", runID),
-				slog.String("error", err.Error()),
-			)
-		}
-		result.TotalSaved = saved
-		s.logger.Info("stage_complete",
-			slog.String("stage", "persist"),
+	return passing
+}
+
+// persistStage saves articles to the database when configured.
+func (s *Scheduler) persistStage(ctx context.Context, articles []models.ProcessedArticle, runID string, result *models.RunResult) {
+	if s.st == nil {
+		return
+	}
+	saved, err := s.st.SaveArticles(ctx, articles, runID)
+	if err != nil {
+		s.logger.Warn("failed to save articles to database",
 			slog.String("run_id", runID),
-			slog.Int("items_saved", saved),
+			slog.String("error", err.Error()),
 		)
 	}
+	result.TotalSaved = saved
+	s.logger.Info("stage_complete",
+		slog.String("stage", "persist"),
+		slog.String("run_id", runID),
+		slog.Int("items_saved", saved),
+	)
+}
 
-	// ---- Publish stage (optional — only when Java API is configured) ----
+// publishStage publishes passing articles to the website API when configured.
+func (s *Scheduler) publishStage(ctx context.Context, passing []models.ProcessedArticle, runID string, result *models.RunResult, fire func(models.ProgressEvent)) {
 	fire(models.ProgressEvent{Stage: "publish", Status: "running", Message: "正在发布…"})
 	pubStart := time.Now()
+
 	if s.pub != nil {
 		for i, article := range passing {
 			if i > 0 {
@@ -263,8 +309,8 @@ func (s *Scheduler) runPipeline(ctx context.Context, categories []models.Categor
 			}
 		}
 	}
-	pubDuration := time.Since(pubStart)
 
+	pubDuration := time.Since(pubStart)
 	s.logger.Info("stage_complete",
 		slog.String("stage", "publish"),
 		slog.String("run_id", runID),
@@ -279,32 +325,32 @@ func (s *Scheduler) runPipeline(ctx context.Context, categories []models.Categor
 		Failed:  result.TotalFailed,
 		Message: fmt.Sprintf("发布完成：%d 篇", result.TotalPublished),
 	})
+}
 
-	result.DurationMs = time.Since(start).Milliseconds()
-
-	// ---- Log run summary to database ----
-	if s.st != nil {
-		fatalErrStr := ""
-		if result.FatalError != nil {
-			fatalErrStr = result.FatalError.Error()
-		}
-		_ = s.st.SaveRunLog(ctx, models.RunLogRow{
-			RunID:          runID,
-			TotalFetched:   result.TotalFetched,
-			TotalProcessed: result.TotalProcessed,
-			TotalSaved:     result.TotalSaved,
-			TotalPublished: result.TotalPublished,
-			TotalSkipped:   result.TotalSkipped,
-			TotalFailed:    result.TotalFailed,
-			DurationMs:     result.DurationMs,
-			FatalError:     fatalErrStr,
-			StartedAt:      start,
-			FinishedAt:     time.Now(),
-		})
+// logRunSummary saves the run summary to the database.
+func (s *Scheduler) logRunSummary(ctx context.Context, result *models.RunResult, start time.Time) {
+	if s.st == nil {
+		return
 	}
-
+	fatalErrStr := ""
+	if result.FatalError != nil {
+		fatalErrStr = result.FatalError.Error()
+	}
+	_ = s.st.SaveRunLog(ctx, models.RunLogRow{
+		RunID:          result.RunID,
+		TotalFetched:   result.TotalFetched,
+		TotalProcessed: result.TotalProcessed,
+		TotalSaved:     result.TotalSaved,
+		TotalPublished: result.TotalPublished,
+		TotalSkipped:   result.TotalSkipped,
+		TotalFailed:    result.TotalFailed,
+		DurationMs:     result.DurationMs,
+		FatalError:     fatalErrStr,
+		StartedAt:      start,
+		FinishedAt:     time.Now(),
+	})
 	s.logger.Info("scheduler run complete",
-		slog.String("run_id", runID),
+		slog.String("run_id", result.RunID),
 		slog.Int("total_fetched", result.TotalFetched),
 		slog.Int("total_processed", result.TotalProcessed),
 		slog.Int("total_saved", result.TotalSaved),
@@ -313,29 +359,27 @@ func (s *Scheduler) runPipeline(ctx context.Context, categories []models.Categor
 		slog.Int("total_failed", result.TotalFailed),
 		slog.Int64("duration_ms", result.DurationMs),
 	)
+}
 
-	fire(models.ProgressEvent{Stage: "done", Status: "done", RunID: runID, Message: "任务完成"})
-
-	// ---- Notify stage (optional — only when notifier is configured) ----
+// notifyStage sends the daily summary email when configured.
+func (s *Scheduler) notifyStage(ctx context.Context, passing []models.ProcessedArticle, result models.RunResult) {
 	if s.notif != nil && len(passing) > 0 {
 		if err := s.notif.SendDailySummary(ctx, passing, result); err != nil {
 			s.logger.Warn("failed to send daily summary email",
-				slog.String("run_id", runID),
+				slog.String("run_id", result.RunID),
 				slog.String("error", err.Error()),
 			)
 		}
 	}
-
-	return result
 }
 
 // buildFetchConfigs constructs the slice of FetchConfig from the app config and
 // the requested categories.
-func buildFetchConfigs(cfg *config.Config, categories []models.Category) []models.FetchConfig {
+func (s *Scheduler) buildFetchConfigs(categories []models.Category) []models.FetchConfig {
 	var cfgs []models.FetchConfig
 
 	// RSS feeds
-	for _, feedURL := range cfg.RSSFeeds {
+	for _, feedURL := range s.cfg.RSSFeeds {
 		cfgs = append(cfgs, models.FetchConfig{
 			Type:       models.SourceTypeRSS,
 			URL:        feedURL,
@@ -359,7 +403,7 @@ func buildFetchConfigs(cfg *config.Config, categories []models.Category) []model
 	}
 
 	// Search engine — one query per category
-	if cfg.SearchEngineEnabled {
+	if s.cfg.SearchEngineEnabled {
 		for _, cat := range categories {
 			cfgs = append(cfgs, models.FetchConfig{
 				Type:       models.SourceTypeSearch,

@@ -58,9 +58,9 @@
 | 1.2 更新 DESIGN.md | 更新模块接口、数据流图、配置表反映当前架构 | P0 | 4h |
 | 1.3 更新 ROADMAP | 用当前实际进展重写路线图 | P0 | 2h |
 | 1.4 更新 DEV-GUIDE | 补全 PostgreSQL 设置、新命令、环境变量参考 | P0 | 2h |
-| 1.5 `.env.example` 同步 | 确保 `.env.example` 与 `config.Load()` 完全一致 | P0 | 1h |
-| 1.6 补全单元测试 | 提升 `internal/agent`, `internal/api`, `internal/store` 覆盖率 | P1 | 8h |
-| 1.7 集成测试加固 | 完善 `test/integration/pipeline_test.go`，覆盖更多场景 | P1 | 4h |
+| 1.5 `.env.example` 同步 | 确保 `.env.example` 与 `config.Load()` 完全一致 | P0 | 1h | ✅ |
+| 1.6 补全单元测试 | 提升 `internal/agent`(75.8%→81.5%), `internal/api`(64%→82%), `internal/fetcher`(67.7%), `internal/store`(87.2%) 覆盖率 | P1 | 8h | ✅ |
+| 1.7 集成测试加固 | 完善 `test/integration/pipeline_test.go`，覆盖更多场景 | P1 | 4h | ⏳ |
 
 ### Phase 2 — 部署就绪（2-3 周）
 

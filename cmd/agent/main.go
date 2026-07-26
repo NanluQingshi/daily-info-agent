@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -271,6 +272,8 @@ func runServerMode(
 		logger.With(slog.String("component", "chat")),
 	)
 
+	startTime := time.Now()
+
 	e := echo.New()
 	e.HideBanner = true
 	e.HidePort = true
@@ -304,7 +307,8 @@ func runServerMode(
 	e.POST("/api/chat", chatHandler.Handle)
 	e.POST("/api/chat/stream", chatHandler.HandleStream)
 	e.DELETE("/api/sessions/:id", chatHandler.HandleDeleteSession)
-	e.GET("/health", healthHandler(version, st))
+	e.GET("/health", healthHandler(version, st, startTime))
+	e.GET("/metrics", echo.WrapHandler(http.HandlerFunc(metricsHandler)))
 
 	// Article management API (database-dependent endpoints return clear
 	// errors when DATABASE_DSN is not configured).
@@ -390,12 +394,13 @@ func runMigrations(dsn string, logger *slog.Logger) error {
 }
 
 // healthHandler returns a /health endpoint that also reports DB connectivity.
-func healthHandler(ver string, st store.ArticleStore) echo.HandlerFunc {
+func healthHandler(ver string, st store.ArticleStore, startTime time.Time) echo.HandlerFunc {
 	return func(c echo.Context) error {
-		body := map[string]string{
+		body := map[string]interface{}{
 			"status":  "ok",
 			"version": ver,
 			"time":    time.Now().UTC().Format(time.RFC3339),
+			"uptime":  time.Since(startTime).String(),
 		}
 		if st != nil {
 			if err := st.Ping(c.Request().Context()); err != nil {
@@ -454,4 +459,33 @@ func maskDSN(dsn string) string {
 		}
 	}
 	return dsn
+}
+
+// metricsHandler exposes Go runtime metrics and application counters in
+// a simple text/plain format. Compatible with Prometheus text format parsers.
+func metricsHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+
+	fmt.Fprintf(w, "# HELP go_goroutines Number of goroutines\n")
+	fmt.Fprintf(w, "# TYPE go_goroutines gauge\n")
+	fmt.Fprintf(w, "go_goroutines %d\n", runtime.NumGoroutine())
+
+	fmt.Fprintf(w, "# HELP go_mem_alloc_bytes Heap memory allocated\n")
+	fmt.Fprintf(w, "# TYPE go_mem_alloc_bytes gauge\n")
+	fmt.Fprintf(w, "go_mem_alloc_bytes %d\n", m.Alloc)
+
+	fmt.Fprintf(w, "# HELP go_mem_sys_bytes System memory obtained\n")
+	fmt.Fprintf(w, "# TYPE go_mem_sys_bytes gauge\n")
+	fmt.Fprintf(w, "go_mem_sys_bytes %d\n", m.Sys)
+
+	fmt.Fprintf(w, "# HELP go_gc_total Total number of GC cycles\n")
+	fmt.Fprintf(w, "# TYPE go_gc_total counter\n")
+	fmt.Fprintf(w, "go_gc_total %d\n", m.NumGC)
+
+	fmt.Fprintf(w, "# HELP go_cgo_calls Number of cgo calls\n")
+	fmt.Fprintf(w, "# TYPE go_cgo_calls gauge\n")
+	fmt.Fprintf(w, "go_cgo_calls %d\n", runtime.NumCgoCall())
 }

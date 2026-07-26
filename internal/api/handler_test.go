@@ -388,6 +388,50 @@ func TestPublishArticle_NotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
 
+func TestPublishArticle_Success(t *testing.T) {
+	// Mock website API that returns 201
+	websiteSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/agent/articles", r.URL.Path)
+		assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"id":42,"source_url":"https://example.com/article","status":"published"}`))
+	}))
+	t.Cleanup(websiteSrv.Close)
+
+	pub := publisher.New(websiteSrv.URL, "test-token", nil, slog.Default())
+
+	m := &mockStore{
+		getResp: struct {
+			article models.ArticleRow
+			err     error
+		}{
+			article: models.ArticleRow{
+				ID: 1, SourceURL: "https://example.com/article",
+				Title: "Test Article", SourceDomain: "example.com",
+				RunID: "run-1",
+			},
+		},
+		markPubErr: nil,
+	}
+	h := newHandler(m, nil, pub)
+	e := newEcho()
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("id")
+	c.SetParamValues("1")
+
+	err := h.PublishArticle(c)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, true, body["published"])
+	assert.Equal(t, float64(42), body["external_id"])
+}
+
 // ---------------------------------------------------------------------------
 // RetryArticle
 // ---------------------------------------------------------------------------
@@ -561,7 +605,70 @@ func TestGetStats_DBError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// TriggerFetch
+// StreamFetch
+// ---------------------------------------------------------------------------
+
+func TestStreamFetch_AlreadyRunning_ReturnsErrorEvent(t *testing.T) {
+	h := newHandler(nil, nil, nil)
+	h.pipelineRunning = true
+
+	e := newEcho()
+	req := httptest.NewRequest(http.MethodGet, "/api/fetch/stream", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	err := h.StreamFetch(c)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	// Should have SSE event with error message
+	body := rec.Body.String()
+	assert.Contains(t, body, `"stage":"error"`)
+	assert.Contains(t, body, `"status":"error"`)
+	assert.Contains(t, body, "pipeline already running")
+}
+
+func TestStreamFetch_Success_WithRealScheduler(t *testing.T) {
+	sched := scheduler.New(nil, nil, nil, nil, nil, &config.Config{}, slog.Default())
+	h := newHandler(nil, sched, nil)
+
+	e := newEcho()
+	req := httptest.NewRequest(http.MethodGet, "/api/fetch/stream", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	err := h.StreamFetch(c)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	// Check SSE headers
+	assert.Contains(t, rec.Header().Get("Content-Type"), "text/event-stream")
+	assert.Equal(t, "no-cache", rec.Header().Get("Cache-Control"))
+
+	// Should have at least one SSE event (fetch stage will fire before failing)
+	body := rec.Body.String()
+	assert.Contains(t, body, "data: ")
+	assert.Contains(t, body, `"stage"`)
+}
+
+func TestStreamFetch_ResetsPipelineRunning(t *testing.T) {
+	sched := scheduler.New(nil, nil, nil, nil, nil, &config.Config{}, slog.Default())
+	h := newHandler(nil, sched, nil)
+
+	e := newEcho()
+	req := httptest.NewRequest(http.MethodGet, "/api/fetch/stream", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	_ = h.StreamFetch(c)
+
+	// Pipeline should be marked as not running after completion
+	time.Sleep(50 * time.Millisecond)
+	h.pipelineMu.Lock()
+	running := h.pipelineRunning
+	h.pipelineMu.Unlock()
+	assert.False(t, running, "pipeline should be marked as not running after stream completion")
+}
 // ---------------------------------------------------------------------------
 
 func TestTriggerFetch_Success(t *testing.T) {

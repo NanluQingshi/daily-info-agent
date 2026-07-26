@@ -1,6 +1,14 @@
 import { useRef, useState } from "react";
 import { CheckCircle2, Circle, Loader2, RefreshCw, X, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { CATEGORIES } from "../types";
 
 interface Props {
   onComplete?: () => void;
@@ -26,6 +34,7 @@ export function FetchButton({ onComplete }: Props) {
   const [stages, setStages] = useState<Record<string, StageState>>(initStages());
   const [doneMsg, setDoneMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [selectedCat, setSelectedCat] = useState<string>("all");
   const esRef = useRef<EventSource | null>(null);
 
   const reset = () => {
@@ -34,12 +43,17 @@ export function FetchButton({ onComplete }: Props) {
     setErrorMsg(null);
   };
 
+  const buildURL = () => {
+    if (selectedCat === "all") return "/api/fetch/stream";
+    return `/api/fetch/stream?categories=${encodeURIComponent(selectedCat)}`;
+  };
+
   const handleStart = () => {
     if (running) return;
     reset();
     setRunning(true);
 
-    const es = new EventSource("/api/fetch/stream");
+    const es = new EventSource(buildURL());
     esRef.current = es;
 
     es.onmessage = (event) => {
@@ -82,10 +96,23 @@ export function FetchButton({ onComplete }: Props) {
   return (
     <div className="flex flex-col items-end gap-2">
       {!showProgress && (
-        <Button onClick={handleStart} size="sm" className="gap-2">
-          <RefreshCw className="w-3.5 h-3.5" />
-          立即抓取
-        </Button>
+        <div className="flex items-center gap-2">
+          <Select value={selectedCat} onValueChange={setSelectedCat}>
+            <SelectTrigger className="w-28 h-9">
+              <SelectValue placeholder="全部分类" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">全部分类</SelectItem>
+              {CATEGORIES.map((c) => (
+                <SelectItem key={c} value={c}>{c}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button onClick={handleStart} size="sm" className="gap-2">
+            <RefreshCw className="w-3.5 h-3.5" />
+            立即抓取
+          </Button>
+        </div>
       )}
 
       {showProgress && (
