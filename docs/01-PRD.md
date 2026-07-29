@@ -412,7 +412,7 @@ The Java side SHOULD apply a rate limit of 60 requests/minute per token. The age
 | `LLM_API_KEY` | Yes | — | LLM API authentication key |
 | `LLM_MODEL_ID` | Yes | — | LLM model identifier |
 | `LLM_BASE_URL` | No | `https://api.deepseek.com/v1` | LLM API base URL |
-| `NEWSAPI_KEY` | Yes | — | NewsAPI v2 API key |
+| `NEWSAPI_KEY` | No | — | NewsAPI v2 API key (blank = skip NewsAPI) |
 | `RSSHUB_BASE_URL` | No | `https://rsshub.app` | Base URL for RSSHub instance |
 | `RSSHUB_ROUTES` | No | built-in list | Semicolon-separated RSSHub route paths |
 | `RSS_FEEDS` | No | built-in list | Semicolon-separated RSS feed URLs |
@@ -431,6 +431,8 @@ The Java side SHOULD apply a rate limit of 60 requests/minute per token. The age
 | `BIND_ADDR` | No | `127.0.0.1:8080` | HTTP server listen address |
 | `CHAT_API_TOKEN` | No | — | Chat API auth token (blank = no auth) |
 | `CHAT_RATE_LIMIT_PER_MIN` | No | `0` | Per-IP chat rate limit (0 = unlimited) |
+| `CORS_ORIGINS` | No | `*` | Comma-separated allowed CORS origins |
+| `SEARCH_ENGINE_URL` | No | — | Web search URL for keyword-based fetching (e.g. DuckDuckGo) |
 | `LOG_LEVEL` | No | `INFO` | Minimum log level |
 | `CACHE_FILE_PATH` | No | `cache/dedup.json` | Deduplication cache file path |
 | `AGENT_VERSION` | No | `1.0.0` | Agent version string |
