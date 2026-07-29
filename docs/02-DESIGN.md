@@ -463,20 +463,22 @@ type Config struct {
     LLMAPIKey       string
     LLMModelID      string
     LLMBaseURL      string           // default: "https://api.deepseek.com/v1"
-    NewsAPIKey      string
+    NewsAPIKey      string           // optional; blank disables NewsAPI
     RSSHubBaseURL   string           // default: "https://rsshub.app"
     RSSFeeds        []string
     RSSHubRoutes    []string
+    SearchEngineURL string           // optional; DuckDuckGo HTML search
     TrustedDomains  []string
     SkipVerification bool
     DefaultCategories []Category
-    WebsiteAPIBaseURL  string
+    WebsiteAPIBaseURL  string        // optional; blank disables publishing
     WebsiteAPIToken    string
     DisableJavaPublisher bool
-    DatabaseDSN     string
+    DatabaseDSN     string           // optional; blank disables persistence
     SMTPHost/SMTPPort/SMTPUser/...
     NotifyEmail     string
     BindAddr        string           // default: "127.0.0.1:8080"
+    CORSOrigins     string           // default: "*"
     ChatAPIToken    string
     ChatRateLimitPerMin int
     LogLevel        slog.Level
