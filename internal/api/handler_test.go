@@ -127,6 +127,33 @@ func jsonBody(v any) string {
 	return string(b)
 }
 
+func TestParseCategories(t *testing.T) {
+	t.Run("absent uses defaults", func(t *testing.T) {
+		cats, err := parseCategories("")
+		require.NoError(t, err)
+		assert.Nil(t, cats)
+	})
+
+	t.Run("trims and removes duplicates", func(t *testing.T) {
+		cats, err := parseCategories(" 金融,科技/AI,金融 ")
+		require.NoError(t, err)
+		assert.Equal(t, []models.Category{models.CategoryFinance, models.CategoryTechAI}, cats)
+	})
+
+	t.Run("rejects unknown category", func(t *testing.T) {
+		cats, err := parseCategories("金融,体育")
+		require.Error(t, err)
+		assert.Nil(t, cats)
+		assert.Contains(t, err.Error(), `invalid category "体育"`)
+	})
+
+	t.Run("rejects separators without categories", func(t *testing.T) {
+		cats, err := parseCategories(" , , ")
+		require.Error(t, err)
+		assert.Nil(t, cats)
+	})
+}
+
 // ---------------------------------------------------------------------------
 // requireStore
 // ---------------------------------------------------------------------------
@@ -628,6 +655,21 @@ func TestStreamFetch_AlreadyRunning_ReturnsErrorEvent(t *testing.T) {
 	assert.Contains(t, body, "pipeline already running")
 }
 
+func TestStreamFetch_InvalidCategory_ReturnsBadRequest(t *testing.T) {
+	h := newHandler(nil, nil, nil)
+	e := newEcho()
+	req := httptest.NewRequest(http.MethodGet, "/api/fetch/stream?categories=体育", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	err := h.StreamFetch(c)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), `"error":"invalid_param"`)
+	assert.NotContains(t, rec.Header().Get("Content-Type"), "text/event-stream")
+	assert.False(t, h.pipelineRunning)
+}
+
 func TestStreamFetch_Success_WithRealScheduler(t *testing.T) {
 	sched := scheduler.New(nil, nil, nil, nil, nil, &config.Config{}, slog.Default())
 	h := newHandler(nil, sched, nil)
@@ -666,8 +708,10 @@ func TestStreamFetch_ResetsPipelineRunning(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	h.pipelineMu.Lock()
 	running := h.pipelineRunning
+	activeRunID := h.activeRunID
 	h.pipelineMu.Unlock()
 	assert.False(t, running, "pipeline should be marked as not running after stream completion")
+	assert.Empty(t, activeRunID, "active run ID should be cleared after stream completion")
 }
 // ---------------------------------------------------------------------------
 
@@ -694,8 +738,24 @@ func TestTriggerFetch_Success(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	h.pipelineMu.Lock()
 	running := h.pipelineRunning
+	activeRunID := h.activeRunID
 	h.pipelineMu.Unlock()
 	assert.False(t, running, "pipeline should be marked as not running after completion")
+	assert.Empty(t, activeRunID, "active run ID should be cleared after completion")
+}
+
+func TestTriggerFetch_InvalidCategory_ReturnsBadRequest(t *testing.T) {
+	h := newHandler(nil, nil, nil)
+	e := newEcho()
+	req := httptest.NewRequest(http.MethodPost, "/api/fetch?categories=体育", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	err := h.TriggerFetch(c)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), `"error":"invalid_param"`)
+	assert.False(t, h.pipelineRunning)
 }
 
 func TestTriggerFetch_AlreadyRunning(t *testing.T) {
@@ -757,6 +817,7 @@ func TestGetFetchStatus_MissingRunID(t *testing.T) {
  func TestGetFetchStatus_Running_NoResultYet(t *testing.T) {
   h := newHandler(nil, nil, nil)
   h.pipelineRunning = true
+  h.activeRunID = "fresh-run"
 
   e := newEcho()
   req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -772,6 +833,23 @@ func TestGetFetchStatus_MissingRunID(t *testing.T) {
   var body map[string]any
   require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
   assert.Equal(t, "running", body["status"])
+ }
+
+ func TestGetFetchStatus_DifferentRunIsNotReportedAsRunning(t *testing.T) {
+  h := newHandler(nil, nil, nil)
+  h.pipelineRunning = true
+  h.activeRunID = "actual-run"
+
+  e := newEcho()
+  req := httptest.NewRequest(http.MethodGet, "/", nil)
+  rec := httptest.NewRecorder()
+  c := e.NewContext(req, rec)
+  c.SetParamNames("run_id")
+  c.SetParamValues("different-run")
+
+  err := h.GetFetchStatus(c)
+  require.NoError(t, err)
+  assert.Equal(t, http.StatusNotFound, rec.Code)
  }
 
  func TestGetFetchStatus_DBFallback(t *testing.T) {
