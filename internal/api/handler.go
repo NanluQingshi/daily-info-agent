@@ -32,27 +32,46 @@ type Handler struct {
 
 	pipelineMu      sync.Mutex
 	pipelineRunning bool
+	activeRunID     string
 	runsMu          sync.RWMutex
 	runs            map[string]models.RunResult // runID -> result (populated when a run finishes)
 }
 
-// parseCategoriesFromQuery parses the optional "categories" query parameter
-// into a slice of Category. Returns nil when the parameter is absent (caller
-// should use the default categories).
-func parseCategoriesFromQuery(c echo.Context) []models.Category {
-	v := c.QueryParam("categories")
-	if v == "" {
-		return nil
+// parseCategories parses the optional comma-separated categories query value.
+// It returns nil when the value is absent so the caller can use configured
+// defaults. Unknown categories are rejected before a pipeline is started.
+func parseCategories(raw string) ([]models.Category, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
 	}
-	parts := strings.Split(v, ",")
+
+	parts := strings.Split(raw, ",")
 	cats := make([]models.Category, 0, len(parts))
+	seen := make(map[models.Category]struct{}, len(parts))
 	for _, p := range parts {
 		p = strings.TrimSpace(p)
-		if p != "" {
-			cats = append(cats, models.Category(p))
+		if p == "" {
+			continue
 		}
+
+		cat := models.Category(p)
+		if !cat.IsValid() {
+			valid := make([]string, 0, len(models.AllCategories))
+			for _, known := range models.AllCategories {
+				valid = append(valid, string(known))
+			}
+			return nil, fmt.Errorf("invalid category %q (valid: %s)", p, strings.Join(valid, ", "))
+		}
+		if _, ok := seen[cat]; ok {
+			continue
+		}
+		seen[cat] = struct{}{}
+		cats = append(cats, cat)
 	}
-	return cats
+	if len(cats) == 0 {
+		return nil, errors.New("categories must include at least one valid category")
+	}
+	return cats, nil
 }
 
 // New creates a Handler.
@@ -288,6 +307,14 @@ func (h *Handler) DeleteArticle(c echo.Context) error {
 
 // TriggerFetch handles POST /api/fetch — starts a pipeline run asynchronously.
 func (h *Handler) TriggerFetch(c echo.Context) error {
+	cats, err := parseCategories(c.QueryParam("categories"))
+	if err != nil {
+		return errJSON(c, http.StatusBadRequest, "invalid_param", err.Error())
+	}
+	if cats == nil {
+		cats = h.cfg.DefaultCategories
+	}
+
 	h.pipelineMu.Lock()
 	if h.pipelineRunning {
 		h.pipelineMu.Unlock()
@@ -296,23 +323,15 @@ func (h *Handler) TriggerFetch(c echo.Context) error {
 			Message:   "pipeline already running",
 		})
 	}
+	runID := uuid.New().String()
 	h.pipelineRunning = true
+	h.activeRunID = runID
 	h.pipelineMu.Unlock()
 
-	runID := uuid.New().String()
-
 	go func() {
-		defer func() {
-			h.pipelineMu.Lock()
-			h.pipelineRunning = false
-			h.pipelineMu.Unlock()
-		}()
+		defer h.finishPipeline(runID)
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 		defer cancel()
-		cats := parseCategoriesFromQuery(c)
-		if cats == nil {
-			cats = h.cfg.DefaultCategories
-		}
 		result := h.scheduler.RunWithProgressAndID(ctx, cats, nil, runID)
 		h.runsMu.Lock()
 		h.runs[runID] = result
@@ -335,6 +354,14 @@ func (h *Handler) TriggerFetch(c echo.Context) error {
 // StreamFetch handles GET /api/fetch/stream — starts a pipeline run and streams
 // progress as SSE events until the run finishes or the client disconnects.
 func (h *Handler) StreamFetch(c echo.Context) error {
+	cats, err := parseCategories(c.QueryParam("categories"))
+	if err != nil {
+		return errJSON(c, http.StatusBadRequest, "invalid_param", err.Error())
+	}
+	if cats == nil {
+		cats = h.cfg.DefaultCategories
+	}
+
 	w := c.Response().Writer
 	c.Response().Header().Set("Content-Type", "text/event-stream")
 	c.Response().Header().Set("Cache-Control", "no-cache")
@@ -361,14 +388,10 @@ func (h *Handler) StreamFetch(c echo.Context) error {
 		writeEvent(models.ProgressEvent{Stage: "error", Status: "error", Message: "pipeline already running"})
 		return nil
 	}
+	runID := uuid.New().String()
 	h.pipelineRunning = true
+	h.activeRunID = runID
 	h.pipelineMu.Unlock()
-
-	defer func() {
-		h.pipelineMu.Lock()
-		h.pipelineRunning = false
-		h.pipelineMu.Unlock()
-	}()
 
 	eventCh := make(chan models.ProgressEvent, 8)
 	ctx, cancel := context.WithTimeout(c.Request().Context(), 15*time.Minute)
@@ -376,16 +399,16 @@ func (h *Handler) StreamFetch(c echo.Context) error {
 
 	go func() {
 		defer close(eventCh)
-		cats := parseCategoriesFromQuery(c)
-		if cats == nil {
-			cats = h.cfg.DefaultCategories
-		}
-		h.scheduler.RunWithProgress(ctx, cats, func(e models.ProgressEvent) {
+		defer h.finishPipeline(runID)
+		result := h.scheduler.RunWithProgressAndID(ctx, cats, func(e models.ProgressEvent) {
 			select {
 			case eventCh <- e:
 			case <-ctx.Done():
 			}
-		})
+		}, runID)
+		h.runsMu.Lock()
+		h.runs[runID] = result
+		h.runsMu.Unlock()
 	}()
 
 	for {
@@ -400,6 +423,17 @@ func (h *Handler) StreamFetch(c echo.Context) error {
 		case <-c.Request().Context().Done():
 			return nil
 		}
+	}
+}
+
+// finishPipeline clears the active pipeline only when runID still owns the
+// slot. The identity check prevents a delayed worker from clearing a newer run.
+func (h *Handler) finishPipeline(runID string) {
+	h.pipelineMu.Lock()
+	defer h.pipelineMu.Unlock()
+	if h.activeRunID == runID {
+		h.pipelineRunning = false
+		h.activeRunID = ""
 	}
 }
 
@@ -421,9 +455,9 @@ func (h *Handler) GetFetchStatus(c echo.Context) error {
 		return c.JSON(http.StatusOK, fetchStatusFromResult(result))
 	}
 
-	// Still running (no in-memory result yet, but pipeline flag is up)?
+	// Still running (no in-memory result yet, and this is the active run)?
 	h.pipelineMu.Lock()
-	running := h.pipelineRunning
+	running := h.pipelineRunning && h.activeRunID == runID
 	h.pipelineMu.Unlock()
 	if running {
 		return c.JSON(http.StatusOK, map[string]any{
@@ -450,18 +484,18 @@ func (h *Handler) GetFetchStatus(c echo.Context) error {
 		status = "error"
 	}
 	return c.JSON(http.StatusOK, map[string]any{
-		"run_id":          log.RunID,
-		"status":          status,
-		"fetched":         log.TotalFetched,
-		"processed":       log.TotalProcessed,
-		"saved":           log.TotalSaved,
-		"published":       log.TotalPublished,
-		"skipped":         log.TotalSkipped,
-		"failed":          log.TotalFailed,
-		"duration_ms":     log.DurationMs,
-		"fatal_error":     log.FatalError,
-		"started_at":      log.StartedAt.UTC().Format(time.RFC3339),
-		"finished_at":     log.FinishedAt.UTC().Format(time.RFC3339),
+		"run_id":      log.RunID,
+		"status":      status,
+		"fetched":     log.TotalFetched,
+		"processed":   log.TotalProcessed,
+		"saved":       log.TotalSaved,
+		"published":   log.TotalPublished,
+		"skipped":     log.TotalSkipped,
+		"failed":      log.TotalFailed,
+		"duration_ms": log.DurationMs,
+		"fatal_error": log.FatalError,
+		"started_at":  log.StartedAt.UTC().Format(time.RFC3339),
+		"finished_at": log.FinishedAt.UTC().Format(time.RFC3339),
 	})
 }
 
