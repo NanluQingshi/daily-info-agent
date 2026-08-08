@@ -205,7 +205,7 @@ func websiteAPIHandler() http.Handler {
 // buildIntegrationScheduler creates a Scheduler wired to all mock servers.
 // The trustedDomains list controls which articles pass verification.
 func buildIntegrationScheduler(trustedDomains []string) *scheduler.Scheduler {
-	aiClient := processor.NewDeepSeekClient("test-api-key", deepSeekSrv.URL)
+	aiClient := processor.NewLLMClient("test-api-key", deepSeekSrv.URL)
 	proc := processor.New(aiClient, "deepseek-chat", slog.Default())
 
 	rssFetcher := fetcher.NewRSSFetcher(rssSrv.Client())
@@ -228,7 +228,7 @@ func buildIntegrationScheduler(trustedDomains []string) *scheduler.Scheduler {
 		SkipVerification:  false,
 	}
 
-	return scheduler.New(mgr, proc, ver, pub, cfg, slog.Default())
+	return scheduler.New(mgr, proc, ver, pub, nil, cfg, slog.Default())
 }
 
 // resetWebsiteCounters resets the website publish tracking state.
@@ -333,7 +333,7 @@ func TestIntegration_FullPipeline_BothDomainsUntrustedLowScore_NothingPublished(
 	}))
 	defer lowScoreDSSrv.Close()
 
-	aiClient := processor.NewDeepSeekClient("test-key", lowScoreDSSrv.URL)
+	aiClient := processor.NewLLMClient("test-key", lowScoreDSSrv.URL)
 	proc := processor.New(aiClient, "deepseek-chat", slog.Default())
 
 	rssFetcher := fetcher.NewRSSFetcher(rssSrv.Client())
@@ -354,7 +354,7 @@ func TestIntegration_FullPipeline_BothDomainsUntrustedLowScore_NothingPublished(
 		DefaultCategories: []models.Category{models.CategoryFinance},
 	}
 
-	sched := scheduler.New(mgr, proc, ver, pub, cfg, slog.Default())
+	sched := scheduler.New(mgr, proc, ver, pub, nil, cfg, slog.Default())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -399,4 +399,66 @@ func TestIntegration_FullPipeline_PublishedArticle_HasCorrectJSONFields(t *testi
 		_, err = time.Parse(time.RFC3339, req.FetchedAt)
 		assert.NoError(t, err, "fetched_at should be valid RFC3339")
 	}
+}
+
+func TestIntegration_DeepSeekUnavailable_DegradedMode(t *testing.T) {
+	resetWebsiteCounters()
+
+	// DeepSeek returns 503 — pipeline should degrade gracefully.
+	downDSSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer downDSSrv.Close()
+
+	aiClient := processor.NewLLMClient("test-key", downDSSrv.URL)
+	proc := processor.New(aiClient, "deepseek-chat", slog.Default())
+
+	rssFetcher := fetcher.NewRSSFetcher(rssSrv.Client())
+	cacheFile := filepath.Join(testCacheDir, fmt.Sprintf("dedup-degraded-%d.json", time.Now().UnixNano()))
+	mgr := fetcher.NewManager(
+		[]fetcher.Fetcher{rssFetcher},
+		nil, nil, cacheFile,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+
+	// No whitelist — items only pass if score >= 0.7.
+	// Since DeepSeek is down, scores are 0.0, so all items should be skipped.
+	ver := verifier.New([]string{}, false, slog.Default())
+	pub := publisher.New(websiteSrv.URL, "test-token", websiteSrv.Client(), slog.Default())
+	cfg := &config.Config{
+		RSSFeeds:          []string{rssSrv.URL},
+		DefaultCategories: []models.Category{models.CategoryFinance, models.CategoryTechAI},
+	}
+
+	sched := scheduler.New(mgr, proc, ver, pub, nil, cfg, slog.Default())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	result := sched.Run(ctx)
+
+	// Pipeline should complete without fatal error (graceful degradation).
+	require.NoError(t, result.FatalError)
+	assert.Equal(t, 2, result.TotalFetched, "both items should be fetched")
+	assert.Equal(t, 2, result.TotalProcessed, "both should be processed (with zero-valued AI fields)")
+	// Items fall back to LLMSkipped=true when AI is unavailable,
+	// so they are counted as skipped, not published.
+	assert.Equal(t, 0, result.TotalPublished, "no items should be published without AI scores")
+	assert.Equal(t, int32(0), websitePublishCount.Load(), "no publish calls should be made")
+}
+
+func TestIntegration_ContextCancelled_PipelineAborts(t *testing.T) {
+	resetWebsiteCounters()
+
+	sched := buildIntegrationScheduler([]string{"reuters.com"})
+
+	// Use a cancelled context — pipeline should abort immediately.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+
+	result := sched.Run(ctx)
+
+	// Pipeline should abort without publishing anything.
+	assert.Equal(t, 0, result.TotalFetched, "no items should be fetched with cancelled context")
+	assert.Equal(t, int32(0), websitePublishCount.Load(), "no publish calls with cancelled context")
 }
