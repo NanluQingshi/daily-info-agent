@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { deleteArticle, publishArticle, retryArticle } from "../api/client";
 import type { ArticleRow } from "../types";
+import { showToast } from "./Toast";
 
 interface Props {
   article: ArticleRow;
@@ -37,7 +38,7 @@ export function ArticleCard({ article, onDeleted, onPublished, onRetried, onClic
       await publishArticle(article.id);
       onPublished(article.id);
     } catch (err) {
-      alert((err as Error).message);
+      showToast("error", (err as Error).message);
     } finally {
       setBusy(false);
     }
@@ -50,7 +51,7 @@ export function ArticleCard({ article, onDeleted, onPublished, onRetried, onClic
       await retryArticle(article.id);
       onRetried(article.id);
     } catch (err) {
-      alert((err as Error).message);
+      showToast("error", (err as Error).message);
     } finally {
       setBusy(false);
     }
@@ -64,7 +65,7 @@ export function ArticleCard({ article, onDeleted, onPublished, onRetried, onClic
       await deleteArticle(article.id);
       onDeleted(article.id);
     } catch (err) {
-      alert((err as Error).message);
+      showToast("error", (err as Error).message);
     } finally {
       setBusy(false);
     }

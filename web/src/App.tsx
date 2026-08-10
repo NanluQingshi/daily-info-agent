@@ -8,6 +8,7 @@ import { ChatView } from "./components/ChatView";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { StatsPanel } from "./components/StatsPanel";
 import { ThemeToggle } from "./components/ThemeToggle";
+import { ToastProvider } from "./components/Toast";
 
 type Tab = "chat" | "articles" | "stats" | "settings";
 
@@ -90,5 +91,6 @@ export default function App() {
         </main>
       </div>
     </TooltipProvider>
+    </ToastProvider>
   );
 }
