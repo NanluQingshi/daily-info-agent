@@ -308,7 +308,7 @@ func runServerMode(
 	e.POST("/api/chat", chatHandler.Handle)
 	e.POST("/api/chat/stream", chatHandler.HandleStream)
 	e.DELETE("/api/sessions/:id", chatHandler.HandleDeleteSession)
-	e.GET("/health", healthHandler(version, st, startTime))
+	e.GET("/health", healthHandler(version, st, startTime, cfg.CacheFilePath, cfg.LLMAPIKey != ""))
 	e.GET("/metrics", echo.WrapHandler(http.HandlerFunc(metricsHandler)))
 
 	// Article management API (database-dependent endpoints return clear
@@ -394,8 +394,9 @@ func runMigrations(dsn string, logger *slog.Logger) error {
 	return nil
 }
 
-// healthHandler returns a /health endpoint that also reports DB connectivity.
-func healthHandler(ver string, st store.ArticleStore, startTime time.Time) echo.HandlerFunc {
+// healthHandler returns a /health endpoint that reports process status,
+// database connectivity, LLM configuration, and the dedup cache file state.
+func healthHandler(ver string, st store.ArticleStore, startTime time.Time, cacheFilePath string, llmKeySet bool) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		body := map[string]interface{}{
 			"status":  "ok",
@@ -411,6 +412,24 @@ func healthHandler(ver string, st store.ArticleStore, startTime time.Time) echo.
 			}
 		} else {
 			body["db"] = "disabled"
+		}
+		// LLM configuration status (no live call — that would add latency).
+		if llmKeySet {
+			body["llm"] = "configured"
+		} else {
+			body["llm"] = "missing_key"
+		}
+		// Dedup cache file state.
+		if info, err := os.Stat(cacheFilePath); err == nil {
+			body["cache"] = map[string]interface{}{
+				"status": "ok",
+				"size":   info.Size(),
+				"path":   cacheFilePath,
+			}
+		} else if os.IsNotExist(err) {
+			body["cache"] = map[string]interface{}{"status": "empty", "path": cacheFilePath}
+		} else {
+			body["cache"] = map[string]interface{}{"status": "error", "path": cacheFilePath, "error": err.Error()}
 		}
 		return c.JSON(http.StatusOK, body)
 	}
