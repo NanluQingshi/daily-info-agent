@@ -85,16 +85,11 @@ func main() {
 
 	// Only register NewsAPI when the key looks like a real token (not empty,
 	// not a placeholder URL from .env.example, and not a dummy placeholder).
-	placeholder := cfg.NewsAPIKey == "" ||
-	 strings.HasPrefix(cfg.NewsAPIKey, "http") ||
-	 strings.EqualFold(cfg.NewsAPIKey, "placeholder") ||
-	 strings.EqualFold(cfg.NewsAPIKey, "test-key") ||
-	 strings.EqualFold(cfg.NewsAPIKey, "test")
-	if !placeholder {
+	if isPlaceholderKey(cfg.NewsAPIKey) {
+		logger.Info("NewsAPI fetcher disabled (NEWSAPI_KEY not set or is a placeholder)")
+	} else {
 		fetchers = append(fetchers, fetcher.NewNewsAPIFetcher(cfg.NewsAPIKey, httpClient))
 		logger.Info("NewsAPI fetcher enabled")
-	} else {
-		logger.Info("NewsAPI fetcher disabled (NEWSAPI_KEY not set or is a placeholder)")
 	}
 
 	fetchers = append(fetchers, fetcher.NewRSSHubFetcher(cfg.RSSHubBaseURL, httpClient))
@@ -448,6 +443,17 @@ func isCI() bool {
 	return os.Getenv("CI") != "" ||
 		os.Getenv("GITHUB_ACTIONS") != "" ||
 		os.Getenv("GITLAB_CI") != ""
+}
+
+// isPlaceholderKey reports whether an API key is empty or a known placeholder
+// value (from .env.example or common dummy values), so the fetcher using it
+// can be skipped at startup.
+func isPlaceholderKey(key string) bool {
+	return key == "" ||
+		strings.HasPrefix(key, "http") ||
+		strings.EqualFold(key, "placeholder") ||
+		strings.EqualFold(key, "test-key") ||
+		strings.EqualFold(key, "test")
 }
 
 // maskDSN replaces the password in a DSN string with "***" for logging.

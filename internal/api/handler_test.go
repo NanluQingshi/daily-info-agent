@@ -1036,3 +1036,64 @@ func TestErrJSON(t *testing.T) {
 	assert.Equal(t, "test_error", body["error"])
 	assert.Equal(t, "test message", body["message"])
 }
+
+// ---------------------------------------------------------------------------
+// Register — route registration smoke test
+// ---------------------------------------------------------------------------
+
+func TestRegister_RegistersAllRoutes(t *testing.T) {
+	h := newHandler(&mockStore{}, nil, nil)
+	e := newEcho()
+	apiGroup := e.Group("/api")
+	h.Register(apiGroup)
+
+	// Collect all registered routes (method + path)
+	routes := make(map[string]bool)
+	for _, r := range e.Routes() {
+		routes[r.Method+" "+r.Path] = true
+	}
+
+	expected := []string{
+		"GET /api/articles",
+		"GET /api/articles/:id",
+		"POST /api/articles/:id/publish",
+		"POST /api/articles/:id/retry",
+		"DELETE /api/articles/:id",
+		"POST /api/fetch",
+		"GET /api/fetch/stream",
+		"GET /api/fetch/:run_id",
+		"GET /api/stats",
+	}
+
+	for _, route := range expected {
+		assert.True(t, routes[route], "expected route %q to be registered", route)
+	}
+}
+
+func TestRegister_HandlersRespondWithoutPanic(t *testing.T) {
+	// Verify each registered route can be hit without panicking
+	// (DB-disabled responses are expected for store-backed endpoints).
+	h := newHandler(nil, nil, nil) // no store — endpoints return 503/404 cleanly
+	e := newEcho()
+	apiGroup := e.Group("/api")
+	h.Register(apiGroup)
+
+	// The /api/fetch route spawns a goroutine; avoid it by testing
+	// a representative sample of synchronous endpoints.
+	tests := []struct {
+		method, path string
+		wantStatus   int
+	}{
+		{http.MethodGet, "/api/articles", http.StatusServiceUnavailable},
+		{http.MethodGet, "/api/articles/1", http.StatusServiceUnavailable},
+		{http.MethodDelete, "/api/articles/1", http.StatusServiceUnavailable},
+		{http.MethodGet, "/api/stats", http.StatusServiceUnavailable},
+	}
+
+	for _, tc := range tests {
+		req := httptest.NewRequest(tc.method, tc.path, nil)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		assert.Equal(t, tc.wantStatus, rec.Code, "%s %s should return %d (store disabled)", tc.method, tc.path, tc.wantStatus)
+	}
+}
