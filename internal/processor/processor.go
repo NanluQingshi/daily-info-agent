@@ -10,6 +10,7 @@ import (
 	"time"
 
 	openai "github.com/sashabaranov/go-openai"
+	"github.com/user/daily-info-agent/pkg/metrics"
 	"github.com/user/daily-info-agent/pkg/models"
 )
 
@@ -175,12 +176,14 @@ func (p *Processor) processBatchCall(ctx context.Context, items []models.RawItem
 		})
 		if err != nil {
 			lastErr = err
+			metrics.App.LLMErrors.Add(1)
 			p.logger.Debug("deepseek call error; will retry",
 				slog.Int("attempt", attempt+1),
 				slog.String("error", err.Error()),
 			)
 			continue
 		}
+		metrics.App.LLMCalls.Add(1)
 
 		if len(resp.Choices) == 0 {
 			lastErr = fmt.Errorf("empty choices in response")

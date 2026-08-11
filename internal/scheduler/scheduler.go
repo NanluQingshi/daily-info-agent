@@ -15,6 +15,7 @@ import (
 	"github.com/user/daily-info-agent/internal/store"
 	"github.com/user/daily-info-agent/internal/verifier"
 	"github.com/user/daily-info-agent/pkg/config"
+	"github.com/user/daily-info-agent/pkg/metrics"
 	"github.com/user/daily-info-agent/pkg/models"
 )
 
@@ -113,6 +114,8 @@ func (s *Scheduler) runPipeline(ctx context.Context, categories []models.Categor
 	if abort {
 		result.FatalError = fmt.Errorf("fetch stage failed")
 		result.DurationMs = time.Since(start).Milliseconds()
+		metrics.App.RunsCompleted.Add(1)
+		metrics.App.RunsFailed.Add(1)
 		return result
 	}
 	result.TotalFetched = len(items)
@@ -120,6 +123,7 @@ func (s *Scheduler) runPipeline(ctx context.Context, categories []models.Categor
 	if len(items) == 0 {
 		s.logger.Info("no new items fetched; run complete", slog.String("run_id", runID))
 		result.DurationMs = time.Since(start).Milliseconds()
+		metrics.App.RunsCompleted.Add(1)
 		fire(models.ProgressEvent{Stage: "done", Status: "done", RunID: runID, Message: "任务完成（无新内容）"})
 		return result
 	}
@@ -147,6 +151,8 @@ func (s *Scheduler) runPipeline(ctx context.Context, categories []models.Categor
 	// ---- Notify stage ----
 	s.notifyStage(ctx, passing, result)
 
+	metrics.App.RunsCompleted.Add(1)
+
 	return result
 }
 
@@ -169,8 +175,11 @@ func (s *Scheduler) fetchStage(ctx context.Context, categories []models.Category
 		return nil, true
 	}
 
+	metrics.App.ItemsFetched.Add(int64(len(items)))
+
 	// Dedup stage
 	dedupedItems, dedupRemoved := dedup.ByTitle(items, s.cfg.TrustedDomains)
+	metrics.App.ItemsDeduped.Add(int64(dedupRemoved))
 	if dedupRemoved > 0 {
 		s.logger.Info("stage_complete",
 			slog.String("stage", "dedup"),
@@ -250,6 +259,8 @@ func (s *Scheduler) verifyStage(articles []models.ProcessedArticle, result *mode
 			result.TotalSkipped++
 		}
 	}
+	metrics.App.ItemsPassed.Add(int64(len(passing)))
+	metrics.App.ItemsSkipped.Add(int64(result.TotalSkipped))
 
 	s.logger.Info("stage_complete",
 		slog.String("stage", "verify"),
@@ -302,10 +313,12 @@ func (s *Scheduler) publishStage(ctx context.Context, passing []models.Processed
 			switch res.Outcome {
 			case publisher.OutcomePublished:
 				result.TotalPublished++
+				metrics.App.ItemsPublished.Add(1)
 			case publisher.OutcomeDuplicate:
 				result.TotalSkipped++
 			default:
 				result.TotalFailed++
+				metrics.App.PublishFailed.Add(1)
 			}
 		}
 	}

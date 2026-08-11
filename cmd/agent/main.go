@@ -46,6 +46,7 @@ import (
 	"github.com/user/daily-info-agent/internal/store"
 	"github.com/user/daily-info-agent/internal/verifier"
 	"github.com/user/daily-info-agent/pkg/config"
+	"github.com/user/daily-info-agent/pkg/metrics"
 )
 
 // version is overridden at build time with: -ldflags="-X main.version=x.y.z"
@@ -488,4 +489,54 @@ func metricsHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "# HELP go_cgo_calls Number of cgo calls\n")
 	fmt.Fprintf(w, "# TYPE go_cgo_calls gauge\n")
 	fmt.Fprintf(w, "go_cgo_calls %d\n", runtime.NumCgoCall())
+
+	// ── Application metrics ─────────────────────────────────────────────
+	mc := &metrics.App
+	fmt.Fprintf(w, "# HELP dia_items_fetched Total raw items fetched\n")
+	fmt.Fprintf(w, "# TYPE dia_items_fetched counter\n")
+	fmt.Fprintf(w, "dia_items_fetched %d\n", mc.ItemsFetched.Load())
+
+	fmt.Fprintf(w, "# HELP dia_items_deduped Items removed by title dedup\n")
+	fmt.Fprintf(w, "# TYPE dia_items_deduped counter\n")
+	fmt.Fprintf(w, "dia_items_deduped %d\n", mc.ItemsDeduped.Load())
+
+	fmt.Fprintf(w, "# HELP dia_items_processed Items through AI processing\n")
+	fmt.Fprintf(w, "# TYPE dia_items_processed counter\n")
+	fmt.Fprintf(w, "dia_items_processed %d\n", mc.ItemsProcessed.Load())
+
+	fmt.Fprintf(w, "# HELP dia_llm_calls Total successful LLM API calls\n")
+	fmt.Fprintf(w, "# TYPE dia_llm_calls counter\n")
+	fmt.Fprintf(w, "dia_llm_calls %d\n", mc.LLMCalls.Load())
+
+	fmt.Fprintf(w, "# HELP dia_llm_errors Total failed LLM API calls\n")
+	fmt.Fprintf(w, "# TYPE dia_llm_errors counter\n")
+	fmt.Fprintf(w, "dia_llm_errors %d\n", mc.LLMErrors.Load())
+
+	fmt.Fprintf(w, "# HELP dia_items_passed Articles passing verification\n")
+	fmt.Fprintf(w, "# TYPE dia_items_passed counter\n")
+	fmt.Fprintf(w, "dia_items_passed %d\n", mc.ItemsPassed.Load())
+
+	fmt.Fprintf(w, "# HELP dia_items_skipped Articles skipped\n")
+	fmt.Fprintf(w, "# TYPE dia_items_skipped counter\n")
+	fmt.Fprintf(w, "dia_items_skipped %d\n", mc.ItemsSkipped.Load())
+
+	fmt.Fprintf(w, "# HELP dia_items_published Articles published\n")
+	fmt.Fprintf(w, "# TYPE dia_items_published counter\n")
+	fmt.Fprintf(w, "dia_items_published %d\n", mc.ItemsPublished.Load())
+
+	fmt.Fprintf(w, "# HELP dia_publish_failed Articles failed to publish\n")
+	fmt.Fprintf(w, "# TYPE dia_publish_failed counter\n")
+	fmt.Fprintf(w, "dia_publish_failed %d\n", mc.PublishFailed.Load())
+
+	fmt.Fprintf(w, "# HELP dia_publish_retried Articles published after retry\n")
+	fmt.Fprintf(w, "# TYPE dia_publish_retried counter\n")
+	fmt.Fprintf(w, "dia_publish_retried %d\n", mc.PublishRetried.Load())
+
+	fmt.Fprintf(w, "# HELP dia_runs_completed Pipeline runs completed\n")
+	fmt.Fprintf(w, "# TYPE dia_runs_completed counter\n")
+	fmt.Fprintf(w, "dia_runs_completed %d\n", mc.RunsCompleted.Load())
+
+	fmt.Fprintf(w, "# HELP dia_runs_failed Pipeline runs aborted\n")
+	fmt.Fprintf(w, "# TYPE dia_runs_failed counter\n")
+	fmt.Fprintf(w, "dia_runs_failed %d\n", mc.RunsFailed.Load())
 }
