@@ -139,6 +139,18 @@ func main() {
 		logger.With(slog.String("component", "processor")),
 	)
 
+	// Optional local LLM fallback (e.g. Ollama) when the primary API is down.
+	if cfg.LLMFallbackBaseURL != "" && cfg.LLMFallbackModelID != "" {
+		fbCfg := openai.DefaultConfig("ollama") // local instances ignore the key
+		fbCfg.BaseURL = cfg.LLMFallbackBaseURL
+		fbClient := openai.NewClientWithConfig(fbCfg)
+		proc = proc.WithFallback(fbClient, cfg.LLMFallbackModelID)
+		logger.Info("local LLM fallback enabled",
+			slog.String("url", cfg.LLMFallbackBaseURL),
+			slog.String("model", cfg.LLMFallbackModelID),
+		)
+	}
+
 	// ---- Build verifier ----
 	ver := verifier.New(
 		cfg.TrustedDomains,

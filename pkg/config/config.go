@@ -71,6 +71,11 @@ type Config struct {
 	LLMModelID string
 	LLMBaseURL string // default: "https://api.deepseek.com/v1"
 
+	// Optional fallback LLM (e.g. local Ollama) used when the primary API
+	// is unavailable. Leave blank to disable fallback.
+	LLMFallbackBaseURL  string
+	LLMFallbackModelID  string
+
 	// Data sources
 	NewsAPIKey    string
 	RSSHubBaseURL string   // default: "https://rsshub.app"
@@ -158,6 +163,14 @@ func Load() (*Config, error) {
 	cfg.LLMModelID = os.Getenv("LLM_MODEL_ID")
 	if cfg.LLMModelID == "" {
 		missing = append(missing, "LLM_MODEL_ID")
+	}
+
+	// Optional fallback LLM (local Ollama etc.) — both URL and model must be
+	// set together to enable fallback.
+	cfg.LLMFallbackBaseURL = strings.TrimSpace(os.Getenv("LLM_FALLBACK_BASE_URL"))
+	cfg.LLMFallbackModelID = strings.TrimSpace(os.Getenv("LLM_FALLBACK_MODEL_ID"))
+	if (cfg.LLMFallbackBaseURL == "") != (cfg.LLMFallbackModelID == "") {
+		return nil, fmt.Errorf("LLM_FALLBACK_BASE_URL and LLM_FALLBACK_MODEL_ID must be set together")
 	}
 
 	cfg.NewsAPIKey = os.Getenv("NEWSAPI_KEY")

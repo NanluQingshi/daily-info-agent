@@ -298,3 +298,70 @@ func TestProcessor_ProcessBatch_CodeFencedJSONArray_ParsedSuccessfully(t *testin
 	assert.Equal(t, models.CategoryEconomy, articles[0].Category)
 	assert.Equal(t, "Economy summary", articles[0].Summary)
 }
+
+// ---------------------------------------------------------------------------
+// Fallback (local LLM) — primary down, fallback answers
+// ---------------------------------------------------------------------------
+
+func TestProcessor_ProcessBatch_FallbackUsedWhenPrimaryDown(t *testing.T) {
+	items := []models.RawItem{
+		makeRawItem("http://example.com/fallback", "Fallback Article", "example.com"),
+	}
+
+	// Primary returns 500 on every request.
+	primarySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write(openAIErrorResponse("service down"))
+	}))
+	t.Cleanup(primarySrv.Close)
+
+	// Fallback (local LLM) answers successfully.
+	fallbackSrv := newMockLLMServer(t, func(w http.ResponseWriter, r *http.Request) {
+		content := `[{"url":"http://example.com/fallback","category":"科技/AI","summary":"Fallback summary","credibility_score":0.9,"tags":["ai"],"language":"en"}]`
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(chatCompletionResponse(content))
+	})
+	t.Cleanup(fallbackSrv.Close)
+
+	primaryClient := processor.NewLLMClient("test-key", primarySrv.URL)
+	fallbackClient := processor.NewLLMClient("test-key", fallbackSrv.URL)
+	proc := processor.New(primaryClient, "deepseek-chat", slog.Default()).
+		WithFallback(fallbackClient, "llama3")
+
+	articles, err := proc.ProcessBatch(context.Background(), items, "run-fallback")
+	require.NoError(t, err)
+	require.Len(t, articles, 1)
+	assert.Equal(t, models.CategoryTechAI, articles[0].Category)
+	assert.Equal(t, "Fallback summary", articles[0].Summary)
+}
+
+func TestProcessor_ProcessBatch_FallbackFailsToo_ReturnsUnavailable(t *testing.T) {
+	items := []models.RawItem{
+		makeRawItem("http://example.com/both-down", "Both Down", "example.com"),
+	}
+
+	// Both primary and fallback return 500.
+	primarySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write(openAIErrorResponse("down"))
+	}))
+	t.Cleanup(primarySrv.Close)
+
+	fallbackSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write(openAIErrorResponse("down too"))
+	}))
+	t.Cleanup(fallbackSrv.Close)
+
+	primaryClient := processor.NewLLMClient("test-key", primarySrv.URL)
+	fallbackClient := processor.NewLLMClient("test-key", fallbackSrv.URL)
+	proc := processor.New(primaryClient, "deepseek-chat", slog.Default()).
+		WithFallback(fallbackClient, "llama3")
+
+	// ProcessBatch degrades gracefully: articles are marked LLMSkipped,
+	// not failed.
+	articles, err := proc.ProcessBatch(context.Background(), items, "run-both-down")
+	require.NoError(t, err)
+	require.Len(t, articles, 1)
+	assert.True(t, articles[0].LLMSkipped, "article should be marked LLMSkipped when both LLMs fail")
+}
