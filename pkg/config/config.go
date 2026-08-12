@@ -118,6 +118,10 @@ type Config struct {
 	// endpoints. 0 disables limiting.
 	ChatRateLimitPerMin int
 
+	// Management API rate limit: max requests per minute per client IP across
+	// the /api/articles, /api/fetch, and /api/stats endpoints. 0 disables.
+	APIRateLimitPerMin int
+
 	// Observability
 	LogLevel     slog.Level
 	AgentVersion string // injected at build time via -ldflags
@@ -175,6 +179,9 @@ func Load() (*Config, error) {
 
 	// Optional per-IP chat rate limit (requests per minute)
 	cfg.ChatRateLimitPerMin = parseIntOrDefault(os.Getenv("CHAT_RATE_LIMIT_PER_MIN"), 0)
+
+	// Optional per-IP management API rate limit (requests per minute)
+	cfg.APIRateLimitPerMin = parseIntOrDefault(os.Getenv("API_RATE_LIMIT_PER_MIN"), 0)
 
 	// Optional email notifier config
 	cfg.SMTPHost = os.Getenv("SMTP_HOST")

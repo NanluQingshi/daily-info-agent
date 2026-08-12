@@ -20,6 +20,7 @@ import (
 	"github.com/user/daily-info-agent/internal/store"
 	"github.com/user/daily-info-agent/pkg/config"
 	"github.com/user/daily-info-agent/pkg/models"
+	"github.com/user/daily-info-agent/pkg/ratelimit"
 )
 
 // Handler holds dependencies for all REST API endpoints.
@@ -29,6 +30,8 @@ type Handler struct {
 	publisher *publisher.Client // may be nil
 	cfg       *config.Config
 	logger    *slog.Logger
+
+	limiter *ratelimit.Limiter // nil when API rate limiting is disabled
 
 	pipelineMu      sync.Mutex
 	pipelineRunning bool
@@ -82,13 +85,31 @@ func New(
 	cfg *config.Config,
 	logger *slog.Logger,
 ) *Handler {
-	return &Handler{
+	h := &Handler{
 		store:     st,
 		scheduler: sched,
 		publisher: pub,
 		cfg:       cfg,
 		logger:    logger,
 		runs:      make(map[string]models.RunResult),
+	}
+	// Optional per-IP rate limit for the management API.
+	if cfg.APIRateLimitPerMin > 0 {
+		h.limiter = ratelimit.New(cfg.APIRateLimitPerMin, time.Minute/time.Duration(cfg.APIRateLimitPerMin))
+	}
+	return h
+}
+
+// rateLimited wraps a handler with per-IP throttling when enabled.
+func (h *Handler) rateLimited(next echo.HandlerFunc) echo.HandlerFunc {
+	if h.limiter == nil {
+		return next
+	}
+	return func(c echo.Context) error {
+		if !h.limiter.Allow(c.RealIP()) {
+			return errJSON(c, http.StatusTooManyRequests, "rate_limited", "too many requests, please slow down")
+		}
+		return next(c)
 	}
 }
 
@@ -106,15 +127,15 @@ func (h *Handler) requireStore(c echo.Context) error {
 
 // Register attaches all article management routes to the given Echo group.
 func (h *Handler) Register(g *echo.Group) {
-	g.GET("/articles", h.ListArticles)
-	g.GET("/articles/:id", h.GetArticle)
-	g.POST("/articles/:id/publish", h.PublishArticle)
-	g.POST("/articles/:id/retry", h.RetryArticle)
-	g.DELETE("/articles/:id", h.DeleteArticle)
-	g.POST("/fetch", h.TriggerFetch)
-	g.GET("/fetch/stream", h.StreamFetch)
-	g.GET("/fetch/:run_id", h.GetFetchStatus)
-	g.GET("/stats", h.GetStats)
+	g.GET("/articles", h.rateLimited(h.ListArticles))
+	g.GET("/articles/:id", h.rateLimited(h.GetArticle))
+	g.POST("/articles/:id/publish", h.rateLimited(h.PublishArticle))
+	g.POST("/articles/:id/retry", h.rateLimited(h.RetryArticle))
+	g.DELETE("/articles/:id", h.rateLimited(h.DeleteArticle))
+	g.POST("/fetch", h.rateLimited(h.TriggerFetch))
+	g.GET("/fetch/stream", h.rateLimited(h.StreamFetch))
+	g.GET("/fetch/:run_id", h.rateLimited(h.GetFetchStatus))
+	g.GET("/stats", h.rateLimited(h.GetStats))
 }
 
 // ListArticles handles GET /api/articles

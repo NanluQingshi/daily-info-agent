@@ -116,6 +116,10 @@ func newHandler(st store.ArticleStore, sched *scheduler.Scheduler, pub *publishe
 	return New(st, sched, pub, &config.Config{}, slog.Default())
 }
 
+func newHandlerWithRateLimit(perMin int) *Handler {
+	return New(nil, nil, nil, &config.Config{APIRateLimitPerMin: perMin}, slog.Default())
+}
+
 // noopScheduler returns immediately — avoids goroutine panics in async fetch tests.
 func noopScheduler() *scheduler.Scheduler {
 	// All nil deps: the goroutine will log and return early.
@@ -1035,4 +1039,55 @@ func TestErrJSON(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	assert.Equal(t, "test_error", body["error"])
 	assert.Equal(t, "test message", body["message"])
+}
+
+// ---------------------------------------------------------------------------
+// Rate limiting on management API
+// ---------------------------------------------------------------------------
+
+func TestRateLimited_AllowsWithinCapacity(t *testing.T) {
+	h := newHandlerWithRateLimit(1)
+	e := newEcho()
+	apiGroup := e.Group("/api")
+	h.Register(apiGroup)
+
+	// First request within capacity → 503 (store disabled), not 429.
+	req := httptest.NewRequest(http.MethodGet, "/api/articles", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code, "first request should pass the limiter")
+}
+
+func TestRateLimited_BlocksBeyondCapacity(t *testing.T) {
+	h := newHandlerWithRateLimit(1)
+	e := newEcho()
+	apiGroup := e.Group("/api")
+	h.Register(apiGroup)
+
+	// First request consumes the single token.
+	req := httptest.NewRequest(http.MethodGet, "/api/articles", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	assert.NotEqual(t, http.StatusTooManyRequests, rec.Code, "first request passes")
+
+	// Second request → 429 rate_limited.
+	req2 := httptest.NewRequest(http.MethodGet, "/api/articles", nil)
+	rec2 := httptest.NewRecorder()
+	e.ServeHTTP(rec2, req2)
+	assert.Equal(t, http.StatusTooManyRequests, rec2.Code, "second request should be rate limited")
+}
+
+func TestRateLimited_DisabledWhenZero(t *testing.T) {
+	h := newHandlerWithRateLimit(0) // disabled
+	e := newEcho()
+	apiGroup := e.Group("/api")
+	h.Register(apiGroup)
+
+	// Multiple rapid requests all pass (no limiter).
+	for i := 0; i < 3; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/api/articles", nil)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		assert.NotEqual(t, http.StatusTooManyRequests, rec.Code, "request %d should not be limited", i+1)
+	}
 }
