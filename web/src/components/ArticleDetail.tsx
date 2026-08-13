@@ -6,6 +6,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { deleteArticle, publishArticle, retryArticle } from "../api/client";
 import type { ArticleRow } from "../types";
+import { showToast } from "./Toast";
 
 interface Props {
   article: ArticleRow;
@@ -46,7 +47,7 @@ export function ArticleDetail({ article, onClose, onPublished, onDeleted, onRetr
       setStatus("published");
       onPublished(article.id);
     } catch (err) {
-      alert((err as Error).message);
+      showToast("error", (err as Error).message);
     } finally {
       setBusy(false);
     }
@@ -60,7 +61,7 @@ export function ArticleDetail({ article, onClose, onPublished, onDeleted, onRetr
       onDeleted(article.id);
       onClose();
     } catch (err) {
-      alert((err as Error).message);
+      showToast("error", (err as Error).message);
       setBusy(false);
     }
   };
@@ -72,7 +73,7 @@ export function ArticleDetail({ article, onClose, onPublished, onDeleted, onRetr
       setStatus("pending");
       onRetried(article.id);
     } catch (err) {
-      alert((err as Error).message);
+      showToast("error", (err as Error).message);
     } finally {
       setBusy(false);
     }

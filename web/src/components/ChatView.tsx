@@ -13,6 +13,12 @@ import { ConversationList } from "./ConversationList";
 
 const STORAGE_KEY = "dia.chat_state";
 
+// Size limits to keep localStorage usage bounded (~5MB browser quota):
+// - Keep at most MAX_CONVERSATIONS conversations (oldest dropped).
+// - Keep at most MAX_MESSAGES_PER_CONV messages per conversation.
+const MAX_CONVERSATIONS = 20;
+const MAX_MESSAGES_PER_CONV = 100;
+
 interface PersistedState {
   conversations: Conversation[];
   messagesMap: Record<string, Message[]>;
@@ -30,9 +36,40 @@ function loadState(): PersistedState | null {
   }
 }
 
+// trimState enforces the size limits: drops the oldest conversations beyond
+// MAX_CONVERSATIONS and truncates message lists beyond MAX_MESSAGES_PER_CONV.
+function trimState(state: PersistedState): PersistedState {
+  const conversations = [...state.conversations].sort(
+    (a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0)
+  );
+  const kept = conversations.slice(0, MAX_CONVERSATIONS);
+  const keptIds = new Set(kept.map((c) => c.localId));
+
+  const messagesMap: Record<string, Message[]> = {};
+  for (const conv of kept) {
+    const msgs = state.messagesMap[conv.localId] ?? [];
+    messagesMap[conv.localId] =
+      msgs.length > MAX_MESSAGES_PER_CONV
+        ? msgs.slice(msgs.length - MAX_MESSAGES_PER_CONV)
+        : msgs;
+  }
+
+  const inputMap: Record<string, string> = {};
+  for (const [id, v] of Object.entries(state.inputMap ?? {})) {
+    if (keptIds.has(id)) inputMap[id] = v;
+  }
+
+  return {
+    conversations: kept,
+    messagesMap,
+    activeId: keptIds.has(state.activeId) ? state.activeId : (kept[0]?.localId ?? ""),
+    inputMap,
+  };
+}
+
 function saveState(state: PersistedState) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(trimState(state)));
   } catch {
     // localStorage full or unavailable — silently ignore
   }
