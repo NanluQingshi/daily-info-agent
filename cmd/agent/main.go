@@ -46,6 +46,7 @@ import (
 	"github.com/user/daily-info-agent/internal/store"
 	"github.com/user/daily-info-agent/internal/verifier"
 	"github.com/user/daily-info-agent/pkg/config"
+	"github.com/user/daily-info-agent/pkg/metrics"
 )
 
 // version is overridden at build time with: -ldflags="-X main.version=x.y.z"
@@ -132,6 +133,18 @@ func main() {
 		cfg.LLMModelID,
 		logger.With(slog.String("component", "processor")),
 	)
+
+	// Optional local LLM fallback (e.g. Ollama) when the primary API is down.
+	if cfg.LLMFallbackBaseURL != "" && cfg.LLMFallbackModelID != "" {
+		fbCfg := openai.DefaultConfig("ollama") // local instances ignore the key
+		fbCfg.BaseURL = cfg.LLMFallbackBaseURL
+		fbClient := openai.NewClientWithConfig(fbCfg)
+		proc = proc.WithFallback(fbClient, cfg.LLMFallbackModelID)
+		logger.Info("local LLM fallback enabled",
+			slog.String("url", cfg.LLMFallbackBaseURL),
+			slog.String("model", cfg.LLMFallbackModelID),
+		)
+	}
 
 	// ---- Build verifier ----
 	ver := verifier.New(
@@ -302,7 +315,7 @@ func runServerMode(
 	e.POST("/api/chat", chatHandler.Handle)
 	e.POST("/api/chat/stream", chatHandler.HandleStream)
 	e.DELETE("/api/sessions/:id", chatHandler.HandleDeleteSession)
-	e.GET("/health", healthHandler(version, st, startTime))
+	e.GET("/health", healthHandler(version, st, startTime, cfg.CacheFilePath, cfg.LLMAPIKey != ""))
 	e.GET("/metrics", echo.WrapHandler(http.HandlerFunc(metricsHandler)))
 
 	// Article management API (database-dependent endpoints return clear
@@ -388,8 +401,9 @@ func runMigrations(dsn string, logger *slog.Logger) error {
 	return nil
 }
 
-// healthHandler returns a /health endpoint that also reports DB connectivity.
-func healthHandler(ver string, st store.ArticleStore, startTime time.Time) echo.HandlerFunc {
+// healthHandler returns a /health endpoint that reports process status,
+// database connectivity, LLM configuration, and the dedup cache file state.
+func healthHandler(ver string, st store.ArticleStore, startTime time.Time, cacheFilePath string, llmKeySet bool) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		body := map[string]interface{}{
 			"status":  "ok",
@@ -405,6 +419,24 @@ func healthHandler(ver string, st store.ArticleStore, startTime time.Time) echo.
 			}
 		} else {
 			body["db"] = "disabled"
+		}
+		// LLM configuration status (no live call — that would add latency).
+		if llmKeySet {
+			body["llm"] = "configured"
+		} else {
+			body["llm"] = "missing_key"
+		}
+		// Dedup cache file state.
+		if info, err := os.Stat(cacheFilePath); err == nil {
+			body["cache"] = map[string]interface{}{
+				"status": "ok",
+				"size":   info.Size(),
+				"path":   cacheFilePath,
+			}
+		} else if os.IsNotExist(err) {
+			body["cache"] = map[string]interface{}{"status": "empty", "path": cacheFilePath}
+		} else {
+			body["cache"] = map[string]interface{}{"status": "error", "path": cacheFilePath, "error": err.Error()}
 		}
 		return c.JSON(http.StatusOK, body)
 	}
@@ -494,4 +526,54 @@ func metricsHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "# HELP go_cgo_calls Number of cgo calls\n")
 	fmt.Fprintf(w, "# TYPE go_cgo_calls gauge\n")
 	fmt.Fprintf(w, "go_cgo_calls %d\n", runtime.NumCgoCall())
+
+	// ── Application metrics ─────────────────────────────────────────────
+	mc := &metrics.App
+	fmt.Fprintf(w, "# HELP dia_items_fetched Total raw items fetched\n")
+	fmt.Fprintf(w, "# TYPE dia_items_fetched counter\n")
+	fmt.Fprintf(w, "dia_items_fetched %d\n", mc.ItemsFetched.Load())
+
+	fmt.Fprintf(w, "# HELP dia_items_deduped Items removed by title dedup\n")
+	fmt.Fprintf(w, "# TYPE dia_items_deduped counter\n")
+	fmt.Fprintf(w, "dia_items_deduped %d\n", mc.ItemsDeduped.Load())
+
+	fmt.Fprintf(w, "# HELP dia_items_processed Items through AI processing\n")
+	fmt.Fprintf(w, "# TYPE dia_items_processed counter\n")
+	fmt.Fprintf(w, "dia_items_processed %d\n", mc.ItemsProcessed.Load())
+
+	fmt.Fprintf(w, "# HELP dia_llm_calls Total successful LLM API calls\n")
+	fmt.Fprintf(w, "# TYPE dia_llm_calls counter\n")
+	fmt.Fprintf(w, "dia_llm_calls %d\n", mc.LLMCalls.Load())
+
+	fmt.Fprintf(w, "# HELP dia_llm_errors Total failed LLM API calls\n")
+	fmt.Fprintf(w, "# TYPE dia_llm_errors counter\n")
+	fmt.Fprintf(w, "dia_llm_errors %d\n", mc.LLMErrors.Load())
+
+	fmt.Fprintf(w, "# HELP dia_items_passed Articles passing verification\n")
+	fmt.Fprintf(w, "# TYPE dia_items_passed counter\n")
+	fmt.Fprintf(w, "dia_items_passed %d\n", mc.ItemsPassed.Load())
+
+	fmt.Fprintf(w, "# HELP dia_items_skipped Articles skipped\n")
+	fmt.Fprintf(w, "# TYPE dia_items_skipped counter\n")
+	fmt.Fprintf(w, "dia_items_skipped %d\n", mc.ItemsSkipped.Load())
+
+	fmt.Fprintf(w, "# HELP dia_items_published Articles published\n")
+	fmt.Fprintf(w, "# TYPE dia_items_published counter\n")
+	fmt.Fprintf(w, "dia_items_published %d\n", mc.ItemsPublished.Load())
+
+	fmt.Fprintf(w, "# HELP dia_publish_failed Articles failed to publish\n")
+	fmt.Fprintf(w, "# TYPE dia_publish_failed counter\n")
+	fmt.Fprintf(w, "dia_publish_failed %d\n", mc.PublishFailed.Load())
+
+	fmt.Fprintf(w, "# HELP dia_publish_retried Articles published after retry\n")
+	fmt.Fprintf(w, "# TYPE dia_publish_retried counter\n")
+	fmt.Fprintf(w, "dia_publish_retried %d\n", mc.PublishRetried.Load())
+
+	fmt.Fprintf(w, "# HELP dia_runs_completed Pipeline runs completed\n")
+	fmt.Fprintf(w, "# TYPE dia_runs_completed counter\n")
+	fmt.Fprintf(w, "dia_runs_completed %d\n", mc.RunsCompleted.Load())
+
+	fmt.Fprintf(w, "# HELP dia_runs_failed Pipeline runs aborted\n")
+	fmt.Fprintf(w, "# TYPE dia_runs_failed counter\n")
+	fmt.Fprintf(w, "dia_runs_failed %d\n", mc.RunsFailed.Load())
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	openai "github.com/sashabaranov/go-openai"
+	"github.com/user/daily-info-agent/pkg/metrics"
 	"github.com/user/daily-info-agent/pkg/models"
 )
 
@@ -41,11 +42,16 @@ func (e *LLMParseError) Error() string {
 }
 func (e *LLMParseError) Unwrap() error { return e.Cause }
 
-// Processor calls DeepSeek for AI enrichment.
+// Processor calls DeepSeek for AI enrichment, with optional fallback to a
+// secondary LLM (e.g. local Ollama) when the primary client is unavailable.
 type Processor struct {
 	client  *openai.Client
 	modelID string
 	logger  *slog.Logger
+
+	// Optional fallback (local LLM). nil when not configured.
+	fallbackClient  *openai.Client
+	fallbackModelID string
 }
 
 // New creates a Processor using the given go-openai client pointed at DeepSeek.
@@ -55,6 +61,15 @@ func New(client *openai.Client, modelID string, logger *slog.Logger) *Processor 
 		modelID: modelID,
 		logger:  logger,
 	}
+}
+
+// WithFallback returns a copy of the Processor that falls back to the given
+// client (typically a local Ollama instance) when the primary client fails.
+func (p *Processor) WithFallback(fallbackClient *openai.Client, fallbackModelID string) *Processor {
+	cp := *p
+	cp.fallbackClient = fallbackClient
+	cp.fallbackModelID = fallbackModelID
+	return &cp
 }
 
 // NewLLMClient creates an OpenAI-compatible client configured for DeepSeek.
@@ -175,12 +190,14 @@ func (p *Processor) processBatchCall(ctx context.Context, items []models.RawItem
 		})
 		if err != nil {
 			lastErr = err
+			metrics.App.LLMErrors.Add(1)
 			p.logger.Debug("deepseek call error; will retry",
 				slog.Int("attempt", attempt+1),
 				slog.String("error", err.Error()),
 			)
 			continue
 		}
+		metrics.App.LLMCalls.Add(1)
 
 		if len(resp.Choices) == 0 {
 			lastErr = fmt.Errorf("empty choices in response")
@@ -199,7 +216,43 @@ func (p *Processor) processBatchCall(ctx context.Context, items []models.RawItem
 		return results, nil
 	}
 
+	// Primary client exhausted retries — fall back to the local LLM if one
+	// is configured (e.g. Ollama), so the pipeline keeps enriching items.
+	if p.fallbackClient != nil {
+		p.logger.Warn("primary LLM unavailable; falling back to local LLM",
+			slog.String("fallback_model", p.fallbackModelID),
+			slog.String("primary_error", fmt.Sprint(lastErr)),
+		)
+		results, fbErr := p.callFallback(ctx, prompt)
+		if fbErr == nil {
+			return results, nil
+		}
+		lastErr = fmt.Errorf("primary: %v; fallback: %w", lastErr, fbErr)
+	}
+
 	return nil, &LLMUnavailableError{Cause: lastErr}
+}
+
+// callFallback sends the same batch prompt to the secondary (local) LLM and
+// parses the response, with the same retry/parse handling as the primary path.
+func (p *Processor) callFallback(ctx context.Context, prompt string) ([]models.AIItemResult, error) {
+	resp, err := p.fallbackClient.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
+		Model: p.fallbackModelID,
+		Messages: []openai.ChatCompletionMessage{
+			{Role: openai.ChatMessageRoleSystem, Content: systemPrompt},
+			{Role: openai.ChatMessageRoleUser, Content: prompt},
+		},
+	})
+	if err != nil {
+		metrics.App.LLMErrors.Add(1)
+		return nil, fmt.Errorf("fallback call: %w", err)
+	}
+	metrics.App.LLMCalls.Add(1)
+
+	if len(resp.Choices) == 0 {
+		return nil, fmt.Errorf("fallback: empty choices in response")
+	}
+	return parseBatchResponse(resp.Choices[0].Message.Content)
 }
 
 // processBatchIndividually falls back to one API call per item in the batch.

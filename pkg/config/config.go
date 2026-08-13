@@ -71,6 +71,11 @@ type Config struct {
 	LLMModelID string
 	LLMBaseURL string // default: "https://api.deepseek.com/v1"
 
+	// Optional fallback LLM (e.g. local Ollama) used when the primary API
+	// is unavailable. Leave blank to disable fallback.
+	LLMFallbackBaseURL  string
+	LLMFallbackModelID  string
+
 	// Data sources
 	NewsAPIKey    string
 	RSSHubBaseURL string   // default: "https://rsshub.app"
@@ -118,6 +123,10 @@ type Config struct {
 	// endpoints. 0 disables limiting.
 	ChatRateLimitPerMin int
 
+	// Management API rate limit: max requests per minute per client IP across
+	// the /api/articles, /api/fetch, and /api/stats endpoints. 0 disables.
+	APIRateLimitPerMin int
+
 	// Observability
 	LogLevel     slog.Level
 	AgentVersion string // injected at build time via -ldflags
@@ -156,6 +165,14 @@ func Load() (*Config, error) {
 		missing = append(missing, "LLM_MODEL_ID")
 	}
 
+	// Optional fallback LLM (local Ollama etc.) — both URL and model must be
+	// set together to enable fallback.
+	cfg.LLMFallbackBaseURL = strings.TrimSpace(os.Getenv("LLM_FALLBACK_BASE_URL"))
+	cfg.LLMFallbackModelID = strings.TrimSpace(os.Getenv("LLM_FALLBACK_MODEL_ID"))
+	if (cfg.LLMFallbackBaseURL == "") != (cfg.LLMFallbackModelID == "") {
+		return nil, fmt.Errorf("LLM_FALLBACK_BASE_URL and LLM_FALLBACK_MODEL_ID must be set together")
+	}
+
 	cfg.NewsAPIKey = os.Getenv("NEWSAPI_KEY")
 
 	if len(missing) > 0 {
@@ -175,6 +192,9 @@ func Load() (*Config, error) {
 
 	// Optional per-IP chat rate limit (requests per minute)
 	cfg.ChatRateLimitPerMin = parseIntOrDefault(os.Getenv("CHAT_RATE_LIMIT_PER_MIN"), 0)
+
+	// Optional per-IP management API rate limit (requests per minute)
+	cfg.APIRateLimitPerMin = parseIntOrDefault(os.Getenv("API_RATE_LIMIT_PER_MIN"), 0)
 
 	// Optional email notifier config
 	cfg.SMTPHost = os.Getenv("SMTP_HOST")

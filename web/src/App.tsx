@@ -22,6 +22,7 @@ export default function App() {
   const [tab, setTab] = useState<Tab>("chat");
 
   return (
+    <ToastProvider>
     <TooltipProvider>
       <div className="flex h-screen overflow-hidden bg-background">
         {/* Sidebar */}
