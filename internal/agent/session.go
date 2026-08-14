@@ -1,6 +1,9 @@
 package agent
 
 import (
+	"context"
+	"encoding/json"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -19,34 +22,73 @@ type sessionEntry struct {
 	updatedAt time.Time
 }
 
-// SessionStore manages per-session conversation history in memory.
+// SessionPersistence is an optional backend that keeps session history across
+// restarts. *store.PostgresStore implements it.
+type SessionPersistence interface {
+	GetSession(ctx context.Context, sessionID string) ([]byte, error)
+	SaveSession(ctx context.Context, sessionID string, messagesJSON []byte) error
+	DeleteSession(ctx context.Context, sessionID string) error
+}
+
+// SessionStore manages per-session conversation history in memory, optionally
+// mirroring to a persistent backend so sessions survive server restarts.
 // It is safe for concurrent use.
 type SessionStore struct {
 	mu       sync.RWMutex
 	sessions map[string]*sessionEntry
+	persist  SessionPersistence // nil when persistence is disabled
+	logger   *slog.Logger
 }
 
 // NewSessionStore creates an empty SessionStore and starts a background
-// goroutine that evicts stale sessions every hour.
-func NewSessionStore() *SessionStore {
+// goroutine that evicts stale sessions every hour. persist is optional.
+func NewSessionStore(persist SessionPersistence, logger *slog.Logger) *SessionStore {
 	s := &SessionStore{
 		sessions: make(map[string]*sessionEntry),
+		persist:  persist,
+		logger:   logger,
 	}
 	go s.evictLoop()
 	return s
 }
 
 // Get returns the stored messages for sessionID, or nil if not found.
+// On a memory miss with a persistent backend configured, it tries the backend
+// and warms the in-memory cache.
 func (s *SessionStore) Get(sessionID string) []openai.ChatCompletionMessage {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
 	if e, ok := s.sessions[sessionID]; ok {
+		defer s.mu.RUnlock()
 		// Return a copy so callers cannot mutate the stored slice.
 		out := make([]openai.ChatCompletionMessage, len(e.messages))
 		copy(out, e.messages)
 		return out
 	}
-	return nil
+	s.mu.RUnlock()
+
+	if s.persist == nil {
+		return nil
+	}
+	// Warm from persistence.
+	raw, err := s.persist.GetSession(context.Background(), sessionID)
+	if err != nil || len(raw) == 0 {
+		return nil
+	}
+	var msgs []openai.ChatCompletionMessage
+	if err := json.Unmarshal(raw, &msgs); err != nil {
+		s.logger.Warn("failed to decode persisted session",
+			slog.String("session_id", sessionID),
+			slog.String("error", err.Error()),
+		)
+		return nil
+	}
+	s.mu.Lock()
+	s.sessions[sessionID] = &sessionEntry{messages: msgs, updatedAt: time.Now()}
+	s.mu.Unlock()
+
+	out := make([]openai.ChatCompletionMessage, len(msgs))
+	copy(out, msgs)
+	return out
 }
 
 // Set replaces (or creates) the history for sessionID.
@@ -65,7 +107,6 @@ func (s *SessionStore) Set(sessionID string, messages []openai.ChatCompletionMes
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.sessions[sessionID] = &sessionEntry{
 		messages:  messages,
 		updatedAt: time.Now(),
@@ -88,13 +129,47 @@ func (s *SessionStore) Set(sessionID string, messages []openai.ChatCompletionMes
 			delete(s.sessions, oldestID)
 		}
 	}
+	s.mu.Unlock()
+
+	// Mirror to persistence (best-effort, non-blocking on the critical path).
+	if s.persist != nil {
+		raw, err := json.Marshal(messages)
+		if err != nil {
+			s.logger.Warn("failed to encode session for persistence",
+				slog.String("session_id", sessionID),
+				slog.String("error", err.Error()),
+			)
+			return
+		}
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := s.persist.SaveSession(ctx, sessionID, raw); err != nil {
+				s.logger.Warn("failed to persist session",
+					slog.String("session_id", sessionID),
+					slog.String("error", err.Error()),
+				)
+			}
+		}()
+	}
 }
 
-// Delete removes a session.
+// Delete removes a session from memory and the persistent backend.
 func (s *SessionStore) Delete(sessionID string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	delete(s.sessions, sessionID)
+	s.mu.Unlock()
+
+	if s.persist != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.persist.DeleteSession(ctx, sessionID); err != nil {
+			s.logger.Warn("failed to delete persisted session",
+				slog.String("session_id", sessionID),
+				slog.String("error", err.Error()),
+			)
+		}
+	}
 }
 
 // evictLoop runs periodically and removes sessions that have not been

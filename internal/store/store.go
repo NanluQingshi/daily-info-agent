@@ -41,6 +41,14 @@ type ArticleStore interface {
 	Ping(ctx context.Context) error
 }
 
+// SessionStore is the persistence interface for chat session history.
+// Messages are stored as JSONB so sessions survive server restarts.
+type SessionStore interface {
+	GetSession(ctx context.Context, sessionID string) ([]byte, error)
+	SaveSession(ctx context.Context, sessionID string, messagesJSON []byte) error
+	DeleteSession(ctx context.Context, sessionID string) error
+}
+
 // PostgresStore implements ArticleStore using pgx/v5.
 type PostgresStore struct {
 	pool pool
@@ -373,4 +381,31 @@ func normalizePagination(page, pageSize int) (int, int) {
 		pageSize = 20
 	}
 	return page, pageSize
+}
+
+// ── Session persistence (implements SessionStore) ────────────────────────
+
+// GetSession returns the raw JSON message array for a session, or ErrNotFound.
+func (s *PostgresStore) GetSession(ctx context.Context, sessionID string) ([]byte, error) {
+	var raw []byte
+	err := s.pool.QueryRow(ctx, sqlGetSession, sessionID).Scan(&raw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return raw, nil
+}
+
+// SaveSession upserts the raw JSON message array for a session.
+func (s *PostgresStore) SaveSession(ctx context.Context, sessionID string, messagesJSON []byte) error {
+	_, err := s.pool.Exec(ctx, sqlUpsertSession, sessionID, messagesJSON)
+	return err
+}
+
+// DeleteSession removes a session record. Missing sessions are not an error.
+func (s *PostgresStore) DeleteSession(ctx context.Context, sessionID string) error {
+	_, err := s.pool.Exec(ctx, sqlDeleteSession, sessionID)
+	return err
 }
