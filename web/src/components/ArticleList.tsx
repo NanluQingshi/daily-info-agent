@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { Check, RefreshCw, Tags } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { listArticles } from "../api/client";
+import { Input } from "@/components/ui/input";
+import { batchUpdateTags, listArticles } from "../api/client";
 import type { ArticleFilter, ArticleListResponse, ArticleRow } from "../types";
 import { ArticleCard } from "./ArticleCard";
 import { ArticleDetail } from "./ArticleDetail";
 import { FetchButton } from "./FetchButton";
 import { FilterBar } from "./FilterBar";
+import { showToast } from "./Toast";
 
 export function ArticleList() {
   const [filter, setFilter] = useState<ArticleFilter>({ page: 1, page_size: 20 });
@@ -14,6 +16,8 @@ export function ArticleList() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<ArticleRow | null>(null);
+  const [checkedIds, setCheckedIds] = useState<Set<number>>(new Set());
+  const [tagInput, setTagInput] = useState("");
 
   const load = useCallback(() => {
     setLoading(true);
@@ -49,8 +53,55 @@ export function ArticleList() {
     );
   };
 
+  // ── Batch selection & tags ────────────────────────────────────────────
+
+  const toggleChecked = (id: number) => {
+    setCheckedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const allChecked = data?.articles.length > 0 && data.articles.every((a) => checkedIds.has(a.id));
+  const toggleAll = () => {
+    const articles = data?.articles ?? [];
+    if (allChecked) setCheckedIds(new Set());
+    else setCheckedIds(new Set(articles.map((a) => a.id)));
+  };
+
+  const applyTags = async (tags: string[]) => {
+    const ids = Array.from(checkedIds);
+    if (ids.length === 0) {
+      showToast("info", "请先选择文章");
+      return;
+    }
+    try {
+      const res = await batchUpdateTags(ids, tags);
+      showToast("success", `已更新 ${res.updated} 篇文章的标签`);
+      // Update the local list optimistically.
+      setData((prev) =>
+        prev
+          ? { ...prev, articles: prev.articles.map((a) => (checkedIds.has(a.id) ? { ...a, tags } : a)) }
+          : prev
+      );
+      setCheckedIds(new Set());
+      setTagInput("");
+    } catch (e) {
+      showToast("error", (e as Error).message);
+    }
+  };
+
+  const handleTagSubmit = () => {
+    const tags = tagInput.split(",").map((t) => t.trim()).filter(Boolean);
+    if (tags.length === 0) return;
+    applyTags(tags);
+  };
+
   const totalPages = data?.total_pages ?? 1;
   const currentPage = filter.page ?? 1;
+  const showBatchBar = checkedIds.size > 0;
 
   return (
     <div className="space-y-4">
@@ -80,6 +131,42 @@ export function ArticleList() {
         </div>
       )}
 
+      {/* Batch operations bar */}
+      {showBatchBar && (
+        <div className="flex flex-wrap items-center gap-2 p-3 bg-card border rounded-xl">
+          <button
+            onClick={toggleAll}
+            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+          >
+            <Check className="w-3.5 h-3.5" />
+            {allChecked ? "取消全选" : "全选"}
+          </button>
+          <span className="text-xs text-muted-foreground">已选 {checkedIds.size} 篇</span>
+          <div className="flex-1 min-w-48 flex items-center gap-2">
+            <Tags className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+            <Input
+              value={tagInput}
+              onChange={(e) => setTagInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") handleTagSubmit(); }}
+              placeholder="标签，逗号分隔…"
+              className="h-8 flex-1"
+            />
+            <Button size="sm" className="h-8" onClick={handleTagSubmit} disabled={!tagInput.trim()}>
+              打标签
+            </Button>
+            <Button
+              size="sm" variant="outline" className="h-8"
+              onClick={() => applyTags([])} disabled={checkedIds.size === 0}
+            >
+              清除标签
+            </Button>
+          </div>
+          <Button size="sm" variant="ghost" className="h-8 text-muted-foreground" onClick={() => setCheckedIds(new Set())}>
+            取消
+          </Button>
+        </div>
+      )}
+
       {loading ? (
         <div className="text-center py-16 text-slate-400">加载中…</div>
       ) : (data?.articles?.length ?? 0) === 0 ? (
@@ -87,14 +174,26 @@ export function ArticleList() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {data?.articles?.map((a) => (
-            <ArticleCard
-              key={a.id}
-              article={a}
-              onDeleted={handleDeleted}
-              onPublished={handlePublished}
-              onRetried={handleRetried}
-              onClick={setSelected}
-            />
+            <div key={a.id} className="relative">
+              {checkedIds.has(a.id) && (
+                <button
+                  onClick={() => toggleChecked(a.id)}
+                  className="absolute -top-2 -right-2 z-10 w-6 h-6 rounded-full bg-primary text-primary-foreground flex items-center justify-center shadow"
+                  title="取消选择"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                </button>
+              )}
+              <ArticleCard
+                article={a}
+                onDeleted={handleDeleted}
+                onPublished={handlePublished}
+                onRetried={handleRetried}
+                onClick={setSelected}
+                onToggleSelect={() => toggleChecked(a.id)}
+                checked={checkedIds.has(a.id)}
+              />
+            </div>
           ))}
         </div>
       )}

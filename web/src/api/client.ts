@@ -82,6 +82,14 @@ export function retryArticle(id: number): Promise<{ retried: boolean; id: number
   return request(`/articles/${id}/retry`, { method: "POST" });
 }
 
+export function batchUpdateTags(articleIds: number[], tags: string[]): Promise<{ updated: number }> {
+  return request("/articles/tags", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ article_ids: articleIds, tags }),
+  });
+}
+
 export function triggerFetch(): Promise<FetchTriggerResponse> {
   return request("/fetch", { method: "POST" });
 }

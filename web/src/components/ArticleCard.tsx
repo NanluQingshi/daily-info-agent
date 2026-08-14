@@ -12,6 +12,8 @@ interface Props {
   onPublished: (id: number) => void;
   onRetried: (id: number) => void;
   onClick: (article: ArticleRow) => void;
+  onToggleSelect?: () => void;
+  checked?: boolean;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -28,7 +30,7 @@ const STATUS_VARIANT: Record<string, "default" | "secondary" | "outline" | "dest
   failed: "destructive",
 };
 
-export function ArticleCard({ article, onDeleted, onPublished, onRetried, onClick }: Props) {
+export function ArticleCard({ article, onDeleted, onPublished, onRetried, onClick, onToggleSelect, checked }: Props) {
   const [busy, setBusy] = useState(false);
 
   const handlePublish = async (e: React.MouseEvent) => {
@@ -83,9 +85,21 @@ export function ArticleCard({ article, onDeleted, onPublished, onRetried, onClic
         <h3 className="text-sm font-medium line-clamp-2 flex-1">
           {article.title || "(无标题)"}
         </h3>
-        <Badge variant={STATUS_VARIANT[article.status] ?? "outline"} className="shrink-0 text-xs">
-          {STATUS_LABELS[article.status] ?? article.status}
-        </Badge>
+        <div className="flex items-center gap-2 shrink-0">
+          {onToggleSelect && (
+            <input
+              type="checkbox"
+              checked={!!checked}
+              onChange={onToggleSelect}
+              onClick={(e) => e.stopPropagation()}
+              className="w-4 h-4 accent-primary cursor-pointer"
+              aria-label="选择文章"
+            />
+          )}
+          <Badge variant={STATUS_VARIANT[article.status] ?? "outline"} className="text-xs">
+            {STATUS_LABELS[article.status] ?? article.status}
+          </Badge>
+        </div>
       </div>
 
       {article.summary && (
