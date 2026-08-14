@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -47,6 +48,7 @@ type mockStore struct {
 	markPenErr  error
 	saveRunErr  error
 	saveArtErr  error
+	batchTagsErr error
 }
 
 func (m *mockStore) SaveArticles(ctx context.Context, articles []models.ProcessedArticle, runID string) (int, error) {
@@ -100,6 +102,22 @@ func (m *mockStore) GetStats(ctx context.Context, since time.Time) (models.Stats
 
 func (m *mockStore) Ping(ctx context.Context) error {
 	return nil
+}
+
+func (m *mockStore) UpdateArticlesTags(ctx context.Context, ids []int64, tags []string) (int, error) {
+	if m.batchTagsErr != nil {
+		return 0, m.batchTagsErr
+	}
+	// Update the in-memory articles map if present.
+	updated := 0
+	for _, id := range ids {
+		if a, ok := m.articles[id]; ok {
+			a.Tags = tags
+			m.articles[id] = a
+			updated++
+		}
+	}
+	return updated, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -1151,4 +1169,84 @@ func TestRegister_HandlersRespondWithoutPanic(t *testing.T) {
 		e.ServeHTTP(rec, req)
 		assert.Equal(t, tc.wantStatus, rec.Code, "%s %s should return %d (store disabled)", tc.method, tc.path, tc.wantStatus)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// BatchUpdateTags
+// ---------------------------------------------------------------------------
+
+func TestBatchUpdateTags_Success(t *testing.T) {
+	m := &mockStore{
+		articles: map[int64]models.ArticleRow{
+			1: {ID: 1, Title: "A"},
+			2: {ID: 2, Title: "B"},
+		},
+	}
+	h := newHandler(m, nil, nil)
+	e := newEcho()
+	req := httptest.NewRequest(http.MethodPatch, "/api/articles/tags",
+		strings.NewReader(`{"article_ids":[1,2],"tags":["AI","tech"]}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	err := h.BatchUpdateTags(c)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var resp models.BatchTagsResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	assert.Equal(t, 2, resp.Updated)
+	// Verify the in-memory articles were updated.
+	assert.Equal(t, []string{"AI", "tech"}, m.articles[1].Tags)
+	assert.Equal(t, []string{"AI", "tech"}, m.articles[2].Tags)
+}
+
+func TestBatchUpdateTags_EmptyIDs_Returns400(t *testing.T) {
+	h := newHandler(&mockStore{}, nil, nil)
+	e := newEcho()
+	req := httptest.NewRequest(http.MethodPatch, "/api/articles/tags",
+		strings.NewReader(`{"article_ids":[],"tags":[]}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	err := h.BatchUpdateTags(c)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestBatchUpdateTags_TooManyTags_Returns400(t *testing.T) {
+	tags := make([]string, 11)
+	for i := range tags {
+		tags[i] = "t"
+	}
+	body, _ := json.Marshal(models.BatchTagsRequest{ArticleIDs: []int64{1}, Tags: tags})
+
+	h := newHandler(&mockStore{}, nil, nil)
+	e := newEcho()
+	req := httptest.NewRequest(http.MethodPatch, "/api/articles/tags",
+		strings.NewReader(string(body)))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	err := h.BatchUpdateTags(c)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestBatchUpdateTags_DBError_Returns500(t *testing.T) {
+	m := &mockStore{batchTagsErr: errors.New("db down")}
+	h := newHandler(m, nil, nil)
+	e := newEcho()
+	req := httptest.NewRequest(http.MethodPatch, "/api/articles/tags",
+		strings.NewReader(`{"article_ids":[1],"tags":["x"]}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	err := h.BatchUpdateTags(c)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 }

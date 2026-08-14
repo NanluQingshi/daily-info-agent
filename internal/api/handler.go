@@ -132,6 +132,7 @@ func (h *Handler) Register(g *echo.Group) {
 	g.POST("/articles/:id/publish", h.rateLimited(h.PublishArticle))
 	g.POST("/articles/:id/retry", h.rateLimited(h.RetryArticle))
 	g.DELETE("/articles/:id", h.rateLimited(h.DeleteArticle))
+	g.PATCH("/articles/tags", h.rateLimited(h.BatchUpdateTags))
 	g.POST("/fetch", h.rateLimited(h.TriggerFetch))
 	g.GET("/fetch/stream", h.rateLimited(h.StreamFetch))
 	g.GET("/fetch/:run_id", h.rateLimited(h.GetFetchStatus))
@@ -324,6 +325,34 @@ func (h *Handler) DeleteArticle(c echo.Context) error {
 	}
 
 	return c.NoContent(http.StatusNoContent)
+}
+
+// BatchUpdateTags handles PATCH /api/articles/tags — overwrites the tags of
+// multiple articles in one call.
+func (h *Handler) BatchUpdateTags(c echo.Context) error {
+	if err := h.requireStore(c); err != nil {
+		return err
+	}
+
+	var req models.BatchTagsRequest
+	if err := c.Bind(&req); err != nil {
+		return errJSON(c, http.StatusBadRequest, "validation_error", "invalid request body")
+	}
+	if len(req.ArticleIDs) == 0 {
+		return errJSON(c, http.StatusBadRequest, "validation_error", "article_ids must not be empty")
+	}
+	// Enforce the same tag count limit used by the AI processor (max 10 tags).
+	if len(req.Tags) > 10 {
+		return errJSON(c, http.StatusBadRequest, "validation_error", "tags must not exceed 10 items")
+	}
+
+	updated, err := h.store.UpdateArticlesTags(c.Request().Context(), req.ArticleIDs, req.Tags)
+	if err != nil {
+		h.logger.Error("batch update tags failed", slog.String("error", err.Error()))
+		return errJSON(c, http.StatusInternalServerError, "db_error", "failed to update tags")
+	}
+
+	return c.JSON(http.StatusOK, models.BatchTagsResponse{Updated: updated})
 }
 
 // TriggerFetch handles POST /api/fetch — starts a pipeline run asynchronously.

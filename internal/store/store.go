@@ -38,6 +38,7 @@ type ArticleStore interface {
 	MarkFailed(ctx context.Context, id int64) error
 	MarkPending(ctx context.Context, id int64) error
 	GetStats(ctx context.Context, since time.Time) (models.StatsResult, error)
+	UpdateArticlesTags(ctx context.Context, ids []int64, tags []string) (int, error)
 	Ping(ctx context.Context) error
 }
 
@@ -273,6 +274,19 @@ func (s *PostgresStore) MarkFailed(ctx context.Context, id int64) error {
 func (s *PostgresStore) MarkPending(ctx context.Context, id int64) error {
 	_, err := s.pool.Exec(ctx, sqlMarkPending, id)
 	return err
+}
+
+// UpdateArticlesTags overwrites the tags of all articles in ids with the given
+// tag list. Returns the number of rows updated.
+func (s *PostgresStore) UpdateArticlesTags(ctx context.Context, ids []int64, tags []string) (int, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	ct, err := s.pool.Exec(ctx, sqlUpdateArticlesTags, ids, tags)
+	if err != nil {
+		return 0, err
+	}
+	return int(ct.RowsAffected()), nil
 }
 
 // GetStats returns aggregate stats since the given time.

@@ -309,6 +309,18 @@ type ArticleListResponse struct {
 	TotalPages int          `json:"total_pages"`
 }
 
+// BatchTagsRequest is the JSON body of PATCH /api/articles/tags.
+// It overwrites the tags of all articles in ArticleIDs.
+type BatchTagsRequest struct {
+	ArticleIDs []int64 `json:"article_ids"`
+	Tags       []string `json:"tags"`
+}
+
+// BatchTagsResponse is the JSON body returned by PATCH /api/articles/tags.
+type BatchTagsResponse struct {
+	Updated int `json:"updated"`
+}
+
 // RunLogRow maps to the run_logs table.
 type RunLogRow struct {
 	RunID          string    `json:"run_id"`
