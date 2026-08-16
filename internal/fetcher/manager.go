@@ -104,6 +104,91 @@ type Manager struct {
 	rssHubRoutes  []string // RSSHub route paths used by FetchForTopic
 	cache         *dedupCache
 	logger        *slog.Logger
+
+	healthMu      sync.Mutex
+	sourceHealth  map[string]*sourceHealth // key: source URL or route
+}
+
+// maxConsecutiveFailures is the number of consecutive fetch failures after
+// which a source is temporarily skipped.
+const maxConsecutiveFailures = 3
+
+// sourceHealth tracks consecutive failure count for a single source.
+type sourceHealth struct {
+	consecutiveFailures int
+	skipped             bool // temporarily disabled after too many failures
+}
+
+// newManagerHealth initialises the health tracking map.
+func (m *Manager) initHealth() {
+	m.healthMu.Lock()
+	defer m.healthMu.Unlock()
+	if m.sourceHealth == nil {
+		m.sourceHealth = make(map[string]*sourceHealth)
+	}
+}
+
+// recordFailure increments the consecutive failure count for a source and
+// disables it once the threshold is reached.
+func (m *Manager) recordFailure(source string) {
+	m.healthMu.Lock()
+	defer m.healthMu.Unlock()
+	h := m.sourceHealth[source]
+	if h == nil {
+		h = &sourceHealth{}
+		m.sourceHealth[source] = h
+	}
+	h.consecutiveFailures++
+	if h.consecutiveFailures >= maxConsecutiveFailures {
+		h.skipped = true
+		m.logger.Warn("source temporarily disabled after consecutive failures",
+			slog.String("source", source),
+			slog.Int("failures", h.consecutiveFailures),
+		)
+	}
+}
+
+// recordSuccess resets the failure count for a source and re-enables it.
+func (m *Manager) recordSuccess(source string) {
+	m.healthMu.Lock()
+	defer m.healthMu.Unlock()
+	if h, ok := m.sourceHealth[source]; ok {
+		h.consecutiveFailures = 0
+		h.skipped = false
+	}
+}
+
+// isSkipped reports whether a source is temporarily disabled.
+func (m *Manager) isSkipped(source string) bool {
+	m.healthMu.Lock()
+	defer m.healthMu.Unlock()
+	if h, ok := m.sourceHealth[source]; ok {
+		return h.skipped
+	}
+	return false
+}
+
+// HealthSnapshot is a point-in-time view of source health for monitoring.
+type HealthSnapshot struct {
+	Source              string
+	ConsecutiveFailures int
+	Skipped             bool
+}
+
+// Health returns the current health of every tracked source. Intended for
+// exposing via the /metrics endpoint.
+func (m *Manager) Health() []HealthSnapshot {
+	m.healthMu.Lock()
+	defer m.healthMu.Unlock()
+	out := make([]HealthSnapshot, 0, len(m.sourceHealth))
+	for src, h := range m.sourceHealth {
+		out = append(out, HealthSnapshot{
+			Source:              src,
+			ConsecutiveFailures: h.consecutiveFailures,
+			Skipped:             h.skipped,
+		})
+	}
+	return out
 }
 
 // NewManager creates a Manager wired with the provided fetchers and cache path.
@@ -112,13 +197,15 @@ type Manager struct {
 //     appended to the RSSHub base URL by the rssHubFetcher.
 //     Pass nil to disable RSSHub in FetchForTopic.
 func NewManager(fetchers []Fetcher, rssFeeds []string, rssHubRoutes []string, cacheFile string, logger *slog.Logger) *Manager {
-	return &Manager{
+	m := &Manager{
 		fetchers:     fetchers,
 		rssFeeds:     rssFeeds,
 		rssHubRoutes: rssHubRoutes,
 		cache:        loadDedupCache(cacheFile),
 		logger:       logger,
 	}
+	m.initHealth()
+	return m
 }
 
 // FetchAll fetches from all sources in parallel for the given FetchConfigs.
@@ -269,6 +356,11 @@ func (m *Manager) fetchConcurrent(ctx context.Context, cfgs []models.FetchConfig
 			)
 			continue
 		}
+		// Skip sources that have failed too many consecutive times.
+		if m.isSkipped(cfg.URL) {
+			m.logger.Warn("source skipped (health)", slog.String("url", cfg.URL))
+			continue
+		}
 		jobs = append(jobs, job{fetcher: f, cfg: cfg})
 	}
 
@@ -279,6 +371,11 @@ func (m *Manager) fetchConcurrent(ctx context.Context, cfgs []models.FetchConfig
 		go func(jj job) {
 			defer wg.Done()
 			items, err := jj.fetcher.Fetch(ctx, jj.cfg)
+			if err != nil {
+				m.recordFailure(jj.cfg.URL)
+			} else {
+				m.recordSuccess(jj.cfg.URL)
+			}
 			results <- fetchResult{items: items, err: err}
 		}(j)
 	}

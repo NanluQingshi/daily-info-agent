@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -34,7 +35,17 @@ type Scheduler struct {
 	notif  DigestSender        // may be nil when SMTP is not configured
 	cfg    *config.Config
 	logger *slog.Logger
+
+	// Consecutive-failure alerting.
+	failureMu      sync.Mutex
+	consecutiveFail int
+	onFailures     func(consecutiveFailures int) // called when threshold crossed (may be nil)
+	onFailureThreshold int
 }
+
+// OnFailureThreshold returns the default number of consecutive failed runs
+// before an alert fires. Exported for tests.
+const DefaultFailureAlertThreshold = 3
 
 // New wires all pipeline stages together.
 // pub and st may be nil; when nil those stages are skipped.
@@ -61,6 +72,18 @@ func New(
 // WithNotifier sets an optional digest sender called after each scheduled run.
 func (s *Scheduler) WithNotifier(n DigestSender) *Scheduler {
 	s.notif = n
+	return s
+}
+
+// WithFailureAlert enables an alert callback that fires when a run fails
+// (fatal error or zero items fetched) for failureThreshold consecutive times.
+// The callback receives the current consecutive-failure count.
+func (s *Scheduler) WithFailureAlert(failureThreshold int, cb func(consecutiveFailures int)) *Scheduler {
+	if failureThreshold <= 0 {
+		failureThreshold = DefaultFailureAlertThreshold
+	}
+	s.onFailureThreshold = failureThreshold
+	s.onFailures = cb
 	return s
 }
 
@@ -116,6 +139,7 @@ func (s *Scheduler) runPipeline(ctx context.Context, categories []models.Categor
 		result.DurationMs = time.Since(start).Milliseconds()
 		metrics.App.RunsCompleted.Add(1)
 		metrics.App.RunsFailed.Add(1)
+		s.trackFailure(&result)
 		return result
 	}
 	result.TotalFetched = len(items)
@@ -125,6 +149,7 @@ func (s *Scheduler) runPipeline(ctx context.Context, categories []models.Categor
 		result.DurationMs = time.Since(start).Milliseconds()
 		metrics.App.RunsCompleted.Add(1)
 		fire(models.ProgressEvent{Stage: "done", Status: "done", RunID: runID, Message: "任务完成（无新内容）"})
+		s.trackFailure(&result)
 		return result
 	}
 
@@ -153,7 +178,34 @@ func (s *Scheduler) runPipeline(ctx context.Context, categories []models.Categor
 
 	metrics.App.RunsCompleted.Add(1)
 
+	s.trackFailure(&result)
+
 	return result
+}
+
+// trackFailure updates the consecutive-failure counter and fires the alert
+// callback once the configured threshold is crossed. A run is considered a
+// failure when it aborted (FatalError set) or fetched zero items. Successful
+// runs reset the counter.
+func (s *Scheduler) trackFailure(result *models.RunResult) {
+	isFailure := result.FatalError != nil || result.TotalFetched == 0
+
+	s.failureMu.Lock()
+	defer s.failureMu.Unlock()
+
+	if !isFailure {
+		s.consecutiveFail = 0
+		return
+	}
+
+	s.consecutiveFail++
+	if s.onFailures != nil && s.onFailureThreshold > 0 && s.consecutiveFail == s.onFailureThreshold {
+		s.logger.Warn("pipeline consecutive failure threshold reached",
+			slog.Int("consecutive_failures", s.consecutiveFail),
+			slog.String("run_id", result.RunID),
+		)
+		go s.onFailures(s.consecutiveFail)
+	}
 }
 
 // fetchStage fetches items from all sources and deduplicates them.
