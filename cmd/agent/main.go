@@ -265,13 +265,20 @@ func runServerMode(
 	st store.ArticleStore,
 	logger *slog.Logger,
 ) {
-	agentRunner := agent.New(
+	// Pass the Postgres store as the session persistence backend when the
+	// database is configured, so chat history survives server restarts.
+	var sessionPersist agent.SessionPersistence
+	if pg, ok := st.(*store.PostgresStore); ok {
+		sessionPersist = pg
+	}
+	agentRunner := agent.NewWithSessionPersistence(
 		cfg.LLMBaseURL,
 		cfg.LLMAPIKey,
 		cfg.LLMModelID,
 		mgr,
 		st, // nil when DATABASE_DSN is not set; search_stored_articles is disabled
 		logger.With(slog.String("component", "agent")),
+		sessionPersist,
 	)
 	chatHandler := chat.New(
 		agentRunner,

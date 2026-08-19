@@ -61,13 +61,25 @@ func New(
 	db ArticleSearcher,
 	logger *slog.Logger,
 ) *Runner {
+	return NewWithSessionPersistence(baseURL, apiKey, modelID, mgr, db, logger, nil)
+}
+
+// NewWithSessionPersistence is like New but wires an optional session
+// persistence backend (e.g. *store.PostgresStore) so history survives restarts.
+func NewWithSessionPersistence(
+	baseURL, apiKey, modelID string,
+	mgr *fetcher.Manager,
+	db ArticleSearcher,
+	logger *slog.Logger,
+	persist SessionPersistence,
+) *Runner {
 	return &Runner{
 		baseURL:      strings.TrimRight(baseURL, "/"),
 		apiKey:       apiKey,
 		modelID:      modelID,
 		httpClient:   &http.Client{Timeout: 60 * time.Second},
 		streamClient: &http.Client{}, // no overall timeout; SSE lifetime is bounded by ctx
-		sessions:     NewSessionStore(),
+		sessions:     NewSessionStore(persist, logger),
 		executor:     newToolExecutor(mgr, db),
 		logger:       logger,
 	}

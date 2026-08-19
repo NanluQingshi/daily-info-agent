@@ -2,13 +2,14 @@ package agent
 
 import (
 	"fmt"
+	"log/slog"
 	"testing"
 
 	openai "github.com/sashabaranov/go-openai"
 )
 
 func TestSessionStore_CapEvictsWhenExceeded(t *testing.T) {
-	s := NewSessionStore()
+	s := NewSessionStore(nil, slog.Default())
 	msg := []openai.ChatCompletionMessage{
 		{Role: openai.ChatMessageRoleSystem, Content: "sys"},
 		{Role: openai.ChatMessageRoleUser, Content: "hi"},

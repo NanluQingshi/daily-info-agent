@@ -99,3 +99,15 @@ SELECT run_id, total_fetched, total_processed, total_saved,
        duration_ms, fatal_error, started_at, finished_at
 FROM run_logs
 WHERE run_id = $1`
+
+// ── Session persistence ──────────────────────────────────────────────────
+
+const sqlGetSession = `SELECT messages FROM sessions WHERE session_id = $1`
+
+const sqlUpsertSession = `
+INSERT INTO sessions (session_id, messages, updated_at)
+VALUES ($1, $2::jsonb, NOW())
+ON CONFLICT (session_id)
+DO UPDATE SET messages = EXCLUDED.messages, updated_at = NOW()`
+
+const sqlDeleteSession = `DELETE FROM sessions WHERE session_id = $1`

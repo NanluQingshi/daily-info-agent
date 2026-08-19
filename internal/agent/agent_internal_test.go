@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -93,20 +94,20 @@ func TestCategoryTopicKeyword_Empty(t *testing.T) {
 }
 
 func TestDeleteSession_NoopForUnknown(t *testing.T) {
-	r := &Runner{sessions: NewSessionStore()}
+	r := &Runner{sessions: NewSessionStore(nil, slog.Default())}
 	// Should not panic for unknown session
 	r.DeleteSession("nonexistent")
 }
 
 func TestSessionDelete_RemovesEntry(t *testing.T) {
-	s := NewSessionStore()
+	s := NewSessionStore(nil, slog.Default())
 	s.Set("test-id", nil)
 	s.Delete("test-id")
 	assert.Nil(t, s.Get("test-id"))
 }
 
 func TestSessionDelete_NoopForUnknown(t *testing.T) {
-	s := NewSessionStore()
+	s := NewSessionStore(nil, slog.Default())
 	// Should not panic
 	s.Delete("nonexistent")
 }
