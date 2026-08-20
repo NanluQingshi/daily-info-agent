@@ -34,6 +34,13 @@ const sqlMarkPending = `
 UPDATE articles SET status = 'pending', external_id = NULL, updated_at = NOW()
 WHERE id = $1`
 
+// sqlUpdateArticlesTags overwrites the tags of all articles in the given id set.
+// Uses a temporary text[] join since pgx supports array parameters directly.
+const sqlUpdateArticlesTags = `
+UPDATE articles
+SET tags = $2::text[], updated_at = NOW()
+WHERE id = ANY($1::bigint[])`
+
 // sqlListArticles uses nullable parameters so filters are optional.
 // When $5 (the keyword) is non-null, results are ranked by ts_rank against the
 // search_tsv tsvector (title + summary) using a plainto_tsquery — replacing the
