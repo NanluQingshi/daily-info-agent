@@ -342,3 +342,53 @@ func TestLoad_EmptyDefaultCategoriesEntry_ReturnsError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no valid categories")
 }
+
+// ---------------------------------------------------------------------------
+// Full-text extraction config
+// ---------------------------------------------------------------------------
+
+func TestLoad_FulltextDefaults(t *testing.T) {
+	setRequiredEnvVars(t)
+	t.Setenv("FULLTEXT_ENABLED", "")
+	t.Setenv("FULLTEXT_MAX_ITEMS", "")
+	t.Setenv("FULLTEXT_CONCURRENCY", "")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.True(t, cfg.FulltextEnabled)
+	assert.Equal(t, 20, cfg.FulltextMaxItems)
+	assert.Equal(t, 4, cfg.FulltextConcurrency)
+}
+
+func TestLoad_FulltextDisabled(t *testing.T) {
+	setRequiredEnvVars(t)
+	t.Setenv("FULLTEXT_ENABLED", "false")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.False(t, cfg.FulltextEnabled)
+}
+
+func TestLoad_FulltextCustomValues(t *testing.T) {
+	setRequiredEnvVars(t)
+	t.Setenv("FULLTEXT_ENABLED", "true")
+	t.Setenv("FULLTEXT_MAX_ITEMS", "7")
+	t.Setenv("FULLTEXT_CONCURRENCY", "2")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.True(t, cfg.FulltextEnabled)
+	assert.Equal(t, 7, cfg.FulltextMaxItems)
+	assert.Equal(t, 2, cfg.FulltextConcurrency)
+}
+
+func TestLoad_FulltextInvalidValues_FallBackToDefaults(t *testing.T) {
+	setRequiredEnvVars(t)
+	t.Setenv("FULLTEXT_MAX_ITEMS", "not-a-number")
+	t.Setenv("FULLTEXT_CONCURRENCY", "-3")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, 20, cfg.FulltextMaxItems)
+	assert.Equal(t, 4, cfg.FulltextConcurrency, "negative value falls back to the default")
+}
