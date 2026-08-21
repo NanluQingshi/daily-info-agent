@@ -21,6 +21,7 @@ interface StageState {
 
 const STAGES: { key: string; label: string }[] = [
   { key: "fetch",   label: "抓取新闻" },
+  { key: "extract", label: "正文提取" },
   { key: "process", label: "AI 处理" },
   { key: "verify",  label: "验证" },
   { key: "publish", label: "发布" },

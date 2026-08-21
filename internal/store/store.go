@@ -102,6 +102,7 @@ func (s *PostgresStore) SaveArticles(ctx context.Context, articles []models.Proc
 			a.Raw.Title,
 			a.Raw.Description,
 			a.Raw.Content,
+			a.Raw.ContentText,
 			a.Summary,
 			string(a.Category),
 			a.Raw.SourceDomain,
@@ -372,7 +373,7 @@ func scanArticle(rows pgx.Rows) (models.ArticleRow, error) {
 	var cat string
 	err := rows.Scan(
 		&a.ID, &a.RunID, &a.SourceURL, &a.Title, &a.Description, &a.Content,
-		&a.Summary, &cat, &a.SourceDomain, &a.SourceType,
+		&a.ContentText, &a.Summary, &cat, &a.SourceDomain, &a.SourceType,
 		&a.CredibilityScore, &a.Tags, &a.Language, &a.DetectedLanguage,
 		&a.AgentVersion, &a.VerificationPass, &skipReason, &a.DomainHit,
 		&a.Status, &a.ExternalID, &a.PublishedAt, &a.FetchedAt,

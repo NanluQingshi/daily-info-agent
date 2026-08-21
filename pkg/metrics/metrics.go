@@ -13,6 +13,10 @@ type Counters struct {
 	ItemsFetched atomic.Int64 // raw items fetched across all sources
 	ItemsDeduped atomic.Int64 // items removed by title-similarity dedup
 
+	// Full-text extraction stage
+	ItemsExtracted atomic.Int64 // pages whose readable full text was extracted
+	ExtractFailed  atomic.Int64 // page fetches/extractions that failed (fell back to summary)
+
 	// Process stage
 	ItemsProcessed atomic.Int64 // items sent through AI processing
 	LLMCalls       atomic.Int64 // successful LLM API calls
