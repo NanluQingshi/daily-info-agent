@@ -131,6 +131,11 @@ type Config struct {
 	LogLevel     slog.Level
 	AgentVersion string // injected at build time via -ldflags
 
+	// Summary output language: "zh", "en", or "auto" (follow each article's
+	// own language). Also serves as the default chat reply language.
+	// Invalid values fall back to "zh".
+	SummaryLang string
+
 	// Runtime
 	CacheFilePath string // default: "cache/dedup.json"
 }
@@ -289,6 +294,9 @@ func Load() (*Config, error) {
 	// Skip verification
 	cfg.SkipVerification = strings.ToLower(os.Getenv("SKIP_VERIFICATION")) == "true"
 
+	// Summary / chat reply language
+	cfg.SummaryLang = parseLangOrDefault(os.Getenv("SUMMARY_LANG"), "zh")
+
 	// Log level
 	cfg.LogLevel = parseLogLevel(os.Getenv("LOG_LEVEL"))
 
@@ -326,6 +334,18 @@ func parseIntOrDefault(raw string, fallback int) int {
 		return fallback
 	}
 	return n
+}
+
+// parseLangOrDefault normalises a language selector, returning fallback on
+// missing/invalid input. Valid values: zh, en, auto.
+func parseLangOrDefault(raw, fallback string) string {
+	normalized := strings.ToLower(strings.TrimSpace(raw))
+	switch normalized {
+	case "zh", "en", "auto":
+		return normalized
+	default:
+		return fallback
+	}
 }
 
 // joinCategoryNames returns a comma-separated list of valid category names,

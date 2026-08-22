@@ -49,6 +49,7 @@ type Runner struct {
 	sessions      *SessionStore
 	executor      *toolExecutor
 	logger        *slog.Logger
+	replyLang     string // default reply language: "zh", "en", or "auto"
 }
 
 // New creates a Runner.
@@ -74,15 +75,31 @@ func NewWithSessionPersistence(
 	persist SessionPersistence,
 ) *Runner {
 	return &Runner{
-		baseURL:      strings.TrimRight(baseURL, "/"),
-		apiKey:       apiKey,
-		modelID:      modelID,
-		httpClient:   &http.Client{Timeout: 60 * time.Second},
+		baseURL:     strings.TrimRight(baseURL, "/"),
+		apiKey:      apiKey,
+		modelID:     modelID,
+		httpClient:  &http.Client{Timeout: 60 * time.Second},
 		streamClient: &http.Client{}, // no overall timeout; SSE lifetime is bounded by ctx
-		sessions:     NewSessionStore(persist, logger),
-		executor:     newToolExecutor(mgr, db),
-		logger:       logger,
+		sessions:    NewSessionStore(persist, logger),
+		executor:    newToolExecutor(mgr, db),
+		logger:      logger,
+		replyLang:   "zh",
 	}
+}
+
+// WithReplyLang returns a copy of the Runner whose chat replies default to
+// the given language ("zh", "en", or "auto" to mirror the user's message
+// language). Unknown values fall back to "zh". Per-request overrides via
+// RunWithLang / RunStreamWithLang take precedence.
+func (r *Runner) WithReplyLang(lang string) *Runner {
+	cp := *r
+	switch lang {
+	case "en", "auto":
+		cp.replyLang = lang
+	default:
+		cp.replyLang = "zh"
+	}
+	return &cp
 }
 
 // DeleteSession removes a session from the store, freeing its memory.
@@ -96,16 +113,52 @@ func (r *Runner) DeleteSession(sessionID string) { r.sessions.Delete(sessionID) 
 //   - The loop continues until the LLM produces a stop response or
 //     maxIterations is reached.
 func (r *Runner) Run(ctx context.Context, sessionID, userMessage string) (RunResult, error) {
+	return r.run(ctx, sessionID, userMessage, "")
+}
+
+// RunWithLang is like Run but sets the reply language for this turn
+// ("zh", "en", or "auto"). An empty or unrecognised lang falls back to the
+// Runner's configured default. For an existing session the request switches
+// the session's system prompt to the new language; subsequent turns without
+// an explicit lang keep the session's current language.
+func (r *Runner) RunWithLang(ctx context.Context, sessionID, userMessage, lang string) (RunResult, error) {
+	return r.run(ctx, sessionID, userMessage, lang)
+}
+
+// normalizeReplyLang maps a per-request lang onto a valid mode. Empty means
+// "no override" and is returned as-is.
+func normalizeReplyLang(lang string) string {
+	switch lang {
+	case "zh", "en", "auto":
+		return lang
+	case "":
+		return ""
+	default:
+		return "zh"
+	}
+}
+
+func (r *Runner) run(ctx context.Context, sessionID, userMessage, lang string) (RunResult, error) {
 	// ── Session bootstrap ─────────────────────────────────────────────────────
 	if sessionID == "" {
 		sessionID = uuid.New().String()
 	}
 
+	effectiveLang := normalizeReplyLang(lang)
+	if effectiveLang == "" {
+		effectiveLang = r.replyLang
+	}
+
 	messages := r.sessions.Get(sessionID)
 	if len(messages) == 0 {
 		messages = []openai.ChatCompletionMessage{
-			{Role: openai.ChatMessageRoleSystem, Content: systemPrompt},
+			{Role: openai.ChatMessageRoleSystem, Content: systemPromptFor(effectiveLang)},
 		}
+	} else if lang != "" && messages[0].Role == openai.ChatMessageRoleSystem {
+		// Honour a per-request language switch on an existing session by
+		// rewriting the system message (sessions.Get returns a copy, and the
+		// store is replaced wholesale at the end of the turn).
+		messages[0].Content = systemPromptFor(effectiveLang)
 	}
 	messages = append(messages, openai.ChatCompletionMessage{
 		Role:    openai.ChatMessageRoleUser,

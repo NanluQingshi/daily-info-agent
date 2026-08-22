@@ -132,7 +132,7 @@ func main() {
 		aiClient,
 		cfg.LLMModelID,
 		logger.With(slog.String("component", "processor")),
-	)
+	).WithSummaryLang(cfg.SummaryLang)
 
 	// Optional local LLM fallback (e.g. Ollama) when the primary API is down.
 	if cfg.LLMFallbackBaseURL != "" && cfg.LLMFallbackModelID != "" {
@@ -279,7 +279,7 @@ func runServerMode(
 		st, // nil when DATABASE_DSN is not set; search_stored_articles is disabled
 		logger.With(slog.String("component", "agent")),
 		sessionPersist,
-	)
+	).WithReplyLang(cfg.SummaryLang)
 	chatHandler := chat.New(
 		agentRunner,
 		cfg.ChatAPIToken,
