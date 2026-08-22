@@ -43,6 +43,13 @@ func (h *Handler) HandleStream(c echo.Context) error {
 		})
 	}
 
+	if err := validateLang(req.Lang); err != nil {
+		return c.JSON(http.StatusBadRequest, models.ChatErrorResponse{
+			Error:   "validation_error",
+			Message: err.Error(),
+		})
+	}
+
 	// ── SSE setup ─────────────────────────────────────────────────────────────
 	w := c.Response()
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -71,6 +78,6 @@ func (h *Handler) HandleStream(c echo.Context) error {
 		"message_preview", truncate(req.Message, 80),
 	)
 
-	h.runner.RunStream(ctx, req.SessionID, req.Message, sendEvent)
+	h.runner.RunStreamWithLang(ctx, req.SessionID, req.Message, req.Lang, sendEvent)
 	return nil
 }

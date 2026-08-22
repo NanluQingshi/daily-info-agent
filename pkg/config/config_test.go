@@ -342,3 +342,51 @@ func TestLoad_EmptyDefaultCategoriesEntry_ReturnsError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no valid categories")
 }
+
+// ---------------------------------------------------------------------------
+// Summary language selection
+// ---------------------------------------------------------------------------
+
+func TestLoad_SummaryLang_DefaultsToZh(t *testing.T) {
+	setRequiredEnvVars(t)
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, "zh", cfg.SummaryLang)
+}
+
+func TestLoad_SummaryLang_En(t *testing.T) {
+	setRequiredEnvVars(t)
+	t.Setenv("SUMMARY_LANG", "en")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, "en", cfg.SummaryLang)
+}
+
+func TestLoad_SummaryLang_Auto(t *testing.T) {
+	setRequiredEnvVars(t)
+	t.Setenv("SUMMARY_LANG", "auto")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, "auto", cfg.SummaryLang)
+}
+
+func TestLoad_SummaryLang_InvalidFallsBackToZh(t *testing.T) {
+	setRequiredEnvVars(t)
+	t.Setenv("SUMMARY_LANG", "french")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, "zh", cfg.SummaryLang)
+}
+
+func TestLoad_SummaryLang_NormalizesCaseAndSpace(t *testing.T) {
+	setRequiredEnvVars(t)
+	t.Setenv("SUMMARY_LANG", "  EN ")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, "en", cfg.SummaryLang)
+}
