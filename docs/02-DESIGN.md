@@ -91,6 +91,7 @@ cmd/agent/main.go
 │   ├── internal/fetcher.NewsAPIFetcher
 │   ├── internal/fetcher.RSSHubFetcher
 │   └── internal/dedup.Cache
+├── internal/extract.Extractor   — original-page full-text extraction (go-readability)
 ├── internal/processor.Processor — AI enrichment
 ├── internal/verifier.Verifier   — source credibility
 ├── internal/publisher.Client    — website API publishing
@@ -113,6 +114,7 @@ sequenceDiagram
     participant Sched as scheduler
     participant Mgr as fetcher.Manager
     participant Dedup as dedup.Cache
+    participant Ext as extract.Extractor
     participant Proc as processor
     participant LLM as LLM API
     participant Ver as verifier
@@ -131,6 +133,11 @@ sequenceDiagram
     Mgr->>Dedup: Filter seen URLs
     Dedup-->>Mgr: deduplicated items
     Mgr-->>Sched: []RawItem
+    Sched->>Ext: Enrich(ctx, items)
+    par bounded parallel page fetches
+        Ext->>Ext: readability extraction (best-effort)
+    end
+    Ext-->>Sched: items with content_text
     Sched->>Proc: ProcessBatch(ctx, items)
     loop batches of 10
         Proc->>LLM: Categorize + Summarize + Score

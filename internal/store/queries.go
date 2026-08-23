@@ -2,17 +2,17 @@ package store
 
 const sqlInsertArticle = `
 INSERT INTO articles (
-    run_id, source_url, title, description, content, summary,
+    run_id, source_url, title, description, content, content_text, summary,
     category, source_domain, source_type, credibility_score,
     tags, language, detected_language, agent_version,
     verification_pass, skip_reason, domain_hit, status,
     published_at, fetched_at
 ) VALUES (
-    $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20
+    $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21
 ) ON CONFLICT (source_url) DO NOTHING`
 
 const sqlGetArticle = `
-SELECT id, run_id, source_url, title, description, content, summary,
+SELECT id, run_id, source_url, title, description, content, content_text, summary,
        category, source_domain, source_type, credibility_score,
        tags, language, detected_language, agent_version,
        verification_pass, skip_reason, domain_hit, status,
@@ -46,7 +46,7 @@ WHERE id = ANY($1::bigint[])`
 // search_tsv tsvector (title + summary) using a plainto_tsquery — replacing the
 // old ILIKE '%query%' scan. When $5 is null, ordering falls back to created_at.
 const sqlListArticles = `
-SELECT id, run_id, source_url, title, description, content, summary,
+SELECT id, run_id, source_url, title, description, content, content_text, summary,
        category, source_domain, source_type, credibility_score,
        tags, language, detected_language, agent_version,
        verification_pass, skip_reason, domain_hit, status,

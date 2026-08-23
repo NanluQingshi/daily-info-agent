@@ -82,6 +82,11 @@ type Config struct {
 	RSSFeeds      []string // parsed from semicolon-separated env var
 	RSSHubRoutes  []string // parsed from semicolon-separated env var (route paths)
 
+	// Full-text extraction (original-page readability extraction into DB)
+	FulltextEnabled     bool // default: true
+	FulltextMaxItems    int  // max pages fetched per run; default 20
+	FulltextConcurrency int  // parallel page fetches; default 4
+
 	// Search engine (optional — set to enable web search via DuckDuckGo etc.)
 	SearchEngineURL   string // default: "https://html.duckduckgo.com/html"
 	SearchEngineEnabled bool // true when SearchEngineURL is set
@@ -245,6 +250,14 @@ func Load() (*Config, error) {
 	cfg.SearchEngineURL = envOr("SEARCH_ENGINE_URL", "")
 	cfg.SearchEngineEnabled = cfg.SearchEngineURL != ""
 
+	// Full-text extraction (default enabled; per-run caps keep it bounded)
+	cfg.FulltextEnabled = parseBoolOrDefault(os.Getenv("FULLTEXT_ENABLED"), true)
+	cfg.FulltextMaxItems = parseIntOrDefault(os.Getenv("FULLTEXT_MAX_ITEMS"), 20)
+	cfg.FulltextConcurrency = parseIntOrDefault(os.Getenv("FULLTEXT_CONCURRENCY"), 4)
+	if cfg.FulltextConcurrency < 1 {
+		cfg.FulltextConcurrency = 1
+	}
+
 	// Trusted domains
 	if raw := os.Getenv("TRUSTED_DOMAINS"); raw != "" {
 		domains := strings.Split(raw, ",")
@@ -326,6 +339,20 @@ func parseIntOrDefault(raw string, fallback int) int {
 		return fallback
 	}
 	return n
+}
+
+// parseBoolOrDefault parses "true"/"1"/"yes" (case-insensitive) as true,
+// "false"/"0"/"no"/"" as the fallback for empty input, and the fallback for
+// anything unrecognised.
+func parseBoolOrDefault(raw string, fallback bool) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "true", "1", "yes":
+		return true
+	case "false", "0", "no":
+		return false
+	default:
+		return fallback
+	}
 }
 
 // joinCategoryNames returns a comma-separated list of valid category names,

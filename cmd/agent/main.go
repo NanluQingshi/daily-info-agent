@@ -38,6 +38,7 @@ import (
 	"github.com/user/daily-info-agent/internal/agent"
 	"github.com/user/daily-info-agent/internal/api"
 	"github.com/user/daily-info-agent/internal/chat"
+	"github.com/user/daily-info-agent/internal/extract"
 	"github.com/user/daily-info-agent/internal/fetcher"
 	"github.com/user/daily-info-agent/internal/notifier"
 	"github.com/user/daily-info-agent/internal/processor"
@@ -200,12 +201,29 @@ func main() {
 		logger.Info("email notifier disabled (SMTP_HOST / SMTP_USER / SMTP_PASSWORD / NOTIFY_EMAIL not set)")
 	}
 
+	// ---- Build full-text extractor (optional) ----
+	var extractor *extract.Extractor
+	if cfg.FulltextEnabled {
+		extractor = extract.New(
+			httpClient,
+			cfg.FulltextMaxItems,
+			cfg.FulltextConcurrency,
+			logger.With(slog.String("component", "extract")),
+		)
+		logger.Info("full-text extraction enabled",
+			slog.Int("max_items_per_run", cfg.FulltextMaxItems),
+			slog.Int("concurrency", cfg.FulltextConcurrency),
+		)
+	} else {
+		logger.Info("full-text extraction disabled (FULLTEXT_ENABLED=false)")
+	}
+
 	// ---- Dispatch mode ----
 	switch *modeFlag {
 	case "schedule":
-		runScheduleMode(cfg, mgr, proc, ver, pub, articleStore, notif, logger)
+		runScheduleMode(cfg, mgr, proc, ver, pub, articleStore, notif, extractor, logger)
 	case "server":
-		runServerMode(cfg, mgr, proc, ver, pub, articleStore, logger)
+		runServerMode(cfg, mgr, proc, ver, pub, articleStore, extractor, logger)
 	default:
 		fmt.Fprintf(os.Stderr, "FATAL: unknown mode %q (use 'schedule' or 'server')\n", *modeFlag)
 		os.Exit(1)
@@ -221,12 +239,13 @@ func runScheduleMode(
 	pub *publisher.Client,
 	st store.ArticleStore,
 	notif *notifier.Notifier,
+	extractor *extract.Extractor,
 	logger *slog.Logger,
 ) {
 	sched := scheduler.New(
 		mgr, proc, ver, pub, st, cfg,
 		logger.With(slog.String("component", "scheduler")),
-	)
+	).WithExtractor(extractor)
 	if notif != nil {
 		sched.WithNotifier(notif)
 	}
@@ -263,6 +282,7 @@ func runServerMode(
 	ver *verifier.Verifier,
 	pub *publisher.Client,
 	st store.ArticleStore,
+	extractor *extract.Extractor,
 	logger *slog.Logger,
 ) {
 	// Pass the Postgres store as the session persistence backend when the
@@ -330,7 +350,7 @@ func runServerMode(
 	sched := scheduler.New(
 		mgr, proc, ver, pub, st, cfg,
 		logger.With(slog.String("component", "scheduler")),
-	)
+	).WithExtractor(extractor)
 	apiHandler := api.New(st, sched, pub, cfg, logger.With(slog.String("component", "api")))
 	apiHandler.Register(e.Group("/api"))
 
@@ -543,6 +563,14 @@ func metricsHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "# HELP dia_items_deduped Items removed by title dedup\n")
 	fmt.Fprintf(w, "# TYPE dia_items_deduped counter\n")
 	fmt.Fprintf(w, "dia_items_deduped %d\n", mc.ItemsDeduped.Load())
+
+	fmt.Fprintf(w, "# HELP dia_items_extracted Pages whose full text was extracted\n")
+	fmt.Fprintf(w, "# TYPE dia_items_extracted counter\n")
+	fmt.Fprintf(w, "dia_items_extracted %d\n", mc.ItemsExtracted.Load())
+
+	fmt.Fprintf(w, "# HELP dia_extract_failed Page extractions that failed (fell back to summary)\n")
+	fmt.Fprintf(w, "# TYPE dia_extract_failed counter\n")
+	fmt.Fprintf(w, "dia_extract_failed %d\n", mc.ExtractFailed.Load())
 
 	fmt.Fprintf(w, "# HELP dia_items_processed Items through AI processing\n")
 	fmt.Fprintf(w, "# TYPE dia_items_processed counter\n")

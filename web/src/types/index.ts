@@ -5,6 +5,7 @@ export interface ArticleRow {
   title: string;
   description: string;
   content: string;
+  content_text: string;
   summary: string;
   category: string;
   source_domain: string;

@@ -579,7 +579,7 @@ func TestGetArticle_Success(t *testing.T) {
      scanFunc: func(dest ...any) error {
       vals := []any{
        int64(1), "run-1", "https://example.com/article", "Test Title",
-       "Description", "Content", "Summary", "科技/AI",
+       "Description", "Content", "Full body text", "Summary", "科技/AI",
        "example.com", "rss", 0.85, []string{"tag1"},
        "en", "en", "1.0.0", true, "", true,
        "pending", (*int64)(nil), (*time.Time)(nil), now, now, now,
@@ -600,6 +600,7 @@ func TestGetArticle_Success(t *testing.T) {
 	assert.Equal(t, int64(1), article.ID)
 	assert.Equal(t, "Test Title", article.Title)
 	assert.Equal(t, models.CategoryTechAI, article.Category)
+	assert.Equal(t, "Full body text", article.ContentText)
 	assert.True(t, article.VerificationPass)
 }
 
@@ -702,7 +703,7 @@ func TestListArticles_Success(t *testing.T) {
 				scanFunc: func(dest ...any) error {
 					vals := []any{
 						int64(1), "run-1", "https://example.com/article", "Test Title",
-						"Description", "Content", "Summary", "金融",
+						"Description", "Content", "Full body text", "Summary", "金融",
 						"example.com", "rss", 0.8, []string{"tag1"},
 						"en", "en", "1.0.0", true, "", false,
 						"pending", (*int64)(nil), (*time.Time)(nil), now, now, now,
