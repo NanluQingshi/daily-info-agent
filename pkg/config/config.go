@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/joho/godotenv"
@@ -14,15 +15,15 @@ import (
 // defaultRSSFeeds is the built-in list used when RSS_FEEDS is not set.
 // All feeds have been verified accessible from mainland China (2026-06).
 var defaultRSSFeeds = []string{
-	"https://36kr.com/feed",                         // 36氪 — 科技/创投
-	"https://sspai.com/feed",                        // 少数派 — 科技/效率
-	"https://www.ifanr.com/feed",                    // 爱范儿 — 科技消费
-	"https://feeds.feedburner.com/cnbeta",           // cnBeta — 科技资讯
-	"https://rss.huxiu.com/",                        // 虎嗅 — 科技深度
-	"https://www.guancha.cn/rss.xml",               // 观察者网 — 国际/政治
-	"https://www.pingwest.com/feed",                 // PingWest — 科技（双语）
-	"http://www.people.com.cn/rss/politics.xml",    // 人民日报 — 政治
-	"http://www.people.com.cn/rss/finance.xml",     // 人民日报 — 财经
+	"https://36kr.com/feed",                     // 36氪 — 科技/创投
+	"https://sspai.com/feed",                    // 少数派 — 科技/效率
+	"https://www.ifanr.com/feed",                // 爱范儿 — 科技消费
+	"https://feeds.feedburner.com/cnbeta",       // cnBeta — 科技资讯
+	"https://rss.huxiu.com/",                    // 虎嗅 — 科技深度
+	"https://www.guancha.cn/rss.xml",            // 观察者网 — 国际/政治
+	"https://www.pingwest.com/feed",             // PingWest — 科技（双语）
+	"http://www.people.com.cn/rss/politics.xml", // 人民日报 — 政治
+	"http://www.people.com.cn/rss/finance.xml",  // 人民日报 — 财经
 }
 
 // defaultRSSHubRoutes is the built-in list of RSSHub route paths used when
@@ -30,13 +31,13 @@ var defaultRSSFeeds = []string{
 // Set RSSHUB_BASE_URL to your own RSSHub instance; the public rsshub.app is
 // blocked in mainland China.
 var defaultRSSHubRoutes = []string{
-	"/wallstreetcn/news/global",    // 华尔街见闻 — 全球财经
-	"/cls/telegraph",               // 财联社电报 — 实时财经
-	"/jin10/flash_news",            // 金十数据 — 财经快讯
-	"/36kr/news/technology",        // 36氪科技
-	"/huxiu/article",               // 虎嗅文章
-	"/zaobao/realtime/china",       // 联合早报 — 中国新闻
-	"/xinhua/world",                // 新华社国际
+	"/wallstreetcn/news/global", // 华尔街见闻 — 全球财经
+	"/cls/telegraph",            // 财联社电报 — 实时财经
+	"/jin10/flash_news",         // 金十数据 — 财经快讯
+	"/36kr/news/technology",     // 36氪科技
+	"/huxiu/article",            // 虎嗅文章
+	"/zaobao/realtime/china",    // 联合早报 — 中国新闻
+	"/xinhua/world",             // 新华社国际
 }
 
 // defaultTrustedDomains is the built-in whitelist used when TRUSTED_DOMAINS is not set.
@@ -46,7 +47,7 @@ var defaultTrustedDomains = []string{
 	"xinhua.net",
 	"people.com.cn",
 	"gov.cn",
-	"guancha.cn",   // 观察者网
+	"guancha.cn", // 观察者网
 	// 中文科技 / 财经媒体
 	"36kr.com",
 	"huxiu.com",
@@ -73,8 +74,8 @@ type Config struct {
 
 	// Optional fallback LLM (e.g. local Ollama) used when the primary API
 	// is unavailable. Leave blank to disable fallback.
-	LLMFallbackBaseURL  string
-	LLMFallbackModelID  string
+	LLMFallbackBaseURL string
+	LLMFallbackModelID string
 
 	// Data sources
 	NewsAPIKey    string
@@ -83,8 +84,8 @@ type Config struct {
 	RSSHubRoutes  []string // parsed from semicolon-separated env var (route paths)
 
 	// Search engine (optional — set to enable web search via DuckDuckGo etc.)
-	SearchEngineURL   string // default: "https://html.duckduckgo.com/html"
-	SearchEngineEnabled bool // true when SearchEngineURL is set
+	SearchEngineURL     string // default: "https://html.duckduckgo.com/html"
+	SearchEngineEnabled bool   // true when SearchEngineURL is set
 
 	// Verification
 	TrustedDomains    []string // parsed from comma-separated env var
@@ -101,12 +102,24 @@ type Config struct {
 
 	// Email notifications (optional — leave blank to disable)
 	SMTPHost        string
-	SMTPPort        int    // default: 587
+	SMTPPort        int // default: 587
 	SMTPUser        string
 	SMTPPassword    string
 	SMTPFrom        string // defaults to SMTPUser when empty
 	NotifyEmail     string
 	DisableNotifier bool // true when any required SMTP field is missing
+
+	// IM webhook notifications (optional — each channel enables independently;
+	// email + webhooks can be combined, all share the digest/alert content)
+	TelegramBotToken string // NOTIFY_TELEGRAM_BOT_TOKEN + NOTIFY_TELEGRAM_CHAT_ID enable Telegram
+	TelegramChatID   string
+	WeComWebhookURL  string // NOTIFY_WECOM_WEBHOOK_URL enables WeCom robot
+	DingTalkToken    string // NOTIFY_DINGTALK_ACCESS_TOKEN enables DingTalk robot
+	DingTalkSecret   string // NOTIFY_DINGTALK_SECRET (optional, signed robots)
+
+	// FailureAlertThreshold is the consecutive-failure count that triggers an
+	// alert through every enabled channel (0 → scheduler default of 3).
+	FailureAlertThreshold int
 
 	// HTTP server
 	BindAddr string // default: "127.0.0.1:8080"
@@ -204,6 +217,18 @@ func Load() (*Config, error) {
 	cfg.SMTPFrom = os.Getenv("SMTP_FROM")
 	cfg.NotifyEmail = os.Getenv("NOTIFY_EMAIL")
 	cfg.DisableNotifier = cfg.SMTPHost == "" || cfg.SMTPUser == "" || cfg.SMTPPassword == "" || cfg.NotifyEmail == ""
+
+	// IM webhook channels — each enables independently of email.
+	cfg.TelegramBotToken = os.Getenv("NOTIFY_TELEGRAM_BOT_TOKEN")
+	cfg.TelegramChatID = os.Getenv("NOTIFY_TELEGRAM_CHAT_ID")
+	cfg.WeComWebhookURL = os.Getenv("NOTIFY_WECOM_WEBHOOK_URL")
+	cfg.DingTalkToken = os.Getenv("NOTIFY_DINGTALK_ACCESS_TOKEN")
+	cfg.DingTalkSecret = os.Getenv("NOTIFY_DINGTALK_SECRET")
+	if raw := os.Getenv("FAILURE_ALERT_THRESHOLD"); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+			cfg.FailureAlertThreshold = v
+		}
+	}
 
 	// Optional with defaults
 	cfg.LLMBaseURL = envOr("LLM_BASE_URL", "https://api.deepseek.com/v1")
