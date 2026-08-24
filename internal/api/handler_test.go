@@ -49,6 +49,10 @@ type mockStore struct {
 	saveRunErr  error
 	saveArtErr  error
 	batchTagsErr error
+
+	// listFn overrides ListArticles when set (filter-aware behaviour for
+	// tests like export pagination).
+	listFn func(f models.ArticleFilter) ([]models.ArticleRow, int, error)
 }
 
 func (m *mockStore) SaveArticles(ctx context.Context, articles []models.ProcessedArticle, runID string) (int, error) {
@@ -73,6 +77,9 @@ func (m *mockStore) GetRunLog(ctx context.Context, runID string) (models.RunLogR
 }
 
 func (m *mockStore) ListArticles(ctx context.Context, f models.ArticleFilter) ([]models.ArticleRow, int, error) {
+	if m.listFn != nil {
+		return m.listFn(f)
+	}
 	return m.listResp.articles, m.listResp.total, m.listResp.err
 }
 
