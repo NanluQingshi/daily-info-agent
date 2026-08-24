@@ -544,6 +544,26 @@ Key design decisions:
 - Rolling 7-day window: entries expire by age
 - Thread-safe: mutex-protected for parallel fetch access
 
+### 4.3.1 `internal/filter` — Keyword Subscription Filter
+
+**Responsibility**: Prune fetched items by user keywords after fetch/dedup and before AI processing, so noise never reaches the LLM.
+
+```go
+package filter
+
+func New(whitelist, blacklist []string) *KeywordFilter
+func (f *KeywordFilter) Enabled() bool
+func (f *KeywordFilter) Apply(items []models.RawItem) (kept []models.RawItem, removed int)
+func SplitKeywords(raw string) []string // KEYWORD_WHITELIST / KEYWORD_BLACKLIST parsing
+```
+
+Key design decisions:
+- Whitelist keeps only matching items; blacklist drops matches; both set → whitelist first, blacklist prunes survivors
+- Case-insensitive substring match on title+description; CJK needs no segmentation ("芯片" matches "国产芯片量产")
+- `SplitKeywords` accepts ASCII `,` plus Chinese `，`/`、` separators
+- Zero-config = zero behaviour change (pass-through, no metric writes)
+- Wired in the scheduler fetch stage; removals counted in `dia_items_keyword_filtered`; a match-nothing run counts as a zero-fetch run (existing failure-tracking semantics)
+
 ### 4.4 `internal/processor` — AI Processing
 
 **Responsibility**: Send batches of `RawItem` to an OpenAI-compatible LLM API; return `ProcessedArticle` slices with category, Chinese summary, credibility score, and tags.

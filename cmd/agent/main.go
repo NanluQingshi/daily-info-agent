@@ -544,6 +544,10 @@ func metricsHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "# TYPE dia_items_deduped counter\n")
 	fmt.Fprintf(w, "dia_items_deduped %d\n", mc.ItemsDeduped.Load())
 
+	fmt.Fprintf(w, "# HELP dia_items_keyword_filtered Items removed by keyword filter\n")
+	fmt.Fprintf(w, "# TYPE dia_items_keyword_filtered counter\n")
+	fmt.Fprintf(w, "dia_items_keyword_filtered %d\n", mc.ItemsKeywordFiltered.Load())
+
 	fmt.Fprintf(w, "# HELP dia_items_processed Items through AI processing\n")
 	fmt.Fprintf(w, "# TYPE dia_items_processed counter\n")
 	fmt.Fprintf(w, "dia_items_processed %d\n", mc.ItemsProcessed.Load())

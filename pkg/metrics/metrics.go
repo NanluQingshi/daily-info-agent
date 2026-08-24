@@ -10,8 +10,9 @@ import "sync/atomic"
 // text metrics. Zero values are valid — every counter is an atomic.
 type Counters struct {
 	// Fetch stage
-	ItemsFetched atomic.Int64 // raw items fetched across all sources
-	ItemsDeduped atomic.Int64 // items removed by title-similarity dedup
+	ItemsFetched         atomic.Int64 // raw items fetched across all sources
+	ItemsDeduped         atomic.Int64 // items removed by title-similarity dedup
+	ItemsKeywordFiltered atomic.Int64 // items removed by keyword whitelist/blacklist
 
 	// Process stage
 	ItemsProcessed atomic.Int64 // items sent through AI processing
@@ -19,7 +20,7 @@ type Counters struct {
 	LLMErrors      atomic.Int64 // failed LLM API calls (non-2xx / network)
 
 	// Verify stage
-	ItemsPassed atomic.Int64 // articles passing verification
+	ItemsPassed  atomic.Int64 // articles passing verification
 	ItemsSkipped atomic.Int64 // articles skipped (low score / LLM unavailable)
 
 	// Publish stage

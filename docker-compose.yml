@@ -54,6 +54,9 @@ services:
       TRUSTED_DOMAINS:      ${TRUSTED_DOMAINS:-}
       SKIP_VERIFICATION:    ${SKIP_VERIFICATION:-false}
       DEFAULT_CATEGORIES:   ${DEFAULT_CATEGORIES:-}
+      # Keyword subscription filter (optional)
+      KEYWORD_WHITELIST:    ${KEYWORD_WHITELIST:-}
+      KEYWORD_BLACKLIST:    ${KEYWORD_BLACKLIST:-}
       # Publishing (optional)
       WEBSITE_API_BASE_URL: ${WEBSITE_API_BASE_URL:-}
       WEBSITE_API_TOKEN:    ${WEBSITE_API_TOKEN:-}

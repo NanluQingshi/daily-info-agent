@@ -14,15 +14,15 @@ import (
 // defaultRSSFeeds is the built-in list used when RSS_FEEDS is not set.
 // All feeds have been verified accessible from mainland China (2026-06).
 var defaultRSSFeeds = []string{
-	"https://36kr.com/feed",                         // 36氪 — 科技/创投
-	"https://sspai.com/feed",                        // 少数派 — 科技/效率
-	"https://www.ifanr.com/feed",                    // 爱范儿 — 科技消费
-	"https://feeds.feedburner.com/cnbeta",           // cnBeta — 科技资讯
-	"https://rss.huxiu.com/",                        // 虎嗅 — 科技深度
-	"https://www.guancha.cn/rss.xml",               // 观察者网 — 国际/政治
-	"https://www.pingwest.com/feed",                 // PingWest — 科技（双语）
-	"http://www.people.com.cn/rss/politics.xml",    // 人民日报 — 政治
-	"http://www.people.com.cn/rss/finance.xml",     // 人民日报 — 财经
+	"https://36kr.com/feed",                     // 36氪 — 科技/创投
+	"https://sspai.com/feed",                    // 少数派 — 科技/效率
+	"https://www.ifanr.com/feed",                // 爱范儿 — 科技消费
+	"https://feeds.feedburner.com/cnbeta",       // cnBeta — 科技资讯
+	"https://rss.huxiu.com/",                    // 虎嗅 — 科技深度
+	"https://www.guancha.cn/rss.xml",            // 观察者网 — 国际/政治
+	"https://www.pingwest.com/feed",             // PingWest — 科技（双语）
+	"http://www.people.com.cn/rss/politics.xml", // 人民日报 — 政治
+	"http://www.people.com.cn/rss/finance.xml",  // 人民日报 — 财经
 }
 
 // defaultRSSHubRoutes is the built-in list of RSSHub route paths used when
@@ -30,13 +30,13 @@ var defaultRSSFeeds = []string{
 // Set RSSHUB_BASE_URL to your own RSSHub instance; the public rsshub.app is
 // blocked in mainland China.
 var defaultRSSHubRoutes = []string{
-	"/wallstreetcn/news/global",    // 华尔街见闻 — 全球财经
-	"/cls/telegraph",               // 财联社电报 — 实时财经
-	"/jin10/flash_news",            // 金十数据 — 财经快讯
-	"/36kr/news/technology",        // 36氪科技
-	"/huxiu/article",               // 虎嗅文章
-	"/zaobao/realtime/china",       // 联合早报 — 中国新闻
-	"/xinhua/world",                // 新华社国际
+	"/wallstreetcn/news/global", // 华尔街见闻 — 全球财经
+	"/cls/telegraph",            // 财联社电报 — 实时财经
+	"/jin10/flash_news",         // 金十数据 — 财经快讯
+	"/36kr/news/technology",     // 36氪科技
+	"/huxiu/article",            // 虎嗅文章
+	"/zaobao/realtime/china",    // 联合早报 — 中国新闻
+	"/xinhua/world",             // 新华社国际
 }
 
 // defaultTrustedDomains is the built-in whitelist used when TRUSTED_DOMAINS is not set.
@@ -46,7 +46,7 @@ var defaultTrustedDomains = []string{
 	"xinhua.net",
 	"people.com.cn",
 	"gov.cn",
-	"guancha.cn",   // 观察者网
+	"guancha.cn", // 观察者网
 	// 中文科技 / 财经媒体
 	"36kr.com",
 	"huxiu.com",
@@ -73,8 +73,8 @@ type Config struct {
 
 	// Optional fallback LLM (e.g. local Ollama) used when the primary API
 	// is unavailable. Leave blank to disable fallback.
-	LLMFallbackBaseURL  string
-	LLMFallbackModelID  string
+	LLMFallbackBaseURL string
+	LLMFallbackModelID string
 
 	// Data sources
 	NewsAPIKey    string
@@ -83,13 +83,19 @@ type Config struct {
 	RSSHubRoutes  []string // parsed from semicolon-separated env var (route paths)
 
 	// Search engine (optional — set to enable web search via DuckDuckGo etc.)
-	SearchEngineURL   string // default: "https://html.duckduckgo.com/html"
-	SearchEngineEnabled bool // true when SearchEngineURL is set
+	SearchEngineURL     string // default: "https://html.duckduckgo.com/html"
+	SearchEngineEnabled bool   // true when SearchEngineURL is set
 
 	// Verification
 	TrustedDomains    []string // parsed from comma-separated env var
 	SkipVerification  bool
 	DefaultCategories []models.Category
+
+	// Keyword subscription filter (optional — applied after fetch/dedup,
+	// before AI processing; empty = no filtering, behaviour unchanged).
+	// Raw comma-separated values; internal/filter owns the parsing rules.
+	KeywordWhitelistRaw string // KEYWORD_WHITELIST: keep only matching items
+	KeywordBlacklistRaw string // KEYWORD_BLACKLIST: drop matching items
 
 	// Publishing (optional — leave blank to disable Java API publishing)
 	WebsiteAPIBaseURL    string
@@ -101,7 +107,7 @@ type Config struct {
 
 	// Email notifications (optional — leave blank to disable)
 	SMTPHost        string
-	SMTPPort        int    // default: 587
+	SMTPPort        int // default: 587
 	SMTPUser        string
 	SMTPPassword    string
 	SMTPFrom        string // defaults to SMTPUser when empty
@@ -257,6 +263,11 @@ func Load() (*Config, error) {
 	} else {
 		cfg.TrustedDomains = defaultTrustedDomains
 	}
+
+	// Keyword subscription filter — parsing (ASCII/，/、 commas) lives in
+	// internal/filter to keep pkg/ free of internal dependencies.
+	cfg.KeywordWhitelistRaw = os.Getenv("KEYWORD_WHITELIST")
+	cfg.KeywordBlacklistRaw = os.Getenv("KEYWORD_BLACKLIST")
 
 	// Default categories
 	if raw := os.Getenv("DEFAULT_CATEGORIES"); raw != "" {
