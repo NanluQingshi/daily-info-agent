@@ -92,6 +92,14 @@ FROM articles
 GROUP BY category
 ORDER BY count DESC`
 
+const sqlSourceActivity = `
+SELECT source_domain, COUNT(*) AS articles, MAX(fetched_at) AS last_fetched_at
+FROM articles
+WHERE fetched_at >= $1 AND source_domain <> ''
+GROUP BY source_domain
+ORDER BY articles DESC
+`
+
 const sqlRecentRuns = `
 SELECT run_id, total_fetched, total_processed, total_saved,
        total_published, total_skipped, total_failed,

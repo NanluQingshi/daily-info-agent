@@ -49,6 +49,9 @@ type mockStore struct {
 	saveRunErr  error
 	saveArtErr  error
 	batchTagsErr error
+
+	activity    []models.SourceActivity
+	activityErr error
 }
 
 func (m *mockStore) SaveArticles(ctx context.Context, articles []models.ProcessedArticle, runID string) (int, error) {
@@ -98,6 +101,13 @@ func (m *mockStore) MarkPending(ctx context.Context, id int64) error {
 
 func (m *mockStore) GetStats(ctx context.Context, since time.Time) (models.StatsResult, error) {
 	return m.statsResp.stats, m.statsResp.err
+}
+
+func (m *mockStore) SourceActivity(ctx context.Context, since time.Time) ([]models.SourceActivity, error) {
+	if m.activityErr != nil {
+		return nil, m.activityErr
+	}
+	return m.activity, nil
 }
 
 func (m *mockStore) Ping(ctx context.Context) error {

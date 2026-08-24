@@ -171,6 +171,7 @@ Notify (email digest)
 | FR-MGT-005 | The service MUST expose `POST /api/fetch` to trigger a full scheduled fetch run via the API. | Returns a `run_id`; articles appear in the database after completion. |
 | FR-MGT-006 | The service MUST expose `POST /api/fetch/:category` to trigger a fetch for a specific category. | Only articles matching the given category are fetched and processed. |
 | FR-MGT-007 | The service MUST expose `GET /api/stats` returning daily run statistics. | Returns fetch count, publish count, skip count, and source distribution. |
+| FR-MGT-010 | The service MUST expose `GET /api/sources/health` returning per-source fetch health for the dashboard. | Merges live manager state (consecutive failures, auto-disable, success rate) with per-domain DB article activity of the last 7 days; empty state is a valid response. |
 | FR-MGT-008 | The service MUST expose SSE `GET /api/fetch/stream` for real-time fetch progress. | Client receives progress events as fetching and processing proceed. |
 
 ### FR-Fetching: Data Source Adapters

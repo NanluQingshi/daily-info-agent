@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { getStats } from "../api/client";
 import type { StatsResult } from "../types";
+import { SourceHealthPanel } from "./SourceHealthPanel";
 
 // ── Color palette for categories ─────────────────────────────────────────
 
@@ -238,6 +239,9 @@ export function StatsPanel() {
           )}
         </CardContent>
       </Card>
+
+      {/* Source health */}
+      <SourceHealthPanel />
 
       {/* Recent Runs */}
       <Card>

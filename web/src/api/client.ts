@@ -4,6 +4,7 @@ import type {
   ArticleRow,
   ChatResponse,
   FetchTriggerResponse,
+  SourceHealthResponse,
   StatsResult,
   StreamEvent,
 } from "../types";
@@ -92,6 +93,11 @@ export function batchUpdateTags(articleIds: number[], tags: string[]): Promise<{
 
 export function triggerFetch(): Promise<FetchTriggerResponse> {
   return request("/fetch", { method: "POST" });
+}
+
+/** Per-source fetch health for the source health panel. */
+export function getSourceHealth(): Promise<SourceHealthResponse> {
+  return request<SourceHealthResponse>("/sources/health");
 }
 
 export function getStats(since?: string): Promise<StatsResult> {

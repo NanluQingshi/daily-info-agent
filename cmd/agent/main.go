@@ -343,7 +343,7 @@ func runServerMode(
 	e.POST("/api/chat/stream", chatHandler.HandleStream)
 	e.DELETE("/api/sessions/:id", chatHandler.HandleDeleteSession)
 	e.GET("/health", healthHandler(version, st, startTime, cfg.CacheFilePath, cfg.LLMAPIKey != ""))
-	e.GET("/metrics", echo.WrapHandler(http.HandlerFunc(metricsHandler)))
+	e.GET("/metrics", echo.WrapHandler(metricsHandlerWithSources(mgr)))
 
 	// Article management API (database-dependent endpoints return clear
 	// errors when DATABASE_DSN is not configured).
@@ -529,6 +529,18 @@ func maskDSN(dsn string) string {
 // metricsHandler exposes Go runtime metrics and application counters in
 // a simple text/plain format. Compatible with Prometheus text format parsers.
 func metricsHandler(w http.ResponseWriter, r *http.Request) {
+	writeMetrics(w, r, nil)
+}
+
+// metricsHandlerWithSources additionally exposes per-source fetch health
+// gauges from the fetcher manager (nil manager skips that section).
+func metricsHandlerWithSources(mgr *fetcher.Manager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		writeMetrics(w, r, mgr)
+	}
+}
+
+func writeMetrics(w http.ResponseWriter, r *http.Request, mgr *fetcher.Manager) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 
 	var m runtime.MemStats
@@ -611,4 +623,25 @@ func metricsHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "# HELP dia_runs_failed Pipeline runs aborted\n")
 	fmt.Fprintf(w, "# TYPE dia_runs_failed counter\n")
 	fmt.Fprintf(w, "dia_runs_failed %d\n", mc.RunsFailed.Load())
+
+	// ── Per-source fetch health (manager in-memory state) ───────────────
+	if mgr != nil {
+		snaps := mgr.Health()
+		if len(snaps) > 0 {
+			fmt.Fprintf(w, "# HELP dia_source_consecutive_failures Consecutive fetch failures per source\n")
+			fmt.Fprintf(w, "# TYPE dia_source_consecutive_failures gauge\n")
+			for _, s := range snaps {
+				fmt.Fprintf(w, "dia_source_consecutive_failures{source=%q} %d\n", s.Source, s.ConsecutiveFailures)
+			}
+			fmt.Fprintf(w, "# HELP dia_source_disabled 1 when the source is auto-disabled after repeated failures\n")
+			fmt.Fprintf(w, "# TYPE dia_source_disabled gauge\n")
+			for _, s := range snaps {
+				v := 0
+				if s.Skipped {
+					v = 1
+				}
+				fmt.Fprintf(w, "dia_source_disabled{source=%q} %d\n", s.Source, v)
+			}
+		}
+	}
 }

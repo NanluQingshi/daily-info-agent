@@ -33,6 +33,10 @@ type Handler struct {
 
 	limiter *ratelimit.Limiter // nil when API rate limiting is disabled
 
+	// sourceHealth supplies live per-source fetch health; defaults to the
+	// scheduler when wired, overridable for tests.
+	sourceHealth SourceHealthProvider
+
 	pipelineMu      sync.Mutex
 	pipelineRunning bool
 	activeRunID     string
@@ -93,6 +97,9 @@ func New(
 		logger:    logger,
 		runs:      make(map[string]models.RunResult),
 	}
+	if sched != nil {
+		h.sourceHealth = sched
+	}
 	// Optional per-IP rate limit for the management API.
 	if cfg.APIRateLimitPerMin > 0 {
 		h.limiter = ratelimit.New(cfg.APIRateLimitPerMin, time.Minute/time.Duration(cfg.APIRateLimitPerMin))
@@ -137,6 +144,7 @@ func (h *Handler) Register(g *echo.Group) {
 	g.GET("/fetch/stream", h.rateLimited(h.StreamFetch))
 	g.GET("/fetch/:run_id", h.rateLimited(h.GetFetchStatus))
 	g.GET("/stats", h.rateLimited(h.GetStats))
+	g.GET("/sources/health", h.rateLimited(h.GetSourceHealth))
 }
 
 // ListArticles handles GET /api/articles
