@@ -37,6 +37,7 @@ export interface ArticleListResponse {
 export interface RunLogRow {
   run_id: string;
   total_fetched: number;
+  total_extracted: number;
   total_processed: number;
   total_saved: number;
   total_published: number;
@@ -46,6 +47,10 @@ export interface RunLogRow {
   fatal_error: string;
   started_at: string;
   finished_at: string;
+}
+
+export interface RunListResponse {
+  runs: RunLogRow[];
 }
 
 export interface DayStat {

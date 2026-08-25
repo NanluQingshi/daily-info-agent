@@ -734,7 +734,14 @@ func (h *Handler) Register(g *echo.Group)
 //   GET    /api/fetch/status/:runID
 //   GET    /api/fetch/stream
 //   GET    /api/stats
+//   GET    /api/runs
 ```
+
+Run history details (`GET /api/runs?limit=N`, default 20, max 100):
+- Data source: the existing `run_logs` table, written by `logRunSummary` after every scheduled and manually triggered run
+- Migration 006 adds `total_extracted` so the full-text extraction stage is visible per run alongside fetch/process/save/publish/skip/fail
+- `RunResult.TotalExtracted` is collected from `extractStage` (0 when no extractor is wired) and flows into the persisted row
+- Empty database returns `{"runs": []}` — the frontend panel treats that as a first-run state, not an error
 
 ### 4.11 `internal/agent` — LLM Agent Orchestration
 

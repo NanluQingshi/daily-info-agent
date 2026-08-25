@@ -4,6 +4,7 @@ import type {
   ArticleRow,
   ChatResponse,
   FetchTriggerResponse,
+  RunListResponse,
   StatsResult,
   StreamEvent,
 } from "../types";
@@ -92,6 +93,11 @@ export function batchUpdateTags(articleIds: number[], tags: string[]): Promise<{
 
 export function triggerFetch(): Promise<FetchTriggerResponse> {
   return request("/fetch", { method: "POST" });
+}
+
+/** Recent pipeline runs for the run history panel. */
+export function getRuns(limit = 30): Promise<RunListResponse> {
+  return request<RunListResponse>(`/runs?limit=${limit}`);
 }
 
 export function getStats(since?: string): Promise<StatsResult> {
