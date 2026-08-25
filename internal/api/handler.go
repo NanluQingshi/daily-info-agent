@@ -136,6 +136,7 @@ func (h *Handler) Register(g *echo.Group) {
 	g.POST("/fetch", h.rateLimited(h.TriggerFetch))
 	g.GET("/fetch/stream", h.rateLimited(h.StreamFetch))
 	g.GET("/fetch/:run_id", h.rateLimited(h.GetFetchStatus))
+	g.PATCH("/articles/:id/flags", h.rateLimited(h.UpdateArticleFlags))
 	g.GET("/stats", h.rateLimited(h.GetStats))
 }
 
@@ -184,6 +185,21 @@ func (h *Handler) ListArticles(c echo.Context) error {
 		f.PageSize = n
 	}
 	f.Query = c.QueryParam("q")
+
+	if v := c.QueryParam("bookmarked"); v != "" {
+		b, err := parseBoolFilter(v)
+		if err != nil {
+			return errJSON(c, http.StatusBadRequest, "invalid_param", "bookmarked must be true or false")
+		}
+		f.Bookmarked = b
+	}
+	if v := c.QueryParam("unread"); v != "" {
+		b, err := parseBoolFilter(v)
+		if err != nil {
+			return errJSON(c, http.StatusBadRequest, "invalid_param", "unread must be true or false")
+		}
+		f.Unread = b
+	}
 
 	articles, total, err := h.store.ListArticles(c.Request().Context(), f)
 	if err != nil {

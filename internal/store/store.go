@@ -33,6 +33,7 @@ type ArticleStore interface {
 	GetRunLog(ctx context.Context, runID string) (models.RunLogRow, error)
 	ListArticles(ctx context.Context, f models.ArticleFilter) ([]models.ArticleRow, int, error)
 	GetArticle(ctx context.Context, id int64) (models.ArticleRow, error)
+	SetArticleFlags(ctx context.Context, id int64, bookmarked, read *bool) (models.ArticleRow, error)
 	DeleteArticle(ctx context.Context, id int64) error
 	MarkPublished(ctx context.Context, id int64, externalID int64) error
 	MarkFailed(ctx context.Context, id int64) error
@@ -210,6 +211,8 @@ func (s *PostgresStore) ListArticles(ctx context.Context, f models.ArticleFilter
 		queryParam,
 		pageSize,
 		offset,
+		f.Bookmarked,
+		f.Unread,
 	)
 	if err != nil {
 		return nil, 0, err
@@ -229,7 +232,7 @@ func (s *PostgresStore) ListArticles(ctx context.Context, f models.ArticleFilter
 	}
 
 	var total int
-	err = s.pool.QueryRow(ctx, sqlCountArticles, catParam, f.Status, f.DateFrom, f.DateTo, queryParam).Scan(&total)
+	err = s.pool.QueryRow(ctx, sqlCountArticles, catParam, f.Status, f.DateFrom, f.DateTo, queryParam, f.Bookmarked, f.Unread).Scan(&total)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -240,6 +243,25 @@ func (s *PostgresStore) ListArticles(ctx context.Context, f models.ArticleFilter
 // GetArticle returns a single article by primary key.
 func (s *PostgresStore) GetArticle(ctx context.Context, id int64) (models.ArticleRow, error) {
 	rows, err := s.pool.Query(ctx, sqlGetArticle, id)
+	if err != nil {
+		return models.ArticleRow{}, err
+	}
+	defer rows.Close()
+
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return models.ArticleRow{}, err
+		}
+		return models.ArticleRow{}, ErrNotFound
+	}
+	return scanArticle(rows)
+}
+
+// SetArticleFlags updates bookmark/read flags on one article. Nil pointers
+// leave the corresponding flag untouched; ReadAt is set to NOW() when Read
+// is true and cleared when false. Returns the updated row.
+func (s *PostgresStore) SetArticleFlags(ctx context.Context, id int64, bookmarked, read *bool) (models.ArticleRow, error) {
+	rows, err := s.pool.Query(ctx, sqlSetArticleFlags, id, bookmarked, read)
 	if err != nil {
 		return models.ArticleRow{}, err
 	}
@@ -377,7 +399,7 @@ func scanArticle(rows pgx.Rows) (models.ArticleRow, error) {
 		&a.CredibilityScore, &a.Tags, &a.Language, &a.DetectedLanguage,
 		&a.AgentVersion, &a.VerificationPass, &skipReason, &a.DomainHit,
 		&a.Status, &a.ExternalID, &a.PublishedAt, &a.FetchedAt,
-		&a.CreatedAt, &a.UpdatedAt,
+		&a.CreatedAt, &a.UpdatedAt, &a.Bookmarked, &a.ReadAt,
 	)
 	if err != nil {
 		return models.ArticleRow{}, err

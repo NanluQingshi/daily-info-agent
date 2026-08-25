@@ -16,7 +16,8 @@ SELECT id, run_id, source_url, title, description, content, content_text, summar
        category, source_domain, source_type, credibility_score,
        tags, language, detected_language, agent_version,
        verification_pass, skip_reason, domain_hit, status,
-       external_id, published_at, fetched_at, created_at, updated_at
+       external_id, published_at, fetched_at, created_at, updated_at,
+       bookmarked, read_at
 FROM articles
 WHERE id = $1`
 
@@ -50,13 +51,16 @@ SELECT id, run_id, source_url, title, description, content, content_text, summar
        category, source_domain, source_type, credibility_score,
        tags, language, detected_language, agent_version,
        verification_pass, skip_reason, domain_hit, status,
-       external_id, published_at, fetched_at, created_at, updated_at
+       external_id, published_at, fetched_at, created_at, updated_at,
+       bookmarked, read_at
 FROM articles
 WHERE ($1::text        IS NULL OR category   = $1)
   AND ($2::text        IS NULL OR status     = $2)
   AND ($3::timestamptz IS NULL OR created_at >= $3)
   AND ($4::timestamptz IS NULL OR created_at <= $4)
   AND ($5::text        IS NULL OR search_tsv @@ plainto_tsquery('simple', $5))
+  AND ($8::boolean     IS NULL OR bookmarked = $8)
+  AND ($9::boolean     IS NULL OR ($9 AND read_at IS NULL) OR (NOT $9 AND read_at IS NOT NULL))
 ORDER BY
   CASE WHEN $5::text IS NULL THEN created_at END DESC,
   CASE WHEN $5::text IS NOT NULL THEN ts_rank(search_tsv, plainto_tsquery('simple', $5)) END DESC,
@@ -69,7 +73,26 @@ WHERE ($1::text        IS NULL OR category   = $1)
   AND ($2::text        IS NULL OR status     = $2)
   AND ($3::timestamptz IS NULL OR created_at >= $3)
   AND ($4::timestamptz IS NULL OR created_at <= $4)
-  AND ($5::text        IS NULL OR search_tsv @@ plainto_tsquery('simple', $5))`
+  AND ($5::text        IS NULL OR search_tsv @@ plainto_tsquery('simple', $5))
+  AND ($6::boolean     IS NULL OR bookmarked = $6)
+  AND ($7::boolean     IS NULL OR ($7 AND read_at IS NULL) OR (NOT $7 AND read_at IS NOT NULL))`
+
+const sqlSetArticleFlags = `
+UPDATE articles SET
+    bookmarked = COALESCE($2, bookmarked),
+    read_at    = CASE
+                   WHEN $3::boolean IS NULL THEN read_at
+                   WHEN $3 THEN NOW()
+                   ELSE NULL
+                 END,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING id, run_id, source_url, title, description, content, content_text, summary,
+       category, source_domain, source_type, credibility_score,
+       tags, language, detected_language, agent_version,
+       verification_pass, skip_reason, domain_hit, status,
+       external_id, published_at, fetched_at, created_at, updated_at,
+       bookmarked, read_at`
 
 const sqlInsertRunLog = `
 INSERT INTO run_logs (
