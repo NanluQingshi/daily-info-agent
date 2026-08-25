@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/user/daily-info-agent/pkg/metrics"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -65,6 +66,21 @@ func TestMaskDSN_NoAtSign(t *testing.T) {
 // ---------------------------------------------------------------------------
 // metricsHandler
 // ---------------------------------------------------------------------------
+
+func TestMetricsHandler_FeedbackCounters(t *testing.T) {
+	metrics.App.FeedbackUp.Store(0)
+	metrics.App.FeedbackDown.Store(0)
+	metrics.App.FeedbackUp.Add(3)
+	metrics.App.FeedbackDown.Add(2)
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rec := httptest.NewRecorder()
+	metricsHandler(rec, req)
+
+	body := rec.Body.String()
+	assert.Contains(t, body, "dia_feedback_up 3")
+	assert.Contains(t, body, "dia_feedback_down 2")
+}
 
 func TestMetricsHandler_ReturnsRuntimeMetrics(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)

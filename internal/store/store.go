@@ -33,6 +33,9 @@ type ArticleStore interface {
 	GetRunLog(ctx context.Context, runID string) (models.RunLogRow, error)
 	ListArticles(ctx context.Context, f models.ArticleFilter) ([]models.ArticleRow, int, error)
 	GetArticle(ctx context.Context, id int64) (models.ArticleRow, error)
+	UpsertArticleFeedback(ctx context.Context, articleID int64, kind string, rating int16) (models.ArticleFeedbackRow, error)
+	GetArticleFeedback(ctx context.Context, articleID int64) ([]models.ArticleFeedbackRow, error)
+	FeedbackStats(ctx context.Context) ([]models.FeedbackStat, error)
 	DeleteArticle(ctx context.Context, id int64) error
 	MarkPublished(ctx context.Context, id int64, externalID int64) error
 	MarkFailed(ctx context.Context, id int64) error
@@ -252,6 +255,57 @@ func (s *PostgresStore) GetArticle(ctx context.Context, id int64) (models.Articl
 		return models.ArticleRow{}, ErrNotFound
 	}
 	return scanArticle(rows)
+}
+
+// UpsertArticleFeedback stores a 👍/👎 for one aspect of an article.
+// The (article_id, kind) pair is unique — repeat clicks overwrite, making
+// the call idempotent and the latest rating authoritative.
+func (s *PostgresStore) UpsertArticleFeedback(ctx context.Context, articleID int64, kind string, rating int16) (models.ArticleFeedbackRow, error) {
+	var f models.ArticleFeedbackRow
+	err := s.pool.QueryRow(ctx, sqlUpsertArticleFeedback, articleID, kind, rating).
+		Scan(&f.ID, &f.ArticleID, &f.Kind, &f.Rating, &f.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return models.ArticleFeedbackRow{}, ErrNotFound
+	}
+	return f, err
+}
+
+// GetArticleFeedback returns all feedback rows of one article.
+func (s *PostgresStore) GetArticleFeedback(ctx context.Context, articleID int64) ([]models.ArticleFeedbackRow, error) {
+	rows, err := s.pool.Query(ctx, sqlGetArticleFeedback, articleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]models.ArticleFeedbackRow, 0, 2)
+	for rows.Next() {
+		var f models.ArticleFeedbackRow
+		if err := rows.Scan(&f.ID, &f.ArticleID, &f.Kind, &f.Rating, &f.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+// FeedbackStats aggregates up/down counts per feedback kind.
+func (s *PostgresStore) FeedbackStats(ctx context.Context) ([]models.FeedbackStat, error) {
+	rows, err := s.pool.Query(ctx, sqlFeedbackStats)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]models.FeedbackStat, 0, 2)
+	for rows.Next() {
+		var st models.FeedbackStat
+		if err := rows.Scan(&st.Kind, &st.Up, &st.Down); err != nil {
+			return nil, err
+		}
+		out = append(out, st)
+	}
+	return out, rows.Err()
 }
 
 // DeleteArticle hard-deletes an article by id.

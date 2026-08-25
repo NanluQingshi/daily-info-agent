@@ -260,6 +260,28 @@ type RunResult struct {
 	FatalError     error // non-nil causes exit 1
 }
 
+// ArticleFeedbackRow is a persisted 👍/👎 on one aspect (summary/category)
+// of an article. ArticleID+Kind is unique — the latest rating wins.
+type ArticleFeedbackRow struct {
+	ID        int64     `json:"id"`
+	ArticleID int64     `json:"article_id"`
+	Kind      string    `json:"kind"`   // "summary" | "category"
+	Rating    int16     `json:"rating"` // 1 = up, -1 = down
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// FeedbackStat aggregates feedback per kind for prompt-tuning reviews.
+type FeedbackStat struct {
+	Kind string `json:"kind"`
+	Up   int    `json:"up"`
+	Down int    `json:"down"`
+}
+
+// FeedbackStatsResponse is the JSON body of GET /api/feedback/stats.
+type FeedbackStatsResponse struct {
+	Stats []FeedbackStat `json:"stats"`
+}
+
 // -----------------------------------------------------------------------
 // Database / persistence types
 // -----------------------------------------------------------------------

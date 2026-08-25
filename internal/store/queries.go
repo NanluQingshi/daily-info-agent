@@ -71,6 +71,26 @@ WHERE ($1::text        IS NULL OR category   = $1)
   AND ($4::timestamptz IS NULL OR created_at <= $4)
   AND ($5::text        IS NULL OR search_tsv @@ plainto_tsquery('simple', $5))`
 
+const sqlUpsertArticleFeedback = `
+INSERT INTO article_feedback (article_id, kind, rating)
+VALUES ($1, $2, $3)
+ON CONFLICT (article_id, kind) DO UPDATE SET rating = EXCLUDED.rating
+RETURNING id, article_id, kind, rating, created_at`
+
+const sqlGetArticleFeedback = `
+SELECT id, article_id, kind, rating, created_at
+FROM article_feedback
+WHERE article_id = $1
+ORDER BY kind`
+
+const sqlFeedbackStats = `
+SELECT kind,
+       COUNT(*) FILTER (WHERE rating = 1)  AS up,
+       COUNT(*) FILTER (WHERE rating = -1) AS down
+FROM article_feedback
+GROUP BY kind
+ORDER BY kind`
+
 const sqlInsertRunLog = `
 INSERT INTO run_logs (
     run_id, total_fetched, total_processed, total_saved,

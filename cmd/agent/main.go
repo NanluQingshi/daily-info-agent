@@ -611,4 +611,12 @@ func metricsHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "# HELP dia_runs_failed Pipeline runs aborted\n")
 	fmt.Fprintf(w, "# TYPE dia_runs_failed counter\n")
 	fmt.Fprintf(w, "dia_runs_failed %d\n", mc.RunsFailed.Load())
+
+	fmt.Fprintf(w, "# HELP dia_feedback_up User up-ratings on AI output stored\n")
+	fmt.Fprintf(w, "# TYPE dia_feedback_up counter\n")
+	fmt.Fprintf(w, "dia_feedback_up %d\n", mc.FeedbackUp.Load())
+
+	fmt.Fprintf(w, "# HELP dia_feedback_down User down-ratings on AI output stored\n")
+	fmt.Fprintf(w, "# TYPE dia_feedback_down counter\n")
+	fmt.Fprintf(w, "dia_feedback_down %d\n", mc.FeedbackDown.Load())
 }

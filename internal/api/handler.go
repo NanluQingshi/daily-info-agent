@@ -136,6 +136,9 @@ func (h *Handler) Register(g *echo.Group) {
 	g.POST("/fetch", h.rateLimited(h.TriggerFetch))
 	g.GET("/fetch/stream", h.rateLimited(h.StreamFetch))
 	g.GET("/fetch/:run_id", h.rateLimited(h.GetFetchStatus))
+	g.POST("/articles/:id/feedback", h.rateLimited(h.SubmitFeedback))
+	g.GET("/articles/:id/feedback", h.rateLimited(h.GetFeedback))
+	g.GET("/feedback/stats", h.rateLimited(h.GetFeedbackStats))
 	g.GET("/stats", h.rateLimited(h.GetStats))
 }
 
