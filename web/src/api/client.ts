@@ -70,6 +70,35 @@ export function getArticle(id: number): Promise<ArticleRow> {
   return request(`/articles/${id}`);
 }
 
+/** Rating kinds users can give feedback on. */
+export type FeedbackKind = "summary" | "category";
+
+export interface ArticleFeedbackRow {
+  id: number;
+  article_id: number;
+  kind: FeedbackKind;
+  rating: 1 | -1;
+  created_at: string;
+}
+
+/** Store a 👍/👎 for one aspect; repeat clicks overwrite (latest wins). */
+export function submitFeedback(
+  id: number,
+  kind: FeedbackKind,
+  rating: 1 | -1,
+): Promise<ArticleFeedbackRow> {
+  return request(`/articles/${id}/feedback`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kind, rating }),
+  });
+}
+
+/** Current feedback state of one article (for UI echo-back). */
+export function getFeedback(id: number): Promise<{ feedback: ArticleFeedbackRow[] }> {
+  return request(`/articles/${id}/feedback`);
+}
+
 export function publishArticle(id: number): Promise<{ published: boolean; external_id: number }> {
   return request(`/articles/${id}/publish`, { method: "POST" });
 }

@@ -733,8 +733,17 @@ func (h *Handler) Register(g *echo.Group)
 //   POST   /api/fetch/:category
 //   GET    /api/fetch/status/:runID
 //   GET    /api/fetch/stream
+//   POST   /api/articles/:id/feedback (👍/👎 on summary/category)
+//   GET    /api/articles/:id/feedback
+//   GET    /api/feedback/stats
 //   GET    /api/stats
 ```
+
+Feedback details (migration 007, `article_feedback` table):
+- Unique `(article_id, kind)` with `kind ∈ {summary, category}`, `rating ∈ {1, -1}`; upsert semantics — repeat clicks overwrite, latest rating wins (idempotent per #61)
+- `GET /api/articles/:id/feedback` returns the stored rows so the UI echoes back prior ratings across refreshes
+- `GET /api/feedback/stats` aggregates up/down per kind — the export channel for prompt tuning
+- `/metrics` exposes process-lifetime counters `dia_feedback_up` / `dia_feedback_down` (incremented on each stored upsert)
 
 ### 4.11 `internal/agent` — LLM Agent Orchestration
 
