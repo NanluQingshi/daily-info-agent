@@ -733,8 +733,15 @@ func (h *Handler) Register(g *echo.Group)
 //   POST   /api/fetch/:category
 //   GET    /api/fetch/status/:runID
 //   GET    /api/fetch/stream
+//   POST   /api/articles/backfill-content (batch content_text backfill)
 //   GET    /api/stats
 ```
+
+Content backfill details (#56):
+- Target: articles with empty `content_text` and a non-empty `source_url` (saved before FULLTEXT shipped); oldest first
+- `POST /api/articles/backfill-content?limit=N` reuses `internal/extract` in batches of 20 (cap 200/call to bound latency); per-page failures leave stored data untouched and count into `failed`
+- Response `{processed, updated, failed, remaining}` lets the admin loop until `remaining` is 0
+- 503 `fulltext_disabled` when `FULLTEXT_ENABLED=false` (no extractor wired)
 
 ### 4.11 `internal/agent` — LLM Agent Orchestration
 

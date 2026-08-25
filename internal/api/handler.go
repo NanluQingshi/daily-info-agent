@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
+	"github.com/user/daily-info-agent/internal/extract"
 	"github.com/user/daily-info-agent/internal/publisher"
 	"github.com/user/daily-info-agent/internal/scheduler"
 	"github.com/user/daily-info-agent/internal/store"
@@ -30,6 +31,7 @@ type Handler struct {
 	publisher *publisher.Client // may be nil
 	cfg       *config.Config
 	logger    *slog.Logger
+	extractor Extractor
 
 	limiter *ratelimit.Limiter // nil when API rate limiting is disabled
 
@@ -83,6 +85,7 @@ func New(
 	sched *scheduler.Scheduler,
 	pub *publisher.Client,
 	cfg *config.Config,
+	ext *extract.Extractor,
 	logger *slog.Logger,
 ) *Handler {
 	h := &Handler{
@@ -91,13 +94,24 @@ func New(
 		publisher: pub,
 		cfg:       cfg,
 		logger:    logger,
-		runs:      make(map[string]models.RunResult),
+		// Keep the interface nil (not typed-nil) when extraction is disabled
+		// so BackfillContent's h.extractor == nil check works.
+		runs: make(map[string]models.RunResult),
 	}
 	// Optional per-IP rate limit for the management API.
+	if ext != nil {
+		h.extractor = ext
+	}
 	if cfg.APIRateLimitPerMin > 0 {
 		h.limiter = ratelimit.New(cfg.APIRateLimitPerMin, time.Minute/time.Duration(cfg.APIRateLimitPerMin))
 	}
 	return h
+}
+
+// Extractor is the extraction capability the API depends on; satisfied by
+// *extract.Extractor (nil when FULLTEXT_ENABLED=false).
+type Extractor interface {
+	Enrich(ctx context.Context, items []models.RawItem) int
 }
 
 // rateLimited wraps a handler with per-IP throttling when enabled.
@@ -136,6 +150,8 @@ func (h *Handler) Register(g *echo.Group) {
 	g.POST("/fetch", h.rateLimited(h.TriggerFetch))
 	g.GET("/fetch/stream", h.rateLimited(h.StreamFetch))
 	g.GET("/fetch/:run_id", h.rateLimited(h.GetFetchStatus))
+	g.POST("/articles/backfill-content", h.rateLimited(h.BackfillContent))
+	g.POST("/articles/backfill-content", h.rateLimited(h.BackfillContent))
 	g.GET("/stats", h.rateLimited(h.GetStats))
 }
 

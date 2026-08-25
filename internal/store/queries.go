@@ -71,6 +71,22 @@ WHERE ($1::text        IS NULL OR category   = $1)
   AND ($4::timestamptz IS NULL OR created_at <= $4)
   AND ($5::text        IS NULL OR search_tsv @@ plainto_tsquery('simple', $5))`
 
+const sqlArticlesMissingContent = `
+SELECT id, source_url
+FROM articles
+WHERE (content_text IS NULL OR content_text = '')
+  AND source_url <> ''
+ORDER BY id
+LIMIT $1`
+
+const sqlCountArticlesMissingContent = `
+SELECT COUNT(*) FROM articles
+WHERE (content_text IS NULL OR content_text = '') AND source_url <> ''`
+
+const sqlUpdateArticleContentText = `
+UPDATE articles SET content_text = $2, updated_at = NOW()
+WHERE id = $1`
+
 const sqlInsertRunLog = `
 INSERT INTO run_logs (
     run_id, total_fetched, total_processed, total_saved,

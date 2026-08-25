@@ -33,6 +33,8 @@ type ArticleStore interface {
 	GetRunLog(ctx context.Context, runID string) (models.RunLogRow, error)
 	ListArticles(ctx context.Context, f models.ArticleFilter) ([]models.ArticleRow, int, error)
 	GetArticle(ctx context.Context, id int64) (models.ArticleRow, error)
+	ArticlesMissingContentText(ctx context.Context, limit int) ([]ArticleContentRef, int, error)
+	UpdateArticleContentText(ctx context.Context, id int64, contentText string) error
 	DeleteArticle(ctx context.Context, id int64) error
 	MarkPublished(ctx context.Context, id int64, externalID int64) error
 	MarkFailed(ctx context.Context, id int64) error
@@ -252,6 +254,50 @@ func (s *PostgresStore) GetArticle(ctx context.Context, id int64) (models.Articl
 		return models.ArticleRow{}, ErrNotFound
 	}
 	return scanArticle(rows)
+}
+
+// ArticleContentRef identifies an article whose extracted full text is
+// still missing; used by the content backfill endpoint (#56).
+type ArticleContentRef struct {
+	ID        int64
+	SourceURL string
+}
+
+// ArticlesMissingContentText returns up to limit articles whose content_text
+// is empty, oldest first, plus the total number still missing.
+func (s *PostgresStore) ArticlesMissingContentText(ctx context.Context, limit int) ([]ArticleContentRef, int, error) {
+	if limit < 1 {
+		limit = 20
+	}
+	rows, err := s.pool.Query(ctx, sqlArticlesMissingContent, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	out := make([]ArticleContentRef, 0, limit)
+	for rows.Next() {
+		var r ArticleContentRef
+		if err := rows.Scan(&r.ID, &r.SourceURL); err != nil {
+			return nil, 0, err
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	var total int
+	if err := s.pool.QueryRow(ctx, sqlCountArticlesMissingContent).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	return out, total, nil
+}
+
+// UpdateArticleContentText stores an extracted full text for one article.
+func (s *PostgresStore) UpdateArticleContentText(ctx context.Context, id int64, contentText string) error {
+	_, err := s.pool.Exec(ctx, sqlUpdateArticleContentText, id, contentText)
+	return err
 }
 
 // DeleteArticle hard-deletes an article by id.

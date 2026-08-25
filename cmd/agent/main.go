@@ -351,7 +351,7 @@ func runServerMode(
 		mgr, proc, ver, pub, st, cfg,
 		logger.With(slog.String("component", "scheduler")),
 	).WithExtractor(extractor)
-	apiHandler := api.New(st, sched, pub, cfg, logger.With(slog.String("component", "api")))
+	apiHandler := api.New(st, sched, pub, cfg, extractor, logger.With(slog.String("component", "api")))
 	apiHandler.Register(e.Group("/api"))
 
 	// Serve React frontend static files
