@@ -1,5 +1,7 @@
 export interface ArticleRow {
   id: number;
+  bookmarked: boolean;
+  read_at?: string;
   run_id: string;
   source_url: string;
   title: string;
@@ -108,6 +110,8 @@ export interface ChatResponse {
 }
 
 export interface ArticleFilter {
+  bookmarked?: boolean;
+  unread?: boolean;
   category?: string;
   status?: string;
   date_from?: string;

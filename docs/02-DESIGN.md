@@ -733,8 +733,15 @@ func (h *Handler) Register(g *echo.Group)
 //   POST   /api/fetch/:category
 //   GET    /api/fetch/status/:runID
 //   GET    /api/fetch/stream
+//   PATCH  /api/articles/:id/flags (bookmark / read tracking)
 //   GET    /api/stats
 ```
+
+Article flag details (bookmark & read, migration 006):
+- `articles.bookmarked BOOLEAN NOT NULL DEFAULT FALSE`, `articles.read_at TIMESTAMPTZ` (NULL = unread); partial index on bookmarked rows
+- `PATCH /api/articles/:id/flags` body `{bookmarked?, read?}` — nil fields untouched; `read: true` stamps NOW(), `read: false` clears (undo); idempotent; returns the updated article
+- List filters: `?bookmarked=true` (starred only), `?unread=true` (read_at IS NULL) — composable with category/status/date/FTS filters
+- Frontend: star toggle + "已读" action on ArticleCard (read articles render dimmed), 仅收藏/仅未读 toggles in FilterBar
 
 ### 4.11 `internal/agent` — LLM Agent Orchestration
 

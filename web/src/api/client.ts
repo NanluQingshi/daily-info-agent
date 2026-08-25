@@ -53,21 +53,33 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
-function buildQuery(params: Record<string, string | number | undefined>): string {
+function buildQuery(params: Record<string, string | number | boolean | undefined>): string {
   const q = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
-    if (v !== undefined && v !== "") q.set(k, String(v));
+    if (v !== undefined && v !== false && v !== "") q.set(k, String(v));
   }
   const s = q.toString();
   return s ? "?" + s : "";
 }
 
 export function listArticles(f: ArticleFilter = {}): Promise<ArticleListResponse> {
-  return request(`/articles${buildQuery(f as Record<string, string | number | undefined>)}`);
+  return request(`/articles${buildQuery(f as Record<string, string | number | boolean | undefined>)}`);
 }
 
 export function getArticle(id: number): Promise<ArticleRow> {
   return request(`/articles/${id}`);
+}
+
+/** Update bookmark / read flags; omitted fields keep their current value. */
+export function updateArticleFlags(
+  id: number,
+  flags: { bookmarked?: boolean; read?: boolean },
+): Promise<ArticleRow> {
+  return request(`/articles/${id}/flags`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(flags),
+  });
 }
 
 export function publishArticle(id: number): Promise<{ published: boolean; external_id: number }> {
