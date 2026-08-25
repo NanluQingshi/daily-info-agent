@@ -73,10 +73,10 @@ WHERE ($1::text        IS NULL OR category   = $1)
 
 const sqlInsertRunLog = `
 INSERT INTO run_logs (
-    run_id, total_fetched, total_processed, total_saved,
+    run_id, total_fetched, total_extracted, total_processed, total_saved,
     total_published, total_skipped, total_failed,
     duration_ms, fatal_error, started_at, finished_at
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 ON CONFLICT (run_id) DO NOTHING`
 
 const sqlStatsByDay = `
@@ -93,15 +93,23 @@ GROUP BY category
 ORDER BY count DESC`
 
 const sqlRecentRuns = `
-SELECT run_id, total_fetched, total_processed, total_saved,
+SELECT run_id, total_fetched, total_extracted, total_processed, total_saved,
        total_published, total_skipped, total_failed,
        duration_ms, fatal_error, started_at, finished_at
 FROM run_logs
 ORDER BY started_at DESC
 LIMIT 10`
 
+const sqlListRunLogs = `
+SELECT run_id, total_fetched, total_extracted, total_processed, total_saved,
+       total_published, total_skipped, total_failed,
+       duration_ms, fatal_error, started_at, finished_at
+FROM run_logs
+ORDER BY started_at DESC
+LIMIT $1`
+
 const sqlGetRunLog = `
-SELECT run_id, total_fetched, total_processed, total_saved,
+SELECT run_id, total_fetched, total_extracted, total_processed, total_saved,
        total_published, total_skipped, total_failed,
        duration_ms, fatal_error, started_at, finished_at
 FROM run_logs

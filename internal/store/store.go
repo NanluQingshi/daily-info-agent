@@ -31,6 +31,7 @@ type ArticleStore interface {
 	SaveArticles(ctx context.Context, articles []models.ProcessedArticle, runID string) (int, error)
 	SaveRunLog(ctx context.Context, log models.RunLogRow) error
 	GetRunLog(ctx context.Context, runID string) (models.RunLogRow, error)
+	ListRunLogs(ctx context.Context, limit int) ([]models.RunLogRow, error)
 	ListArticles(ctx context.Context, f models.ArticleFilter) ([]models.ArticleRow, int, error)
 	GetArticle(ctx context.Context, id int64) (models.ArticleRow, error)
 	DeleteArticle(ctx context.Context, id int64) error
@@ -151,6 +152,7 @@ func (s *PostgresStore) SaveRunLog(ctx context.Context, log models.RunLogRow) er
 	_, err := s.pool.Exec(ctx, sqlInsertRunLog,
 		log.RunID,
 		log.TotalFetched,
+		log.TotalExtracted,
 		log.TotalProcessed,
 		log.TotalSaved,
 		log.TotalPublished,
@@ -171,6 +173,7 @@ func (s *PostgresStore) GetRunLog(ctx context.Context, runID string) (models.Run
 	err := row.Scan(
 		&r.RunID,
 		&r.TotalFetched,
+		&r.TotalExtracted,
 		&r.TotalProcessed,
 		&r.TotalSaved,
 		&r.TotalPublished,
@@ -185,6 +188,36 @@ func (s *PostgresStore) GetRunLog(ctx context.Context, runID string) (models.Run
 		return models.RunLogRow{}, ErrNotFound
 	}
 	return r, err
+}
+
+// ListRunLogs returns the most recent run logs, newest first. limit is
+// clamped to [1, 100].
+func (s *PostgresStore) ListRunLogs(ctx context.Context, limit int) ([]models.RunLogRow, error) {
+	if limit < 1 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	rows, err := s.pool.Query(ctx, sqlListRunLogs, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]models.RunLogRow, 0, limit)
+	for rows.Next() {
+		var r models.RunLogRow
+		if err := rows.Scan(
+			&r.RunID, &r.TotalFetched, &r.TotalExtracted, &r.TotalProcessed,
+			&r.TotalSaved, &r.TotalPublished, &r.TotalSkipped, &r.TotalFailed,
+			&r.DurationMs, &r.FatalError, &r.StartedAt, &r.FinishedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 // ListArticles returns a paginated, filtered list of articles and total count.

@@ -118,7 +118,7 @@ type AIBatchRequest struct {
 
 // AIItemResult holds the AI output for one RawItem.
 type AIItemResult struct {
-	URL              string   `json:"url"`               // echoed back for correlation
+	URL              string   `json:"url"` // echoed back for correlation
 	Category         Category `json:"category"`
 	Summary          string   `json:"summary"`           // 100–200 Chinese characters
 	CredibilityScore float64  `json:"credibility_score"` // 0.0 – 1.0
@@ -183,11 +183,11 @@ type PublishRequest struct {
 	SourceURL        string   `json:"source_url"`
 	Title            string   `json:"title"`
 	Summary          string   `json:"summary"`
-	Category         string   `json:"category"`          // string, not Category type, for JSON portability
+	Category         string   `json:"category"` // string, not Category type, for JSON portability
 	SourceDomain     string   `json:"source_domain"`
 	CredibilityScore float64  `json:"credibility_score"`
-	PublishedAt      string   `json:"published_at"`      // ISO 8601 UTC
-	FetchedAt        string   `json:"fetched_at"`        // ISO 8601 UTC
+	PublishedAt      string   `json:"published_at"` // ISO 8601 UTC
+	FetchedAt        string   `json:"fetched_at"`   // ISO 8601 UTC
 	RunID            string   `json:"run_id"`
 	Tags             []string `json:"tags,omitempty"`
 	Language         string   `json:"language,omitempty"`
@@ -229,11 +229,11 @@ type ChatSource struct {
 
 // ChatResponse is the JSON body returned by POST /api/chat.
 type ChatResponse struct {
-	SessionID  string       `json:"session_id"`            // persist and send back on subsequent turns
-	Reply      string       `json:"reply"`                 // LLM-generated reply
-	Sources    []ChatSource `json:"sources"`               // articles fetched (may be empty)
-	ToolCalled bool         `json:"tool_called"`           // whether a tool was invoked
-	FetchedAt  string       `json:"fetched_at"`            // ISO 8601
+	SessionID  string       `json:"session_id"`  // persist and send back on subsequent turns
+	Reply      string       `json:"reply"`       // LLM-generated reply
+	Sources    []ChatSource `json:"sources"`     // articles fetched (may be empty)
+	ToolCalled bool         `json:"tool_called"` // whether a tool was invoked
+	FetchedAt  string       `json:"fetched_at"`  // ISO 8601
 	LatencyMs  int64        `json:"latency_ms"`
 }
 
@@ -251,6 +251,7 @@ type ChatErrorResponse struct {
 type RunResult struct {
 	RunID          string
 	TotalFetched   int
+	TotalExtracted int // items whose original-page full text was extracted
 	TotalProcessed int
 	TotalSaved     int
 	TotalPublished int
@@ -285,7 +286,7 @@ type ArticleRow struct {
 	VerificationPass bool       `json:"verification_pass"`
 	SkipReason       SkipReason `json:"skip_reason"`
 	DomainHit        bool       `json:"domain_hit"`
-	Status           string     `json:"status"` // "pending" | "published" | "skipped" | "failed"
+	Status           string     `json:"status"`      // "pending" | "published" | "skipped" | "failed"
 	ExternalID       *int64     `json:"external_id"` // nullable; set after publishing to Java API
 	PublishedAt      *time.Time `json:"published_at"`
 	FetchedAt        time.Time  `json:"fetched_at"`
@@ -317,7 +318,7 @@ type ArticleListResponse struct {
 // BatchTagsRequest is the JSON body of PATCH /api/articles/tags.
 // It overwrites the tags of all articles in ArticleIDs.
 type BatchTagsRequest struct {
-	ArticleIDs []int64 `json:"article_ids"`
+	ArticleIDs []int64  `json:"article_ids"`
 	Tags       []string `json:"tags"`
 }
 
@@ -330,6 +331,7 @@ type BatchTagsResponse struct {
 type RunLogRow struct {
 	RunID          string    `json:"run_id"`
 	TotalFetched   int       `json:"total_fetched"`
+	TotalExtracted int       `json:"total_extracted"`
 	TotalProcessed int       `json:"total_processed"`
 	TotalSaved     int       `json:"total_saved"`
 	TotalPublished int       `json:"total_published"`
@@ -350,7 +352,7 @@ type StatsResult struct {
 
 // DayStat holds article count for a single day.
 type DayStat struct {
-	Date  string `json:"date"`  // "2026-06-01"
+	Date  string `json:"date"` // "2026-06-01"
 	Count int    `json:"count"`
 }
 

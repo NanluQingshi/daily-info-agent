@@ -137,6 +137,7 @@ func (h *Handler) Register(g *echo.Group) {
 	g.GET("/fetch/stream", h.rateLimited(h.StreamFetch))
 	g.GET("/fetch/:run_id", h.rateLimited(h.GetFetchStatus))
 	g.GET("/stats", h.rateLimited(h.GetStats))
+	g.GET("/runs", h.rateLimited(h.GetRuns))
 }
 
 // ListArticles handles GET /api/articles
