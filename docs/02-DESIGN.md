@@ -736,6 +736,13 @@ func (h *Handler) Register(g *echo.Group)
 //   GET    /api/stats
 ```
 
+Chinese full-text search details (#55, migration 006):
+- `search_tsv` rebuilt with text search config `zh` = zhparser parser + `simple` dictionaries (stemming is meaningless for Chinese; segmentation is what matters)
+- zhparser is not a trusted extension: docker-compose installs it as superuser at data-volume init (`docker/postgres-zhparser/initdb/`); standalone PG needs a one-time `CREATE EXTENSION zhparser;` — migration 006's own `CREATE EXTENSION IF NOT EXISTS` covers superuser deployments
+- `docker/postgres-zhparser/Dockerfile` builds SCWS + zhparser against PGDG's `postgresql-server-dev-16` (exact header match with postgres:16) and purges the toolchain
+- `internal/store` predicates switch `plainto_tsquery('simple', …)` → `plainto_tsquery('zh', …)`; guarded by `TestFTSQueriesUseChineseConfig`
+- English queries behave as before — zhparser segments Latin words the same way `simple` did
+
 ### 4.11 `internal/agent` — LLM Agent Orchestration
 
 **Responsibility**: Manage the LLM conversation loop with tool calling, session state, and streaming.

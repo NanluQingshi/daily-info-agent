@@ -43,7 +43,8 @@ WHERE id = ANY($1::bigint[])`
 
 // sqlListArticles uses nullable parameters so filters are optional.
 // When $5 (the keyword) is non-null, results are ranked by ts_rank against the
-// search_tsv tsvector (title + summary) using a plainto_tsquery — replacing the
+// search_tsv tsvector (title + summary + content_text, segmented by the
+// zhparser-based `zh` config — see migration 006) using a plainto_tsquery — replacing the
 // old ILIKE '%query%' scan. When $5 is null, ordering falls back to created_at.
 const sqlListArticles = `
 SELECT id, run_id, source_url, title, description, content, content_text, summary,
@@ -56,10 +57,10 @@ WHERE ($1::text        IS NULL OR category   = $1)
   AND ($2::text        IS NULL OR status     = $2)
   AND ($3::timestamptz IS NULL OR created_at >= $3)
   AND ($4::timestamptz IS NULL OR created_at <= $4)
-  AND ($5::text        IS NULL OR search_tsv @@ plainto_tsquery('simple', $5))
+  AND ($5::text        IS NULL OR search_tsv @@ plainto_tsquery('zh', $5))
 ORDER BY
   CASE WHEN $5::text IS NULL THEN created_at END DESC,
-  CASE WHEN $5::text IS NOT NULL THEN ts_rank(search_tsv, plainto_tsquery('simple', $5)) END DESC,
+  CASE WHEN $5::text IS NOT NULL THEN ts_rank(search_tsv, plainto_tsquery('zh', $5)) END DESC,
   created_at DESC
 LIMIT $6 OFFSET $7`
 
@@ -69,7 +70,7 @@ WHERE ($1::text        IS NULL OR category   = $1)
   AND ($2::text        IS NULL OR status     = $2)
   AND ($3::timestamptz IS NULL OR created_at >= $3)
   AND ($4::timestamptz IS NULL OR created_at <= $4)
-  AND ($5::text        IS NULL OR search_tsv @@ plainto_tsquery('simple', $5))`
+  AND ($5::text        IS NULL OR search_tsv @@ plainto_tsquery('zh', $5))`
 
 const sqlInsertRunLog = `
 INSERT INTO run_logs (

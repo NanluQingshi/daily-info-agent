@@ -171,6 +171,7 @@ Notify (email digest)
 | FR-MGT-005 | The service MUST expose `POST /api/fetch` to trigger a full scheduled fetch run via the API. | Returns a `run_id`; articles appear in the database after completion. |
 | FR-MGT-006 | The service MUST expose `POST /api/fetch/:category` to trigger a fetch for a specific category. | Only articles matching the given category are fetched and processed. |
 | FR-MGT-007 | The service MUST expose `GET /api/stats` returning daily run statistics. | Returns fetch count, publish count, skip count, and source distribution. |
+| FR-MGT-011 | Chinese full-text search MUST segment CJK text by word. | `search_tsv` uses the zhparser-based `zh` config; `q=中文` matches articles containing the term; English search unchanged; one-command docker-compose env with the extension preinstalled. |
 | FR-MGT-008 | The service MUST expose SSE `GET /api/fetch/stream` for real-time fetch progress. | Client receives progress events as fetching and processing proceed. |
 
 ### FR-Fetching: Data Source Adapters
