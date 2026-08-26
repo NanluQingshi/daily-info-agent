@@ -736,6 +736,12 @@ func (h *Handler) Register(g *echo.Group)
 //   GET    /api/stats
 ```
 
+Migration CI (#75, `.github/workflows/migrations.yml`):
+- runs only when `migrations/**`, `docker/**` or the workflow itself changes
+- database mirrors production: builds `docker/postgres-zhparser` when present (zhparser preinstalled via initdb), falls back to `postgres:16-alpine` for base-schema validation
+- cycle: `migrate up` → assert tables/columns/GIN index (+ extension, `zh` config and multi-lexeme Chinese segmentation when a zhparser migration exists) → step every migration `down 1` asserting the schema empties → `up` again
+- down-steps catch irreversible or partial down files; the re-up catches order dependencies
+
 ### 4.11 `internal/agent` — LLM Agent Orchestration
 
 **Responsibility**: Manage the LLM conversation loop with tool calling, session state, and streaming.
