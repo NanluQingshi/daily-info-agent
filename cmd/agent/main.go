@@ -43,6 +43,7 @@ import (
 	"github.com/user/daily-info-agent/internal/notifier"
 	"github.com/user/daily-info-agent/internal/processor"
 	"github.com/user/daily-info-agent/internal/publisher"
+	"github.com/user/daily-info-agent/internal/retention"
 	"github.com/user/daily-info-agent/internal/scheduler"
 	"github.com/user/daily-info-agent/internal/store"
 	"github.com/user/daily-info-agent/internal/verifier"
@@ -266,6 +267,10 @@ func runScheduleMode(
 		slog.Int64("duration_ms", result.DurationMs),
 	)
 
+	// Data retention (#74): prune old rows after each scheduled run.
+	retention.New(cfg.RetentionDays, st,
+		logger.With(slog.String("component", "retention"))).Run(ctx)
+
 	if result.FatalError != nil {
 		logger.Error("fatal error in scheduled run",
 			slog.String("error", result.FatalError.Error()),
@@ -356,6 +361,16 @@ func runServerMode(
 
 	// Serve React frontend static files
 	serveStaticFrontend(e)
+
+	// Data retention (#74): prune immediately, then daily until shutdown.
+	retentionCtx, retentionCancel := context.WithCancel(context.Background())
+	defer retentionCancel()
+	retRunner := retention.New(cfg.RetentionDays, st,
+		logger.With(slog.String("component", "retention")))
+	if retRunner.Enabled() {
+		logger.Info("data retention enabled", slog.Int("days", cfg.RetentionDays))
+	}
+	go retRunner.RunForever(retentionCtx)
 
 	go func() {
 		logger.Info("starting HTTP server", slog.String("addr", cfg.BindAddr))
@@ -607,6 +622,14 @@ func metricsHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "# HELP dia_runs_completed Pipeline runs completed\n")
 	fmt.Fprintf(w, "# TYPE dia_runs_completed counter\n")
 	fmt.Fprintf(w, "dia_runs_completed %d\n", mc.RunsCompleted.Load())
+
+	fmt.Fprintf(w, "# HELP dia_run_logs_pruned Run-log rows removed by retention\n")
+	fmt.Fprintf(w, "# TYPE dia_run_logs_pruned counter\n")
+	fmt.Fprintf(w, "dia_run_logs_pruned %d\n", mc.RunLogsPruned.Load())
+
+	fmt.Fprintf(w, "# HELP dia_articles_pruned Article rows removed by retention\n")
+	fmt.Fprintf(w, "# TYPE dia_articles_pruned counter\n")
+	fmt.Fprintf(w, "dia_articles_pruned %d\n", mc.ArticlesPruned.Load())
 
 	fmt.Fprintf(w, "# HELP dia_runs_failed Pipeline runs aborted\n")
 	fmt.Fprintf(w, "# TYPE dia_runs_failed counter\n")

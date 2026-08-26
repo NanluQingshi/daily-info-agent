@@ -123,6 +123,9 @@ type Config struct {
 	// When set, /api/chat and /api/chat/stream require a matching
 	// "X-Api-Token" request header (or "Authorization: Bearer <token>").
 	ChatAPIToken string
+	// RetentionDays prunes run_logs and articles older than N days after
+	// each scheduled run (and daily in server mode). 0 disables pruning.
+	RetentionDays int
 
 	// Chat rate limit: max requests per minute per client IP across the chat
 	// endpoints. 0 disables limiting.
@@ -253,6 +256,7 @@ func Load() (*Config, error) {
 	// Full-text extraction (default enabled; per-run caps keep it bounded)
 	cfg.FulltextEnabled = parseBoolOrDefault(os.Getenv("FULLTEXT_ENABLED"), true)
 	cfg.FulltextMaxItems = parseIntOrDefault(os.Getenv("FULLTEXT_MAX_ITEMS"), 20)
+	cfg.RetentionDays = parseIntOrDefault(os.Getenv("RETENTION_DAYS"), 0)
 	cfg.FulltextConcurrency = parseIntOrDefault(os.Getenv("FULLTEXT_CONCURRENCY"), 4)
 	if cfg.FulltextConcurrency < 1 {
 		cfg.FulltextConcurrency = 1

@@ -23,13 +23,17 @@ type Counters struct {
 	LLMErrors      atomic.Int64 // failed LLM API calls (non-2xx / network)
 
 	// Verify stage
-	ItemsPassed atomic.Int64 // articles passing verification
+	ItemsPassed  atomic.Int64 // articles passing verification
 	ItemsSkipped atomic.Int64 // articles skipped (low score / LLM unavailable)
 
 	// Publish stage
 	ItemsPublished atomic.Int64 // articles successfully published
 	PublishFailed  atomic.Int64 // articles that failed to publish (permanent)
 	PublishRetried atomic.Int64 // articles that succeeded after >= 1 retry
+
+	// Data retention (#74): cumulative rows removed from the database
+	RunLogsPruned  atomic.Int64
+	ArticlesPruned atomic.Int64
 
 	// Runs
 	RunsCompleted atomic.Int64 // pipeline runs that finished (incl. aborted)

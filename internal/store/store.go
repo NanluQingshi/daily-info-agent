@@ -33,6 +33,8 @@ type ArticleStore interface {
 	GetRunLog(ctx context.Context, runID string) (models.RunLogRow, error)
 	ListArticles(ctx context.Context, f models.ArticleFilter) ([]models.ArticleRow, int, error)
 	GetArticle(ctx context.Context, id int64) (models.ArticleRow, error)
+	PruneRunLogs(ctx context.Context, before time.Time) (int64, error)
+	PruneArticles(ctx context.Context, before time.Time) (int64, error)
 	DeleteArticle(ctx context.Context, id int64) error
 	MarkPublished(ctx context.Context, id int64, externalID int64) error
 	MarkFailed(ctx context.Context, id int64) error
@@ -252,6 +254,27 @@ func (s *PostgresStore) GetArticle(ctx context.Context, id int64) (models.Articl
 		return models.ArticleRow{}, ErrNotFound
 	}
 	return scanArticle(rows)
+}
+
+// PruneRunLogs deletes run-log rows started before the cutoff and returns
+// how many were removed (data retention, #74).
+func (s *PostgresStore) PruneRunLogs(ctx context.Context, before time.Time) (int64, error) {
+	ct, err := s.pool.Exec(ctx, sqlPruneRunLogs, before)
+	if err != nil {
+		return 0, err
+	}
+	return ct.RowsAffected(), nil
+}
+
+// PruneArticles deletes articles created before the cutoff regardless of
+// status (a pending article older than the cutoff is stale by definition)
+// and returns how many were removed. Feedback and bookmark state cascade.
+func (s *PostgresStore) PruneArticles(ctx context.Context, before time.Time) (int64, error) {
+	ct, err := s.pool.Exec(ctx, sqlPruneArticles, before)
+	if err != nil {
+		return 0, err
+	}
+	return ct.RowsAffected(), nil
 }
 
 // DeleteArticle hard-deletes an article by id.
