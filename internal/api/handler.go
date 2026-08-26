@@ -3,6 +3,7 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -100,6 +101,27 @@ func New(
 	return h
 }
 
+// tokenAuth rejects requests lacking a valid Bearer token when API_TOKEN
+// is configured. Unset (default) keeps the management API open for local
+// development. Auth runs before rate limiting so rejected requests do not
+// consume per-IP quota.
+func (h *Handler) tokenAuth(next echo.HandlerFunc) echo.HandlerFunc {
+	if h.cfg == nil || h.cfg.APIToken == "" {
+		return next
+	}
+	return func(c echo.Context) error {
+		const prefix = "Bearer "
+		auth := c.Request().Header.Get("Authorization")
+		token := strings.TrimPrefix(auth, prefix)
+		if !strings.HasPrefix(auth, prefix) ||
+			subtle.ConstantTimeCompare([]byte(token), []byte(h.cfg.APIToken)) != 1 {
+			return errJSON(c, http.StatusUnauthorized, "unauthorized",
+				"missing or invalid API token")
+		}
+		return next(c)
+	}
+}
+
 // rateLimited wraps a handler with per-IP throttling when enabled.
 func (h *Handler) rateLimited(next echo.HandlerFunc) echo.HandlerFunc {
 	if h.limiter == nil {
@@ -127,6 +149,11 @@ func (h *Handler) requireStore(c echo.Context) error {
 
 // Register attaches all article management routes to the given Echo group.
 func (h *Handler) Register(g *echo.Group) {
+	// Group-level bearer auth when API_TOKEN is configured. Chat routes
+	// (/api/chat*) are registered on the root echo instance, not this
+	// group, and carry their own CHAT_API_TOKEN auth — both stay exempt.
+	g.Use(h.tokenAuth)
+
 	g.GET("/articles", h.rateLimited(h.ListArticles))
 	g.GET("/articles/:id", h.rateLimited(h.GetArticle))
 	g.POST("/articles/:id/publish", h.rateLimited(h.PublishArticle))

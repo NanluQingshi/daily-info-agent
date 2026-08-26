@@ -26,28 +26,28 @@ import (
 // ---------------------------------------------------------------------------
 
 type mockStore struct {
-	articles    map[int64]models.ArticleRow
-	runLogs     map[string]models.RunLogRow
-	nextID      int64
-	listResp    struct {
+	articles map[int64]models.ArticleRow
+	runLogs  map[string]models.RunLogRow
+	nextID   int64
+	listResp struct {
 		articles []models.ArticleRow
 		total    int
 		err      error
 	}
-	getResp     struct {
+	getResp struct {
 		article models.ArticleRow
 		err     error
 	}
-	statsResp   struct {
+	statsResp struct {
 		stats models.StatsResult
 		err   error
 	}
-	deleteErr   error
-	markPubErr  error
-	markFailErr error
-	markPenErr  error
-	saveRunErr  error
-	saveArtErr  error
+	deleteErr    error
+	markPubErr   error
+	markFailErr  error
+	markPenErr   error
+	saveRunErr   error
+	saveArtErr   error
 	batchTagsErr error
 }
 
@@ -132,6 +132,11 @@ func newEcho() *echo.Echo {
 
 func newHandler(st store.ArticleStore, sched *scheduler.Scheduler, pub *publisher.Client) *Handler {
 	return New(st, sched, pub, &config.Config{}, slog.Default())
+}
+
+// newHandlerWithCfg builds a Handler with an explicit config (auth tests).
+func newHandlerWithCfg(cfg *config.Config) *Handler {
+	return New(nil, nil, nil, cfg, slog.Default())
 }
 
 func newHandlerWithRateLimit(perMin int) *Handler {
@@ -735,6 +740,7 @@ func TestStreamFetch_ResetsPipelineRunning(t *testing.T) {
 	assert.False(t, running, "pipeline should be marked as not running after stream completion")
 	assert.Empty(t, activeRunID, "active run ID should be cleared after stream completion")
 }
+
 // ---------------------------------------------------------------------------
 
 func TestTriggerFetch_Success(t *testing.T) {
@@ -798,143 +804,143 @@ func TestTriggerFetch_AlreadyRunning(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetFetchStatus_MissingRunID(t *testing.T) {
-  h := newHandler(nil, nil, nil)
-  e := newEcho()
-  req := httptest.NewRequest(http.MethodGet, "/", nil)
-  rec := httptest.NewRecorder()
-  c := e.NewContext(req, rec)
-  c.SetParamNames("run_id")
-  c.SetParamValues("")
+	h := newHandler(nil, nil, nil)
+	e := newEcho()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("run_id")
+	c.SetParamValues("")
 
-  err := h.GetFetchStatus(c)
-  require.NoError(t, err)
-  assert.Equal(t, http.StatusBadRequest, rec.Code)
- }
+	err := h.GetFetchStatus(c)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
 
- func TestGetFetchStatus_InMemoryResult(t *testing.T) {
-  h := newHandler(nil, nil, nil)
-  h.runs["test-run-1"] = models.RunResult{
-   RunID:          "test-run-1",
-   TotalFetched:   42,
-   TotalPublished: 10,
-  }
+func TestGetFetchStatus_InMemoryResult(t *testing.T) {
+	h := newHandler(nil, nil, nil)
+	h.runs["test-run-1"] = models.RunResult{
+		RunID:          "test-run-1",
+		TotalFetched:   42,
+		TotalPublished: 10,
+	}
 
-  e := newEcho()
-  req := httptest.NewRequest(http.MethodGet, "/", nil)
-  rec := httptest.NewRecorder()
-  c := e.NewContext(req, rec)
-  c.SetParamNames("run_id")
-  c.SetParamValues("test-run-1")
+	e := newEcho()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("run_id")
+	c.SetParamValues("test-run-1")
 
-  err := h.GetFetchStatus(c)
-  require.NoError(t, err)
-  assert.Equal(t, http.StatusOK, rec.Code)
+	err := h.GetFetchStatus(c)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
 
-  var body map[string]any
-  require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-  assert.Equal(t, "done", body["status"])
-  assert.Equal(t, float64(42), body["fetched"])
- }
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "done", body["status"])
+	assert.Equal(t, float64(42), body["fetched"])
+}
 
- func TestGetFetchStatus_Running_NoResultYet(t *testing.T) {
-  h := newHandler(nil, nil, nil)
-  h.pipelineRunning = true
-  h.activeRunID = "fresh-run"
+func TestGetFetchStatus_Running_NoResultYet(t *testing.T) {
+	h := newHandler(nil, nil, nil)
+	h.pipelineRunning = true
+	h.activeRunID = "fresh-run"
 
-  e := newEcho()
-  req := httptest.NewRequest(http.MethodGet, "/", nil)
-  rec := httptest.NewRecorder()
-  c := e.NewContext(req, rec)
-  c.SetParamNames("run_id")
-  c.SetParamValues("fresh-run")
+	e := newEcho()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("run_id")
+	c.SetParamValues("fresh-run")
 
-  err := h.GetFetchStatus(c)
-  require.NoError(t, err)
-  assert.Equal(t, http.StatusOK, rec.Code)
+	err := h.GetFetchStatus(c)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
 
-  var body map[string]any
-  require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-  assert.Equal(t, "running", body["status"])
- }
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "running", body["status"])
+}
 
- func TestGetFetchStatus_DifferentRunIsNotReportedAsRunning(t *testing.T) {
-  h := newHandler(nil, nil, nil)
-  h.pipelineRunning = true
-  h.activeRunID = "actual-run"
+func TestGetFetchStatus_DifferentRunIsNotReportedAsRunning(t *testing.T) {
+	h := newHandler(nil, nil, nil)
+	h.pipelineRunning = true
+	h.activeRunID = "actual-run"
 
-  e := newEcho()
-  req := httptest.NewRequest(http.MethodGet, "/", nil)
-  rec := httptest.NewRecorder()
-  c := e.NewContext(req, rec)
-  c.SetParamNames("run_id")
-  c.SetParamValues("different-run")
+	e := newEcho()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("run_id")
+	c.SetParamValues("different-run")
 
-  err := h.GetFetchStatus(c)
-  require.NoError(t, err)
-  assert.Equal(t, http.StatusNotFound, rec.Code)
- }
+	err := h.GetFetchStatus(c)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
 
- func TestGetFetchStatus_DBFallback(t *testing.T) {
-  m := &mockStore{
-   runLogs: map[string]models.RunLogRow{
-    "db-run": {
-     RunID:          "db-run",
-     TotalFetched:   99,
-     TotalPublished: 50,
-     StartedAt:      time.Now().UTC().Add(-5 * time.Minute),
-     FinishedAt:     time.Now().UTC(),
-    },
-   },
-  }
-  h := newHandler(m, nil, nil)
+func TestGetFetchStatus_DBFallback(t *testing.T) {
+	m := &mockStore{
+		runLogs: map[string]models.RunLogRow{
+			"db-run": {
+				RunID:          "db-run",
+				TotalFetched:   99,
+				TotalPublished: 50,
+				StartedAt:      time.Now().UTC().Add(-5 * time.Minute),
+				FinishedAt:     time.Now().UTC(),
+			},
+		},
+	}
+	h := newHandler(m, nil, nil)
 
-  e := newEcho()
-  req := httptest.NewRequest(http.MethodGet, "/", nil)
-  rec := httptest.NewRecorder()
-  c := e.NewContext(req, rec)
-  c.SetParamNames("run_id")
-  c.SetParamValues("db-run")
+	e := newEcho()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("run_id")
+	c.SetParamValues("db-run")
 
-  err := h.GetFetchStatus(c)
-  require.NoError(t, err)
-  assert.Equal(t, http.StatusOK, rec.Code)
+	err := h.GetFetchStatus(c)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
 
-  var body map[string]any
-  require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-  assert.Equal(t, "done", body["status"])
-  assert.Equal(t, float64(99), body["fetched"])
- }
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "done", body["status"])
+	assert.Equal(t, float64(99), body["fetched"])
+}
 
- func TestGetFetchStatus_DBNotFound_NoDB(t *testing.T) {
-  h := newHandler(nil, nil, nil)
+func TestGetFetchStatus_DBNotFound_NoDB(t *testing.T) {
+	h := newHandler(nil, nil, nil)
 
-  e := newEcho()
-  req := httptest.NewRequest(http.MethodGet, "/", nil)
-  rec := httptest.NewRecorder()
-  c := e.NewContext(req, rec)
-  c.SetParamNames("run_id")
-  c.SetParamValues("nonexistent")
+	e := newEcho()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("run_id")
+	c.SetParamValues("nonexistent")
 
-  err := h.GetFetchStatus(c)
-  require.NoError(t, err)
-  assert.Equal(t, http.StatusNotFound, rec.Code)
- }
+	err := h.GetFetchStatus(c)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
 
- func TestGetFetchStatus_DBNotFound_WithDB(t *testing.T) {
-  m := &mockStore{} // no run logs configured
-  h := newHandler(m, nil, nil)
+func TestGetFetchStatus_DBNotFound_WithDB(t *testing.T) {
+	m := &mockStore{} // no run logs configured
+	h := newHandler(m, nil, nil)
 
-  e := newEcho()
-  req := httptest.NewRequest(http.MethodGet, "/", nil)
-  rec := httptest.NewRecorder()
-  c := e.NewContext(req, rec)
-  c.SetParamNames("run_id")
-  c.SetParamValues("nonexistent")
+	e := newEcho()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("run_id")
+	c.SetParamValues("nonexistent")
 
-  err := h.GetFetchStatus(c)
-  require.NoError(t, err)
-  assert.Equal(t, http.StatusNotFound, rec.Code)
- }
+	err := h.GetFetchStatus(c)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
 
 // ---------------------------------------------------------------------------
 // fetchStatusFromResult

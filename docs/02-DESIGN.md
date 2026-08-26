@@ -733,8 +733,16 @@ func (h *Handler) Register(g *echo.Group)
 //   POST   /api/fetch/:category
 //   GET    /api/fetch/status/:runID
 //   GET    /api/fetch/stream
+//   (all routes above additionally guarded by optional API_TOKEN Bearer
+//    auth — 401 when configured and missing/wrong)
 //   GET    /api/stats
 ```
+
+Management API auth (#73):
+- `API_TOKEN` (config, default empty) enables group-level `tokenAuth` middleware in `api.Register` — constant-time Bearer comparison, 401 `unauthorized` otherwise
+- Ordering: auth wraps before `rateLimited`, so rejected calls never consume per-IP quota
+- Exemptions come for free structurally: `/health` and `/metrics` are registered on the root Echo instance; `/api/chat*` lives outside the management group and keeps its own `CHAT_API_TOKEN` scheme
+- Unset token keeps the API open — local dev and the existing docker-compose defaults are unchanged
 
 ### 4.11 `internal/agent` — LLM Agent Orchestration
 

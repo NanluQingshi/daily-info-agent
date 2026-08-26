@@ -14,15 +14,15 @@ import (
 // defaultRSSFeeds is the built-in list used when RSS_FEEDS is not set.
 // All feeds have been verified accessible from mainland China (2026-06).
 var defaultRSSFeeds = []string{
-	"https://36kr.com/feed",                         // 36氪 — 科技/创投
-	"https://sspai.com/feed",                        // 少数派 — 科技/效率
-	"https://www.ifanr.com/feed",                    // 爱范儿 — 科技消费
-	"https://feeds.feedburner.com/cnbeta",           // cnBeta — 科技资讯
-	"https://rss.huxiu.com/",                        // 虎嗅 — 科技深度
-	"https://www.guancha.cn/rss.xml",               // 观察者网 — 国际/政治
-	"https://www.pingwest.com/feed",                 // PingWest — 科技（双语）
-	"http://www.people.com.cn/rss/politics.xml",    // 人民日报 — 政治
-	"http://www.people.com.cn/rss/finance.xml",     // 人民日报 — 财经
+	"https://36kr.com/feed",                     // 36氪 — 科技/创投
+	"https://sspai.com/feed",                    // 少数派 — 科技/效率
+	"https://www.ifanr.com/feed",                // 爱范儿 — 科技消费
+	"https://feeds.feedburner.com/cnbeta",       // cnBeta — 科技资讯
+	"https://rss.huxiu.com/",                    // 虎嗅 — 科技深度
+	"https://www.guancha.cn/rss.xml",            // 观察者网 — 国际/政治
+	"https://www.pingwest.com/feed",             // PingWest — 科技（双语）
+	"http://www.people.com.cn/rss/politics.xml", // 人民日报 — 政治
+	"http://www.people.com.cn/rss/finance.xml",  // 人民日报 — 财经
 }
 
 // defaultRSSHubRoutes is the built-in list of RSSHub route paths used when
@@ -30,13 +30,13 @@ var defaultRSSFeeds = []string{
 // Set RSSHUB_BASE_URL to your own RSSHub instance; the public rsshub.app is
 // blocked in mainland China.
 var defaultRSSHubRoutes = []string{
-	"/wallstreetcn/news/global",    // 华尔街见闻 — 全球财经
-	"/cls/telegraph",               // 财联社电报 — 实时财经
-	"/jin10/flash_news",            // 金十数据 — 财经快讯
-	"/36kr/news/technology",        // 36氪科技
-	"/huxiu/article",               // 虎嗅文章
-	"/zaobao/realtime/china",       // 联合早报 — 中国新闻
-	"/xinhua/world",                // 新华社国际
+	"/wallstreetcn/news/global", // 华尔街见闻 — 全球财经
+	"/cls/telegraph",            // 财联社电报 — 实时财经
+	"/jin10/flash_news",         // 金十数据 — 财经快讯
+	"/36kr/news/technology",     // 36氪科技
+	"/huxiu/article",            // 虎嗅文章
+	"/zaobao/realtime/china",    // 联合早报 — 中国新闻
+	"/xinhua/world",             // 新华社国际
 }
 
 // defaultTrustedDomains is the built-in whitelist used when TRUSTED_DOMAINS is not set.
@@ -46,7 +46,7 @@ var defaultTrustedDomains = []string{
 	"xinhua.net",
 	"people.com.cn",
 	"gov.cn",
-	"guancha.cn",   // 观察者网
+	"guancha.cn", // 观察者网
 	// 中文科技 / 财经媒体
 	"36kr.com",
 	"huxiu.com",
@@ -73,8 +73,8 @@ type Config struct {
 
 	// Optional fallback LLM (e.g. local Ollama) used when the primary API
 	// is unavailable. Leave blank to disable fallback.
-	LLMFallbackBaseURL  string
-	LLMFallbackModelID  string
+	LLMFallbackBaseURL string
+	LLMFallbackModelID string
 
 	// Data sources
 	NewsAPIKey    string
@@ -88,8 +88,8 @@ type Config struct {
 	FulltextConcurrency int  // parallel page fetches; default 4
 
 	// Search engine (optional — set to enable web search via DuckDuckGo etc.)
-	SearchEngineURL   string // default: "https://html.duckduckgo.com/html"
-	SearchEngineEnabled bool // true when SearchEngineURL is set
+	SearchEngineURL     string // default: "https://html.duckduckgo.com/html"
+	SearchEngineEnabled bool   // true when SearchEngineURL is set
 
 	// Verification
 	TrustedDomains    []string // parsed from comma-separated env var
@@ -106,7 +106,7 @@ type Config struct {
 
 	// Email notifications (optional — leave blank to disable)
 	SMTPHost        string
-	SMTPPort        int    // default: 587
+	SMTPPort        int // default: 587
 	SMTPUser        string
 	SMTPPassword    string
 	SMTPFrom        string // defaults to SMTPUser when empty
@@ -123,6 +123,9 @@ type Config struct {
 	// When set, /api/chat and /api/chat/stream require a matching
 	// "X-Api-Token" request header (or "Authorization: Bearer <token>").
 	ChatAPIToken string
+	// APIToken optionally protects all /api management endpoints with
+	// Bearer auth. Empty (default) keeps the API open for local dev.
+	APIToken string
 
 	// Chat rate limit: max requests per minute per client IP across the chat
 	// endpoints. 0 disables limiting.
@@ -194,6 +197,7 @@ func Load() (*Config, error) {
 
 	// Optional chat API auth token
 	cfg.ChatAPIToken = strings.TrimSpace(os.Getenv("CHAT_API_TOKEN"))
+	cfg.APIToken = strings.TrimSpace(os.Getenv("API_TOKEN"))
 
 	// Optional per-IP chat rate limit (requests per minute)
 	cfg.ChatRateLimitPerMin = parseIntOrDefault(os.Getenv("CHAT_RATE_LIMIT_PER_MIN"), 0)

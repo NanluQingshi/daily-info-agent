@@ -84,6 +84,19 @@ func TestLoad_MissingNewsAPIKey_Succeeds(t *testing.T) {
 	assert.Empty(t, cfg.NewsAPIKey)
 }
 
+func TestLoad_APIToken_OptionalAndTrimmed(t *testing.T) {
+	setRequiredEnvVars(t)
+	t.Setenv("API_TOKEN", "")
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Empty(t, cfg.APIToken)
+
+	t.Setenv("API_TOKEN", "  s3cret  ")
+	cfg, err = config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, "s3cret", cfg.APIToken)
+}
+
 func TestLoad_MissingWebsiteBaseURL_DisablesPublisher(t *testing.T) {
 	setRequiredEnvVars(t)
 	t.Setenv("WEBSITE_API_BASE_URL", "")
