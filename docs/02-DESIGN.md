@@ -736,6 +736,12 @@ func (h *Handler) Register(g *echo.Group)
 //   GET    /api/stats
 ```
 
+Data retention (#74, `internal/retention`):
+- `RETENTION_DAYS` (default 0 = disabled) → `retention.Runner` prunes `run_logs` (by `started_at`) and `articles` (by `created_at`, any status — a pending article older than the cutoff is stale by definition); feedback/bookmark rows cascade via FK
+- schedule mode prunes after every run; server mode prunes at startup then every 24 h in a goroutine cancelled at shutdown
+- per-table failures are logged and do not abort the other table's prune
+- cumulative removals in `/metrics`: `dia_run_logs_pruned`, `dia_articles_pruned`
+
 ### 4.11 `internal/agent` — LLM Agent Orchestration
 
 **Responsibility**: Manage the LLM conversation loop with tool calling, session state, and streaming.
