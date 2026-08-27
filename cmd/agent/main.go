@@ -188,41 +188,51 @@ func main() {
 		logger.Info("database persistence disabled (DATABASE_DSN not set)")
 	}
 
-	// ---- Build notifier (optional — schedule mode only) ----
-	var notif *notifier.Notifier
+	// ---- Build notification channels (optional — schedule mode only) ----
+	notifLogger := logger.With(slog.String("component", "notifier"))
+	var senders []notifier.Sender
 	if !cfg.DisableNotifier {
-		notif = notifier.New(
+		senders = append(senders, notifier.New(
 			cfg.SMTPHost, cfg.SMTPPort,
 			cfg.SMTPUser, cfg.SMTPPassword, cfg.SMTPFrom,
 			cfg.NotifyEmail,
-			logger.With(slog.String("component", "notifier")),
-		)
+			notifLogger,
+		))
 		logger.Info("email notifier enabled", slog.String("notify_email", cfg.NotifyEmail))
 	} else {
 		logger.Info("email notifier disabled (SMTP_HOST / SMTP_USER / SMTP_PASSWORD / NOTIFY_EMAIL not set)")
 	}
 
-	// ---- Build full-text extractor (optional) ----
-	var extractor *extract.Extractor
-	if cfg.FulltextEnabled {
-		extractor = extract.New(
-			httpClient,
-			cfg.FulltextMaxItems,
-			cfg.FulltextConcurrency,
-			logger.With(slog.String("component", "extract")),
-		)
-		logger.Info("full-text extraction enabled",
-			slog.Int("max_items_per_run", cfg.FulltextMaxItems),
-			slog.Int("concurrency", cfg.FulltextConcurrency),
-		)
-	} else {
-		logger.Info("full-text extraction disabled (FULLTEXT_ENABLED=false)")
+	// IM webhook channels — each enables independently.
+	if cfg.TelegramBotToken != "" && cfg.TelegramChatID != "" {
+		senders = append(senders, notifier.NewWebhookSender(notifier.WebhookConfig{
+			Kind:  notifier.KindTelegram,
+			Token: cfg.TelegramBotToken,
+			Chat:  cfg.TelegramChatID,
+		}, notifLogger))
+		logger.Info("telegram notifier enabled")
 	}
+	if cfg.WeComWebhookURL != "" {
+		senders = append(senders, notifier.NewWebhookSender(notifier.WebhookConfig{
+			Kind: notifier.KindWeCom,
+			URL:  cfg.WeComWebhookURL,
+		}, notifLogger))
+		logger.Info("wecom notifier enabled")
+	}
+	if cfg.DingTalkToken != "" {
+		senders = append(senders, notifier.NewWebhookSender(notifier.WebhookConfig{
+			Kind:   notifier.KindDingTalk,
+			Token:  cfg.DingTalkToken,
+			Secret: cfg.DingTalkSecret,
+		}, notifLogger))
+		logger.Info("dingtalk notifier enabled")
+	}
+	multi := notifier.NewMulti(notifLogger, senders...)
 
 	// ---- Dispatch mode ----
 	switch *modeFlag {
 	case "schedule":
-		runScheduleMode(cfg, mgr, proc, ver, pub, articleStore, notif, extractor, logger)
+		runScheduleMode(cfg, mgr, proc, ver, pub, articleStore, multi, logger)
 	case "server":
 		runServerMode(cfg, mgr, proc, ver, pub, articleStore, extractor, logger)
 	default:
@@ -239,16 +249,30 @@ func runScheduleMode(
 	ver *verifier.Verifier,
 	pub *publisher.Client,
 	st store.ArticleStore,
-	notif *notifier.Notifier,
-	extractor *extract.Extractor,
+	notif *notifier.Multi,
 	logger *slog.Logger,
 ) {
 	sched := scheduler.New(
 		mgr, proc, ver, pub, st, cfg,
 		logger.With(slog.String("component", "scheduler")),
-	).WithExtractor(extractor)
-	if notif != nil {
+	)
+	if notif != nil && notif.Len() > 0 {
 		sched.WithNotifier(notif)
+
+		// Consecutive-failure alert through every enabled channel.
+		threshold := cfg.FailureAlertThreshold
+		if threshold <= 0 {
+			threshold = scheduler.DefaultFailureAlertThreshold
+		}
+		sched.WithFailureAlert(threshold, func(consecutiveFailures int) {
+			alertCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			msg := fmt.Sprintf("⚠️ Daily Info Agent 管道连续失败 %d 次（阈值 %d），请检查服务日志与数据源状态。时间：%s",
+				consecutiveFailures, threshold, time.Now().Format("2006-01-02 15:04:05"))
+			if err := notif.SendAlert(alertCtx, msg); err != nil {
+				logger.Error("failure alert delivery failed", slog.String("error", err.Error()))
+			}
+		})
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)

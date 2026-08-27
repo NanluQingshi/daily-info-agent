@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -343,52 +344,53 @@ func TestLoad_EmptyDefaultCategoriesEntry_ReturnsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "no valid categories")
 }
 
-// ---------------------------------------------------------------------------
-// Full-text extraction config
-// ---------------------------------------------------------------------------
-
-func TestLoad_FulltextDefaults(t *testing.T) {
+func TestLoad_IMWebhookChannels(t *testing.T) {
 	setRequiredEnvVars(t)
-	t.Setenv("FULLTEXT_ENABLED", "")
-	t.Setenv("FULLTEXT_MAX_ITEMS", "")
-	t.Setenv("FULLTEXT_CONCURRENCY", "")
+	t.Setenv("NOTIFY_TELEGRAM_BOT_TOKEN", "111:AAA")
+	t.Setenv("NOTIFY_TELEGRAM_CHAT_ID", "42")
+	t.Setenv("NOTIFY_WECOM_WEBHOOK_URL", "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=k")
+	t.Setenv("NOTIFY_DINGTALK_ACCESS_TOKEN", "tok")
+	t.Setenv("NOTIFY_DINGTALK_SECRET", "sec")
 
 	cfg, err := config.Load()
-	require.NoError(t, err)
-	assert.True(t, cfg.FulltextEnabled)
-	assert.Equal(t, 20, cfg.FulltextMaxItems)
-	assert.Equal(t, 4, cfg.FulltextConcurrency)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.TelegramBotToken != "111:AAA" || cfg.TelegramChatID != "42" {
+		t.Errorf("telegram = %q/%q", cfg.TelegramBotToken, cfg.TelegramChatID)
+	}
+	if cfg.WeComWebhookURL == "" || !strings.Contains(cfg.WeComWebhookURL, "key=k") {
+		t.Errorf("wecom url = %q", cfg.WeComWebhookURL)
+	}
+	if cfg.DingTalkToken != "tok" || cfg.DingTalkSecret != "sec" {
+		t.Errorf("dingtalk = %q/%q", cfg.DingTalkToken, cfg.DingTalkSecret)
+	}
 }
 
-func TestLoad_FulltextDisabled(t *testing.T) {
-	setRequiredEnvVars(t)
-	t.Setenv("FULLTEXT_ENABLED", "false")
-
-	cfg, err := config.Load()
-	require.NoError(t, err)
-	assert.False(t, cfg.FulltextEnabled)
-}
-
-func TestLoad_FulltextCustomValues(t *testing.T) {
-	setRequiredEnvVars(t)
-	t.Setenv("FULLTEXT_ENABLED", "true")
-	t.Setenv("FULLTEXT_MAX_ITEMS", "7")
-	t.Setenv("FULLTEXT_CONCURRENCY", "2")
-
-	cfg, err := config.Load()
-	require.NoError(t, err)
-	assert.True(t, cfg.FulltextEnabled)
-	assert.Equal(t, 7, cfg.FulltextMaxItems)
-	assert.Equal(t, 2, cfg.FulltextConcurrency)
-}
-
-func TestLoad_FulltextInvalidValues_FallBackToDefaults(t *testing.T) {
-	setRequiredEnvVars(t)
-	t.Setenv("FULLTEXT_MAX_ITEMS", "not-a-number")
-	t.Setenv("FULLTEXT_CONCURRENCY", "-3")
-
-	cfg, err := config.Load()
-	require.NoError(t, err)
-	assert.Equal(t, 20, cfg.FulltextMaxItems)
-	assert.Equal(t, 4, cfg.FulltextConcurrency, "negative value falls back to the default")
+func TestLoad_FailureAlertThreshold(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want int
+	}{
+		{"", 0},    // unset → scheduler default applies at wiring
+		{"2", 2},   // valid
+		{"0", 0},   // non-positive ignored → default
+		{"-1", 0},  // negative ignored → default
+		{"abc", 0}, // garbage ignored → default
+	}
+	for _, c := range cases {
+		t.Run("raw="+c.raw, func(t *testing.T) {
+			setRequiredEnvVars(t)
+			if c.raw != "" {
+				t.Setenv("FAILURE_ALERT_THRESHOLD", c.raw)
+			}
+			cfg, err := config.Load()
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.FailureAlertThreshold != c.want {
+				t.Errorf("threshold = %d, want %d", cfg.FailureAlertThreshold, c.want)
+			}
+		})
+	}
 }
