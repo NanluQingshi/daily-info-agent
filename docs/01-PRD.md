@@ -172,6 +172,7 @@ Notify (email digest)
 | FR-MGT-006 | The service MUST expose `POST /api/fetch/:category` to trigger a fetch for a specific category. | Only articles matching the given category are fetched and processed. |
 | FR-MGT-007 | The service MUST expose `GET /api/stats` returning daily run statistics. | Returns fetch count, publish count, skip count, and source distribution. |
 | FR-MGT-008 | The service MUST expose SSE `GET /api/fetch/stream` for real-time fetch progress. | Client receives progress events as fetching and processing proceed. |
+| FR-MGT-009 | The service MUST support configurable data retention. | `RETENTION_DAYS=N` (>0) prunes run_logs and articles older than N days after each scheduled run and daily in server mode; removal counts in `/metrics`; 0 (default) deletes nothing. |
 
 ### FR-Fetching: Data Source Adapters
 
