@@ -341,7 +341,12 @@ type batchInputItem struct {
 func buildBatchInput(items []models.RawItem) (string, error) {
 	batch := make([]batchInputItem, len(items))
 	for i, item := range items {
-		content := item.Content
+		// Prefer the extracted original-page text over the raw feed content —
+		// it is cleaner and gives the model more context for summarising.
+		content := item.ContentText
+		if content == "" {
+			content = item.Content
+		}
 		if len(content) > maxContentLen {
 			content = content[:maxContentLen]
 		}

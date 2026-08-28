@@ -91,6 +91,7 @@ cmd/agent/main.go
 │   ├── internal/fetcher.NewsAPIFetcher
 │   ├── internal/fetcher.RSSHubFetcher
 │   └── internal/dedup.Cache
+├── internal/extract.Extractor   — original-page full-text extraction (go-readability)
 ├── internal/processor.Processor — AI enrichment
 ├── internal/verifier.Verifier   — source credibility
 ├── internal/publisher.Client    — website API publishing
@@ -113,6 +114,7 @@ sequenceDiagram
     participant Sched as scheduler
     participant Mgr as fetcher.Manager
     participant Dedup as dedup.Cache
+    participant Ext as extract.Extractor
     participant Proc as processor
     participant LLM as LLM API
     participant Ver as verifier
@@ -131,6 +133,11 @@ sequenceDiagram
     Mgr->>Dedup: Filter seen URLs
     Dedup-->>Mgr: deduplicated items
     Mgr-->>Sched: []RawItem
+    Sched->>Ext: Enrich(ctx, items)
+    par bounded parallel page fetches
+        Ext->>Ext: readability extraction (best-effort)
+    end
+    Ext-->>Sched: items with content_text
     Sched->>Proc: ProcessBatch(ctx, items)
     loop batches of 10
         Proc->>LLM: Categorize + Summarize + Score
@@ -661,24 +668,30 @@ Key design decisions:
 - Auto-run SQL migrations on startup (embedded via `//go:embed`)
 - Pagination support across all list queries
 
-### 4.8 `internal/notifier` — Email Digest
+### 4.8 `internal/notifier` — Multi-Channel Digest & Alerts
 
-**Responsibility**: Send a daily summary email via SMTP after the scheduled pipeline completes.
+**Responsibility**: Deliver the daily digest and failure alerts through every enabled channel — SMTP email plus optional IM webhooks (Telegram / WeCom / DingTalk).
 
 ```go
 package notifier
 
-type Notifier struct { /* unexported */ }
+type Sender interface {
+    Name() string
+    SendDailySummary(ctx context.Context, articles []models.ProcessedArticle, result models.RunResult) error
+    SendAlert(ctx context.Context, message string) error
+}
 
-func New(host string, port int, user, password, from, notifyEmail string, logger *slog.Logger) *Notifier
-
-func (n *Notifier) SendDailySummary(ctx context.Context, articles []models.ProcessedArticle, result models.RunResult) error
+func New(host string, port int, user, password, from, notifyEmail string, logger *slog.Logger) *Notifier // email channel
+func NewWebhookSender(cfg WebhookConfig, logger *slog.Logger) *WebhookSender                              // telegram | wecom | dingtalk
+func NewMulti(logger *slog.Logger, senders ...Sender) *Multi                                              // fan-out
 ```
 
 Key design decisions:
-- Uses `net/smtp` (stdlib, no external dependency)
-- STARTTLS on port 587; supports port 465 for SSL
-- Gracefully disabled when SMTP host/user/password/notify-email are empty
+- Email uses `net/smtp` (stdlib, no external dependency); STARTTLS on port 587
+- Webhook channels enable independently via env (`NOTIFY_TELEGRAM_BOT_TOKEN`+`CHAT_ID`, `NOTIFY_WECOM_WEBHOOK_URL`, `NOTIFY_DINGTALK_ACCESS_TOKEN`[+`SECRET`]); DingTalk signed robots get HMAC-SHA256 timestamps
+- `Multi` fans out to all channels; one channel failing never blocks the others — only total failure returns an error
+- IM digests are compact (top 3 per category, hard-capped under IM length limits)
+- Consecutive-failure alerts (`FAILURE_ALERT_THRESHOLD`, default 3) ride the same channels: the scheduler callback is wired in `cmd/agent/main.go`
 
 ### 4.9 `internal/chat` — Conversational HTTP Handler
 
@@ -728,6 +741,12 @@ func (h *Handler) Register(g *echo.Group)
 //   GET    /api/fetch/stream
 //   GET    /api/stats
 ```
+
+Data retention (#74, `internal/retention`):
+- `RETENTION_DAYS` (default 0 = disabled) → `retention.Runner` prunes `run_logs` (by `started_at`) and `articles` (by `created_at`, any status — a pending article older than the cutoff is stale by definition); feedback/bookmark rows cascade via FK
+- schedule mode prunes after every run; server mode prunes at startup then every 24 h in a goroutine cancelled at shutdown
+- per-table failures are logged and do not abort the other table's prune
+- cumulative removals in `/metrics`: `dia_run_logs_pruned`, `dia_articles_pruned`
 
 ### 4.11 `internal/agent` — LLM Agent Orchestration
 
