@@ -553,7 +553,7 @@ Key design decisions:
 
 ### 4.4 `internal/processor` — AI Processing
 
-**Responsibility**: Send batches of `RawItem` to an OpenAI-compatible LLM API; return `ProcessedArticle` slices with category, Chinese summary, credibility score, and tags.
+**Responsibility**: Send batches of `RawItem` to an OpenAI-compatible LLM API; return `ProcessedArticle` slices with category, summary (language configurable via `SUMMARY_LANG=zh|en|auto`, default `zh`; `auto` follows each article's own language), credibility score, and tags.
 
 ```go
 package processor

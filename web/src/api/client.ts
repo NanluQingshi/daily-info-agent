@@ -106,28 +106,30 @@ export async function deleteSession(sessionId: string): Promise<void> {
   }).catch(() => {/* fire-and-forget */});
 }
 
-export function sendChat(message: string, sessionId?: string): Promise<ChatResponse> {
+export function sendChat(message: string, sessionId?: string, lang?: string): Promise<ChatResponse> {
   return request("/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, session_id: sessionId }),
+    body: JSON.stringify({ message, session_id: sessionId, lang }),
   });
 }
 
 /**
  * sendChatStream opens a streaming connection to POST /api/chat/stream
  * and calls onEvent for each SSE event. Returns when the stream ends.
+ * lang optionally sets the reply language ("zh" | "en" | "auto").
  */
 export async function sendChatStream(
   message: string,
   sessionId: string | undefined,
   onEvent: (ev: StreamEvent) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  lang?: string
 ): Promise<void> {
   const res = await fetch("/api/chat/stream", {
     method: "POST",
     headers: withAuthHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify({ message, session_id: sessionId }),
+    body: JSON.stringify({ message, session_id: sessionId, lang }),
     signal,
   });
 
