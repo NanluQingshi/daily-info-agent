@@ -10,8 +10,9 @@ import "sync/atomic"
 // text metrics. Zero values are valid — every counter is an atomic.
 type Counters struct {
 	// Fetch stage
-	ItemsFetched atomic.Int64 // raw items fetched across all sources
-	ItemsDeduped atomic.Int64 // items removed by title-similarity dedup
+	ItemsFetched         atomic.Int64 // raw items fetched across all sources
+	ItemsDeduped         atomic.Int64 // items removed by title-similarity dedup
+	ItemsKeywordFiltered atomic.Int64 // items removed by keyword whitelist/blacklist
 
 	// Full-text extraction stage
 	ItemsExtracted atomic.Int64 // pages whose readable full text was extracted
