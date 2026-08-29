@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -344,51 +345,49 @@ func TestLoad_EmptyDefaultCategoriesEntry_ReturnsError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Full-text extraction config
+// Summary language selection
 // ---------------------------------------------------------------------------
 
-func TestLoad_FulltextDefaults(t *testing.T) {
+func TestLoad_SummaryLang_DefaultsToZh(t *testing.T) {
 	setRequiredEnvVars(t)
-	t.Setenv("FULLTEXT_ENABLED", "")
-	t.Setenv("FULLTEXT_MAX_ITEMS", "")
-	t.Setenv("FULLTEXT_CONCURRENCY", "")
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
-	assert.True(t, cfg.FulltextEnabled)
-	assert.Equal(t, 20, cfg.FulltextMaxItems)
-	assert.Equal(t, 4, cfg.FulltextConcurrency)
+	assert.Equal(t, "zh", cfg.SummaryLang)
 }
 
-func TestLoad_FulltextDisabled(t *testing.T) {
+func TestLoad_SummaryLang_En(t *testing.T) {
 	setRequiredEnvVars(t)
-	t.Setenv("FULLTEXT_ENABLED", "false")
+	t.Setenv("SUMMARY_LANG", "en")
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
-	assert.False(t, cfg.FulltextEnabled)
+	assert.Equal(t, "en", cfg.SummaryLang)
 }
 
-func TestLoad_FulltextCustomValues(t *testing.T) {
+func TestLoad_SummaryLang_Auto(t *testing.T) {
 	setRequiredEnvVars(t)
-	t.Setenv("FULLTEXT_ENABLED", "true")
-	t.Setenv("FULLTEXT_MAX_ITEMS", "7")
-	t.Setenv("FULLTEXT_CONCURRENCY", "2")
+	t.Setenv("SUMMARY_LANG", "auto")
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
-	assert.True(t, cfg.FulltextEnabled)
-	assert.Equal(t, 7, cfg.FulltextMaxItems)
-	assert.Equal(t, 2, cfg.FulltextConcurrency)
+	assert.Equal(t, "auto", cfg.SummaryLang)
 }
 
-func TestLoad_FulltextInvalidValues_FallBackToDefaults(t *testing.T) {
+func TestLoad_SummaryLang_InvalidFallsBackToZh(t *testing.T) {
 	setRequiredEnvVars(t)
-	t.Setenv("FULLTEXT_MAX_ITEMS", "not-a-number")
-	t.Setenv("FULLTEXT_CONCURRENCY", "-3")
+	t.Setenv("SUMMARY_LANG", "french")
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
-	assert.Equal(t, 20, cfg.FulltextMaxItems)
-	assert.Equal(t, 4, cfg.FulltextConcurrency, "negative value falls back to the default")
+	assert.Equal(t, "zh", cfg.SummaryLang)
+}
+
+func TestLoad_SummaryLang_NormalizesCaseAndSpace(t *testing.T) {
+	setRequiredEnvVars(t)
+	t.Setenv("SUMMARY_LANG", "  EN ")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, "en", cfg.SummaryLang)
 }

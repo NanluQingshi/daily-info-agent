@@ -218,6 +218,7 @@ type PublishErrorResponse struct {
 type ChatRequest struct {
 	Message   string `json:"message"`
 	SessionID string `json:"session_id,omitempty"` // empty on first turn; echoed back thereafter
+	Lang      string `json:"lang,omitempty"`       // optional reply language: "zh", "en", or "auto"
 }
 
 // ChatSource is a single source article referenced in a chat response.

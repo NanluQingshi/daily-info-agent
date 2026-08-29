@@ -553,7 +553,7 @@ Key design decisions:
 
 ### 4.4 `internal/processor` — AI Processing
 
-**Responsibility**: Send batches of `RawItem` to an OpenAI-compatible LLM API; return `ProcessedArticle` slices with category, Chinese summary, credibility score, and tags.
+**Responsibility**: Send batches of `RawItem` to an OpenAI-compatible LLM API; return `ProcessedArticle` slices with category, summary (language configurable via `SUMMARY_LANG=zh|en|auto`, default `zh`; `auto` follows each article's own language), credibility score, and tags.
 
 ```go
 package processor
@@ -668,24 +668,30 @@ Key design decisions:
 - Auto-run SQL migrations on startup (embedded via `//go:embed`)
 - Pagination support across all list queries
 
-### 4.8 `internal/notifier` — Email Digest
+### 4.8 `internal/notifier` — Multi-Channel Digest & Alerts
 
-**Responsibility**: Send a daily summary email via SMTP after the scheduled pipeline completes.
+**Responsibility**: Deliver the daily digest and failure alerts through every enabled channel — SMTP email plus optional IM webhooks (Telegram / WeCom / DingTalk).
 
 ```go
 package notifier
 
-type Notifier struct { /* unexported */ }
+type Sender interface {
+    Name() string
+    SendDailySummary(ctx context.Context, articles []models.ProcessedArticle, result models.RunResult) error
+    SendAlert(ctx context.Context, message string) error
+}
 
-func New(host string, port int, user, password, from, notifyEmail string, logger *slog.Logger) *Notifier
-
-func (n *Notifier) SendDailySummary(ctx context.Context, articles []models.ProcessedArticle, result models.RunResult) error
+func New(host string, port int, user, password, from, notifyEmail string, logger *slog.Logger) *Notifier // email channel
+func NewWebhookSender(cfg WebhookConfig, logger *slog.Logger) *WebhookSender                              // telegram | wecom | dingtalk
+func NewMulti(logger *slog.Logger, senders ...Sender) *Multi                                              // fan-out
 ```
 
 Key design decisions:
-- Uses `net/smtp` (stdlib, no external dependency)
-- STARTTLS on port 587; supports port 465 for SSL
-- Gracefully disabled when SMTP host/user/password/notify-email are empty
+- Email uses `net/smtp` (stdlib, no external dependency); STARTTLS on port 587
+- Webhook channels enable independently via env (`NOTIFY_TELEGRAM_BOT_TOKEN`+`CHAT_ID`, `NOTIFY_WECOM_WEBHOOK_URL`, `NOTIFY_DINGTALK_ACCESS_TOKEN`[+`SECRET`]); DingTalk signed robots get HMAC-SHA256 timestamps
+- `Multi` fans out to all channels; one channel failing never blocks the others — only total failure returns an error
+- IM digests are compact (top 3 per category, hard-capped under IM length limits)
+- Consecutive-failure alerts (`FAILURE_ALERT_THRESHOLD`, default 3) ride the same channels: the scheduler callback is wired in `cmd/agent/main.go`
 
 ### 4.9 `internal/chat` — Conversational HTTP Handler
 
