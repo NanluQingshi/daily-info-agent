@@ -80,6 +80,10 @@ type RawItem struct {
 	Title       string `json:"title"`
 	Description string `json:"description"` // raw excerpt / feed description
 	Content     string `json:"content"`     // full text if available; may be empty
+	// ContentText is the readable full text extracted from the original page
+	// by internal/extract. Empty when extraction was disabled or failed —
+	// consumers should fall back to Description/Content.
+	ContentText string `json:"content_text,omitempty"`
 
 	// Timing
 	PublishedAt time.Time `json:"published_at"`
@@ -214,6 +218,7 @@ type PublishErrorResponse struct {
 type ChatRequest struct {
 	Message   string `json:"message"`
 	SessionID string `json:"session_id,omitempty"` // empty on first turn; echoed back thereafter
+	Lang      string `json:"lang,omitempty"`       // optional reply language: "zh", "en", or "auto"
 }
 
 // ChatSource is a single source article referenced in a chat response.
@@ -268,6 +273,7 @@ type ArticleRow struct {
 	Title            string     `json:"title"`
 	Description      string     `json:"description"`
 	Content          string     `json:"content"`
+	ContentText      string     `json:"content_text"` // extracted original-page full text; may be empty
 	Summary          string     `json:"summary"`
 	Category         Category   `json:"category"`
 	SourceDomain     string     `json:"source_domain"`
@@ -363,7 +369,7 @@ type FetchTriggerResponse struct {
 }
 
 // ProgressEvent is an SSE event streamed to the client during a pipeline run.
-// Stage values: fetch | process | verify | publish | done | error
+// Stage values: fetch | extract | process | verify | publish | done | error
 // Status values: running | done | error
 type ProgressEvent struct {
 	Stage   string `json:"stage"`

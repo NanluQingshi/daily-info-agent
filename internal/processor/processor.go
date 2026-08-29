@@ -49,18 +49,38 @@ type Processor struct {
 	modelID string
 	logger  *slog.Logger
 
+	// Summary output language: "zh", "en", or "auto" (match each article's
+	// own language). Unknown values behave as "zh".
+	summaryLang string
+
 	// Optional fallback (local LLM). nil when not configured.
 	fallbackClient  *openai.Client
 	fallbackModelID string
 }
 
 // New creates a Processor using the given go-openai client pointed at DeepSeek.
+// Summaries default to Chinese; use WithSummaryLang to change that.
 func New(client *openai.Client, modelID string, logger *slog.Logger) *Processor {
 	return &Processor{
-		client:  client,
-		modelID: modelID,
-		logger:  logger,
+		client:      client,
+		modelID:     modelID,
+		logger:      logger,
+		summaryLang: "zh",
 	}
+}
+
+// WithSummaryLang returns a copy of the Processor whose summaries are written
+// in the given language ("zh", "en", or "auto" to match each article's own
+// language). Unknown values fall back to "zh".
+func (p *Processor) WithSummaryLang(lang string) *Processor {
+	cp := *p
+	switch lang {
+	case "en", "auto":
+		cp.summaryLang = lang
+	default:
+		cp.summaryLang = "zh"
+	}
+	return &cp
 }
 
 // WithFallback returns a copy of the Processor that falls back to the given
@@ -168,7 +188,7 @@ func (p *Processor) processBatchCall(ctx context.Context, items []models.RawItem
 		return nil, fmt.Errorf("build batch input: %w", err)
 	}
 
-	prompt := strings.Replace(batchPromptTemplate, "{{INPUT}}", inputJSON, 1)
+	prompt := buildBatchPrompt(inputJSON, p.summaryLang)
 
 	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ {
@@ -264,7 +284,7 @@ func (p *Processor) processBatchIndividually(ctx context.Context, items []models
 		if err != nil {
 			continue
 		}
-		prompt := strings.Replace(batchPromptTemplate, "{{INPUT}}", inputJSON, 1)
+		prompt := buildBatchPrompt(inputJSON, p.summaryLang)
 
 		resp, err := p.client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
 			Model: p.modelID,
@@ -321,7 +341,12 @@ type batchInputItem struct {
 func buildBatchInput(items []models.RawItem) (string, error) {
 	batch := make([]batchInputItem, len(items))
 	for i, item := range items {
-		content := item.Content
+		// Prefer the extracted original-page text over the raw feed content —
+		// it is cleaner and gives the model more context for summarising.
+		content := item.ContentText
+		if content == "" {
+			content = item.Content
+		}
 		if len(content) > maxContentLen {
 			content = content[:maxContentLen]
 		}

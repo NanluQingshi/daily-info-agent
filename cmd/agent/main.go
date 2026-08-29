@@ -38,10 +38,12 @@ import (
 	"github.com/user/daily-info-agent/internal/agent"
 	"github.com/user/daily-info-agent/internal/api"
 	"github.com/user/daily-info-agent/internal/chat"
+	"github.com/user/daily-info-agent/internal/extract"
 	"github.com/user/daily-info-agent/internal/fetcher"
 	"github.com/user/daily-info-agent/internal/notifier"
 	"github.com/user/daily-info-agent/internal/processor"
 	"github.com/user/daily-info-agent/internal/publisher"
+	"github.com/user/daily-info-agent/internal/retention"
 	"github.com/user/daily-info-agent/internal/scheduler"
 	"github.com/user/daily-info-agent/internal/store"
 	"github.com/user/daily-info-agent/internal/verifier"
@@ -132,7 +134,7 @@ func main() {
 		aiClient,
 		cfg.LLMModelID,
 		logger.With(slog.String("component", "processor")),
-	)
+	).WithSummaryLang(cfg.SummaryLang)
 
 	// Optional local LLM fallback (e.g. Ollama) when the primary API is down.
 	if cfg.LLMFallbackBaseURL != "" && cfg.LLMFallbackModelID != "" {
@@ -186,26 +188,53 @@ func main() {
 		logger.Info("database persistence disabled (DATABASE_DSN not set)")
 	}
 
-	// ---- Build notifier (optional — schedule mode only) ----
-	var notif *notifier.Notifier
+	// ---- Build notification channels (optional — schedule mode only) ----
+	notifLogger := logger.With(slog.String("component", "notifier"))
+	var senders []notifier.Sender
 	if !cfg.DisableNotifier {
-		notif = notifier.New(
+		senders = append(senders, notifier.New(
 			cfg.SMTPHost, cfg.SMTPPort,
 			cfg.SMTPUser, cfg.SMTPPassword, cfg.SMTPFrom,
 			cfg.NotifyEmail,
-			logger.With(slog.String("component", "notifier")),
-		)
+			notifLogger,
+		))
 		logger.Info("email notifier enabled", slog.String("notify_email", cfg.NotifyEmail))
 	} else {
 		logger.Info("email notifier disabled (SMTP_HOST / SMTP_USER / SMTP_PASSWORD / NOTIFY_EMAIL not set)")
 	}
 
+	// IM webhook channels — each enables independently.
+	if cfg.TelegramBotToken != "" && cfg.TelegramChatID != "" {
+		senders = append(senders, notifier.NewWebhookSender(notifier.WebhookConfig{
+			Kind:  notifier.KindTelegram,
+			Token: cfg.TelegramBotToken,
+			Chat:  cfg.TelegramChatID,
+		}, notifLogger))
+		logger.Info("telegram notifier enabled")
+	}
+	if cfg.WeComWebhookURL != "" {
+		senders = append(senders, notifier.NewWebhookSender(notifier.WebhookConfig{
+			Kind: notifier.KindWeCom,
+			URL:  cfg.WeComWebhookURL,
+		}, notifLogger))
+		logger.Info("wecom notifier enabled")
+	}
+	if cfg.DingTalkToken != "" {
+		senders = append(senders, notifier.NewWebhookSender(notifier.WebhookConfig{
+			Kind:   notifier.KindDingTalk,
+			Token:  cfg.DingTalkToken,
+			Secret: cfg.DingTalkSecret,
+		}, notifLogger))
+		logger.Info("dingtalk notifier enabled")
+	}
+	multi := notifier.NewMulti(notifLogger, senders...)
+
 	// ---- Dispatch mode ----
 	switch *modeFlag {
 	case "schedule":
-		runScheduleMode(cfg, mgr, proc, ver, pub, articleStore, notif, logger)
+		runScheduleMode(cfg, mgr, proc, ver, pub, articleStore, multi, logger)
 	case "server":
-		runServerMode(cfg, mgr, proc, ver, pub, articleStore, logger)
+		runServerMode(cfg, mgr, proc, ver, pub, articleStore, extractor, logger)
 	default:
 		fmt.Fprintf(os.Stderr, "FATAL: unknown mode %q (use 'schedule' or 'server')\n", *modeFlag)
 		os.Exit(1)
@@ -220,15 +249,30 @@ func runScheduleMode(
 	ver *verifier.Verifier,
 	pub *publisher.Client,
 	st store.ArticleStore,
-	notif *notifier.Notifier,
+	notif *notifier.Multi,
 	logger *slog.Logger,
 ) {
 	sched := scheduler.New(
 		mgr, proc, ver, pub, st, cfg,
 		logger.With(slog.String("component", "scheduler")),
 	)
-	if notif != nil {
+	if notif != nil && notif.Len() > 0 {
 		sched.WithNotifier(notif)
+
+		// Consecutive-failure alert through every enabled channel.
+		threshold := cfg.FailureAlertThreshold
+		if threshold <= 0 {
+			threshold = scheduler.DefaultFailureAlertThreshold
+		}
+		sched.WithFailureAlert(threshold, func(consecutiveFailures int) {
+			alertCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			msg := fmt.Sprintf("⚠️ Daily Info Agent 管道连续失败 %d 次（阈值 %d），请检查服务日志与数据源状态。时间：%s",
+				consecutiveFailures, threshold, time.Now().Format("2006-01-02 15:04:05"))
+			if err := notif.SendAlert(alertCtx, msg); err != nil {
+				logger.Error("failure alert delivery failed", slog.String("error", err.Error()))
+			}
+		})
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
@@ -247,6 +291,10 @@ func runScheduleMode(
 		slog.Int64("duration_ms", result.DurationMs),
 	)
 
+	// Data retention (#74): prune old rows after each scheduled run.
+	retention.New(cfg.RetentionDays, st,
+		logger.With(slog.String("component", "retention"))).Run(ctx)
+
 	if result.FatalError != nil {
 		logger.Error("fatal error in scheduled run",
 			slog.String("error", result.FatalError.Error()),
@@ -263,6 +311,7 @@ func runServerMode(
 	ver *verifier.Verifier,
 	pub *publisher.Client,
 	st store.ArticleStore,
+	extractor *extract.Extractor,
 	logger *slog.Logger,
 ) {
 	// Pass the Postgres store as the session persistence backend when the
@@ -279,7 +328,7 @@ func runServerMode(
 		st, // nil when DATABASE_DSN is not set; search_stored_articles is disabled
 		logger.With(slog.String("component", "agent")),
 		sessionPersist,
-	)
+	).WithReplyLang(cfg.SummaryLang)
 	chatHandler := chat.New(
 		agentRunner,
 		cfg.ChatAPIToken,
@@ -330,12 +379,22 @@ func runServerMode(
 	sched := scheduler.New(
 		mgr, proc, ver, pub, st, cfg,
 		logger.With(slog.String("component", "scheduler")),
-	)
+	).WithExtractor(extractor)
 	apiHandler := api.New(st, sched, pub, cfg, logger.With(slog.String("component", "api")))
 	apiHandler.Register(e.Group("/api"))
 
 	// Serve React frontend static files
 	serveStaticFrontend(e)
+
+	// Data retention (#74): prune immediately, then daily until shutdown.
+	retentionCtx, retentionCancel := context.WithCancel(context.Background())
+	defer retentionCancel()
+	retRunner := retention.New(cfg.RetentionDays, st,
+		logger.With(slog.String("component", "retention")))
+	if retRunner.Enabled() {
+		logger.Info("data retention enabled", slog.Int("days", cfg.RetentionDays))
+	}
+	go retRunner.RunForever(retentionCtx)
 
 	go func() {
 		logger.Info("starting HTTP server", slog.String("addr", cfg.BindAddr))
@@ -583,6 +642,14 @@ func metricsHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "# HELP dia_runs_completed Pipeline runs completed\n")
 	fmt.Fprintf(w, "# TYPE dia_runs_completed counter\n")
 	fmt.Fprintf(w, "dia_runs_completed %d\n", mc.RunsCompleted.Load())
+
+	fmt.Fprintf(w, "# HELP dia_run_logs_pruned Run-log rows removed by retention\n")
+	fmt.Fprintf(w, "# TYPE dia_run_logs_pruned counter\n")
+	fmt.Fprintf(w, "dia_run_logs_pruned %d\n", mc.RunLogsPruned.Load())
+
+	fmt.Fprintf(w, "# HELP dia_articles_pruned Article rows removed by retention\n")
+	fmt.Fprintf(w, "# TYPE dia_articles_pruned counter\n")
+	fmt.Fprintf(w, "dia_articles_pruned %d\n", mc.ArticlesPruned.Load())
 
 	fmt.Fprintf(w, "# HELP dia_runs_failed Pipeline runs aborted\n")
 	fmt.Fprintf(w, "# TYPE dia_runs_failed counter\n")

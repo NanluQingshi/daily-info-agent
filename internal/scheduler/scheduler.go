@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/user/daily-info-agent/internal/dedup"
+	"github.com/user/daily-info-agent/internal/extract"
 	"github.com/user/daily-info-agent/internal/fetcher"
 	"github.com/user/daily-info-agent/internal/filter"
 	"github.com/user/daily-info-agent/internal/processor"
@@ -37,6 +38,10 @@ type Scheduler struct {
 	cfg    *config.Config
 	logger *slog.Logger
 	filter *filter.KeywordFilter // nil-safe: pass-through when unconfigured
+
+	// ext extracts original-page full text between fetch and process.
+	// nil disables the extract stage.
+	ext *extract.Extractor
 
 	// Consecutive-failure alerting.
 	failureMu          sync.Mutex
@@ -86,6 +91,13 @@ func New(
 			filter.SplitKeywords(cfg.KeywordBlacklistRaw),
 		),
 	}
+}
+
+// WithExtractor sets the optional full-text extractor run between the fetch
+// and process stages. A nil extractor (the default) skips the stage.
+func (s *Scheduler) WithExtractor(ext *extract.Extractor) *Scheduler {
+	s.ext = ext
+	return s
 }
 
 // WithNotifier sets an optional digest sender called after each scheduled run.
@@ -162,6 +174,11 @@ func (s *Scheduler) runPipeline(ctx context.Context, categories []models.Categor
 		return result
 	}
 	result.TotalFetched = len(items)
+
+	// ---- Extract stage (full text from original pages, best-effort) ----
+	if len(items) > 0 {
+		s.extractStage(ctx, items, runID, fire)
+	}
 
 	if len(items) == 0 {
 		s.logger.Info("no new items fetched; run complete", slog.String("run_id", runID))
@@ -296,6 +313,34 @@ func (s *Scheduler) fetchStage(ctx context.Context, categories []models.Category
 	})
 
 	return items, false
+}
+
+// extractStage enriches items with full text fetched from their original
+// pages. Best-effort: failures inside the extractor degrade to the feed
+// content and never abort the run. Skipped entirely when no extractor is
+// wired (FULLTEXT_ENABLED=false).
+func (s *Scheduler) extractStage(ctx context.Context, items []models.RawItem, runID string, fire func(models.ProgressEvent)) {
+	if s.ext == nil {
+		return
+	}
+	fire(models.ProgressEvent{Stage: "extract", Status: "running", Message: "正在提取正文…"})
+	extStart := time.Now()
+
+	extracted := s.ext.Enrich(ctx, items)
+
+	s.logger.Info("stage_complete",
+		slog.String("stage", "extract"),
+		slog.String("run_id", runID),
+		slog.Int64("duration_ms", time.Since(extStart).Milliseconds()),
+		slog.Int("items_extracted", extracted),
+		slog.Int("items_total", len(items)),
+	)
+	fire(models.ProgressEvent{
+		Stage:   "extract",
+		Status:  "done",
+		Count:   extracted,
+		Message: fmt.Sprintf("正文提取完成：%d/%d 条", extracted, len(items)),
+	})
 }
 
 // processStage sends items through AI processing.

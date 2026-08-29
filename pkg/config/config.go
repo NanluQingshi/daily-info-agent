@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/joho/godotenv"
@@ -82,6 +83,11 @@ type Config struct {
 	RSSFeeds      []string // parsed from semicolon-separated env var
 	RSSHubRoutes  []string // parsed from semicolon-separated env var (route paths)
 
+	// Full-text extraction (original-page readability extraction into DB)
+	FulltextEnabled     bool // default: true
+	FulltextMaxItems    int  // max pages fetched per run; default 20
+	FulltextConcurrency int  // parallel page fetches; default 4
+
 	// Search engine (optional — set to enable web search via DuckDuckGo etc.)
 	SearchEngineURL     string // default: "https://html.duckduckgo.com/html"
 	SearchEngineEnabled bool   // true when SearchEngineURL is set
@@ -114,6 +120,18 @@ type Config struct {
 	NotifyEmail     string
 	DisableNotifier bool // true when any required SMTP field is missing
 
+	// IM webhook notifications (optional — each channel enables independently;
+	// email + webhooks can be combined, all share the digest/alert content)
+	TelegramBotToken string // NOTIFY_TELEGRAM_BOT_TOKEN + NOTIFY_TELEGRAM_CHAT_ID enable Telegram
+	TelegramChatID   string
+	WeComWebhookURL  string // NOTIFY_WECOM_WEBHOOK_URL enables WeCom robot
+	DingTalkToken    string // NOTIFY_DINGTALK_ACCESS_TOKEN enables DingTalk robot
+	DingTalkSecret   string // NOTIFY_DINGTALK_SECRET (optional, signed robots)
+
+	// FailureAlertThreshold is the consecutive-failure count that triggers an
+	// alert through every enabled channel (0 → scheduler default of 3).
+	FailureAlertThreshold int
+
 	// HTTP server
 	BindAddr string // default: "127.0.0.1:8080"
 
@@ -124,6 +142,9 @@ type Config struct {
 	// When set, /api/chat and /api/chat/stream require a matching
 	// "X-Api-Token" request header (or "Authorization: Bearer <token>").
 	ChatAPIToken string
+	// RetentionDays prunes run_logs and articles older than N days after
+	// each scheduled run (and daily in server mode). 0 disables pruning.
+	RetentionDays int
 
 	// Chat rate limit: max requests per minute per client IP across the chat
 	// endpoints. 0 disables limiting.
@@ -136,6 +157,11 @@ type Config struct {
 	// Observability
 	LogLevel     slog.Level
 	AgentVersion string // injected at build time via -ldflags
+
+	// Summary output language: "zh", "en", or "auto" (follow each article's
+	// own language). Also serves as the default chat reply language.
+	// Invalid values fall back to "zh".
+	SummaryLang string
 
 	// Runtime
 	CacheFilePath string // default: "cache/dedup.json"
@@ -211,6 +237,18 @@ func Load() (*Config, error) {
 	cfg.NotifyEmail = os.Getenv("NOTIFY_EMAIL")
 	cfg.DisableNotifier = cfg.SMTPHost == "" || cfg.SMTPUser == "" || cfg.SMTPPassword == "" || cfg.NotifyEmail == ""
 
+	// IM webhook channels — each enables independently of email.
+	cfg.TelegramBotToken = os.Getenv("NOTIFY_TELEGRAM_BOT_TOKEN")
+	cfg.TelegramChatID = os.Getenv("NOTIFY_TELEGRAM_CHAT_ID")
+	cfg.WeComWebhookURL = os.Getenv("NOTIFY_WECOM_WEBHOOK_URL")
+	cfg.DingTalkToken = os.Getenv("NOTIFY_DINGTALK_ACCESS_TOKEN")
+	cfg.DingTalkSecret = os.Getenv("NOTIFY_DINGTALK_SECRET")
+	if raw := os.Getenv("FAILURE_ALERT_THRESHOLD"); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+			cfg.FailureAlertThreshold = v
+		}
+	}
+
 	// Optional with defaults
 	cfg.LLMBaseURL = envOr("LLM_BASE_URL", "https://api.deepseek.com/v1")
 	cfg.RSSHubBaseURL = envOr("RSSHUB_BASE_URL", "https://rsshub.app")
@@ -250,6 +288,15 @@ func Load() (*Config, error) {
 	// Search engine
 	cfg.SearchEngineURL = envOr("SEARCH_ENGINE_URL", "")
 	cfg.SearchEngineEnabled = cfg.SearchEngineURL != ""
+
+	// Full-text extraction (default enabled; per-run caps keep it bounded)
+	cfg.FulltextEnabled = parseBoolOrDefault(os.Getenv("FULLTEXT_ENABLED"), true)
+	cfg.FulltextMaxItems = parseIntOrDefault(os.Getenv("FULLTEXT_MAX_ITEMS"), 20)
+	cfg.RetentionDays = parseIntOrDefault(os.Getenv("RETENTION_DAYS"), 0)
+	cfg.FulltextConcurrency = parseIntOrDefault(os.Getenv("FULLTEXT_CONCURRENCY"), 4)
+	if cfg.FulltextConcurrency < 1 {
+		cfg.FulltextConcurrency = 1
+	}
 
 	// Trusted domains
 	if raw := os.Getenv("TRUSTED_DOMAINS"); raw != "" {
@@ -300,6 +347,9 @@ func Load() (*Config, error) {
 	// Skip verification
 	cfg.SkipVerification = strings.ToLower(os.Getenv("SKIP_VERIFICATION")) == "true"
 
+	// Summary / chat reply language
+	cfg.SummaryLang = parseLangOrDefault(os.Getenv("SUMMARY_LANG"), "zh")
+
 	// Log level
 	cfg.LogLevel = parseLogLevel(os.Getenv("LOG_LEVEL"))
 
@@ -337,6 +387,18 @@ func parseIntOrDefault(raw string, fallback int) int {
 		return fallback
 	}
 	return n
+}
+
+// parseLangOrDefault normalises a language selector, returning fallback on
+// missing/invalid input. Valid values: zh, en, auto.
+func parseLangOrDefault(raw, fallback string) string {
+	normalized := strings.ToLower(strings.TrimSpace(raw))
+	switch normalized {
+	case "zh", "en", "auto":
+		return normalized
+	default:
+		return fallback
+	}
 }
 
 // joinCategoryNames returns a comma-separated list of valid category names,

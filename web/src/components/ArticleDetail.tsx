@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ExternalLink, X } from "lucide-react";
+import { ChevronDown, ChevronUp, ExternalLink, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -33,6 +33,7 @@ const STATUS_VARIANT: Record<string, "default" | "secondary" | "outline" | "dest
 export function ArticleDetail({ article, onClose, onPublished, onDeleted, onRetried }: Props) {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState(article.status);
+  const [fulltextOpen, setFulltextOpen] = useState(false);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -139,6 +140,25 @@ export function ArticleDetail({ article, onClose, onPublished, onDeleted, onRetr
               <div>
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5">原文摘要</p>
                 <p className="text-sm text-muted-foreground leading-relaxed">{article.description}</p>
+              </div>
+            )}
+
+            {/* Extracted full text */}
+            {article.content_text && article.content_text.trim() !== "" && (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setFulltextOpen((v) => !v)}
+                  className="w-full flex items-center justify-between text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 hover:text-foreground transition-colors"
+                >
+                  <span>正文（提取自原文）</span>
+                  {fulltextOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                </button>
+                <p
+                  className={`text-sm leading-relaxed whitespace-pre-wrap ${fulltextOpen ? "" : "line-clamp-6"}`}
+                >
+                  {article.content_text}
+                </p>
               </div>
             )}
 
