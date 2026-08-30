@@ -173,6 +173,7 @@ Notify (email digest)
 | FR-MGT-007 | The service MUST expose `GET /api/stats` returning daily run statistics. | Returns fetch count, publish count, skip count, and source distribution. |
 | FR-MGT-010 | The service MUST expose `GET /api/sources/health` returning per-source fetch health for the dashboard. | Merges live manager state (consecutive failures, auto-disable, success rate) with per-domain DB article activity of the last 7 days; empty state is a valid response. |
 | FR-MGT-008 | The service MUST expose SSE `GET /api/fetch/stream` for real-time fetch progress. | Client receives progress events as fetching and processing proceed. |
+| FR-MGT-009 | The service MUST support configurable data retention. | `RETENTION_DAYS=N` (>0) prunes run_logs and articles older than N days after each scheduled run and daily in server mode; removal counts in `/metrics`; 0 (default) deletes nothing. |
 
 ### FR-Fetching: Data Source Adapters
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -210,4 +211,46 @@ func TestBuildMIMEMessage_EmptyBody(t *testing.T) {
 	assert.Contains(t, s, "Subject: Subject")
 	assert.Contains(t, s, "From: Daily Info Agent <from@test.com>")
 	assert.Contains(t, s, "To: to@test.com")
+}
+
+func TestSendAlert_WithLocalSMTPServer(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer ln.Close()
+
+	var accepted atomic.Bool
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		accepted.Store(true)
+		conn.SetDeadline(time.Now().Add(2 * time.Second))
+		conn.Write([]byte("220 localhost ESMTP ready\r\n"))
+		buf := make([]byte, 1024)
+		conn.Read(buf)
+		conn.Close()
+	}()
+
+	addr := ln.Addr().(*net.TCPAddr)
+	n := New("127.0.0.1", addr.Port, "user", "pass", "", "recipient", slog.Default())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err = n.SendAlert(ctx, "⚠️ 管道连续失败 3 次")
+	t.Logf("send result (expected SMTP-level error): %v", err)
+	assert.True(t, accepted.Load(), "SMTP server should have accepted connection")
+}
+
+func TestSendAlert_EscapesHTML(t *testing.T) {
+	// The alert body is embedded in a text/html email; hostile text must be
+	// escaped so the message cannot inject markup.
+	msg := buildMIMEMessage("from@x", "to@x", "s", alertHTML("<script>alert(1)</script>"))
+	if strings.Contains(string(msg), "<script>") {
+		t.Error("alert body not HTML-escaped")
+	}
+	if !strings.Contains(string(msg), "&lt;script&gt;") {
+		t.Error("escaped payload missing")
+	}
 }

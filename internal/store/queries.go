@@ -22,6 +22,10 @@ WHERE id = $1`
 
 const sqlDeleteArticle = `DELETE FROM articles WHERE id = $1`
 
+const sqlPruneRunLogs = `DELETE FROM run_logs WHERE started_at < $1`
+
+const sqlPruneArticles = `DELETE FROM articles WHERE created_at < $1`
+
 const sqlMarkPublished = `
 UPDATE articles SET status = 'published', external_id = $2, updated_at = NOW()
 WHERE id = $1`

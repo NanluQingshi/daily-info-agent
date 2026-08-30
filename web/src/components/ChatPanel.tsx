@@ -52,6 +52,8 @@ interface Props {
   onInputChange: (v: string) => void;
   onSend: () => void;
   onStop?: () => void;
+  lang?: "zh" | "en" | "auto";
+  onLangChange?: (v: "zh" | "en" | "auto") => void;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -64,6 +66,8 @@ export function ChatPanel({
   onInputChange,
   onSend,
   onStop,
+  lang = "zh",
+  onLangChange,
 }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -126,6 +130,20 @@ export function ChatPanel({
             className="flex-1 resize-none min-h-[42px] max-h-32"
             disabled={loading}
           />
+          {onLangChange && (
+            <select
+              value={lang}
+              onChange={(e) => onLangChange(e.target.value as "zh" | "en" | "auto")}
+              disabled={loading}
+              className="shrink-0 h-[42px] rounded-md border border-input bg-transparent px-2 text-xs text-muted-foreground hover:bg-accent focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50 cursor-pointer"
+              title="回复语言"
+              aria-label="回复语言"
+            >
+              <option value="zh">中文</option>
+              <option value="en">EN</option>
+              <option value="auto">Auto</option>
+            </select>
+          )}
           {loading ? (
             <Button variant="secondary" onClick={onStop} className="gap-2">
               <Square className="w-4 h-4 fill-current" />

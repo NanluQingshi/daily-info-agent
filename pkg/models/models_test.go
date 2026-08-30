@@ -1,6 +1,7 @@
 package models
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -468,6 +469,30 @@ func TestChatRequest(t *testing.T) {
 	}
 	if len(req.Message) > 500 {
 		t.Error("Message exceeds 500 chars")
+	}
+}
+
+func TestChatRequestLang_Serialization(t *testing.T) {
+	req := ChatRequest{Message: "hi", Lang: "en"}
+	raw, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var back ChatRequest
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if back.Lang != "en" {
+		t.Errorf("lang round-trip failed: got %q", back.Lang)
+	}
+
+	// Absent lang must deserialise as empty (server default applies).
+	var empty ChatRequest
+	if err := json.Unmarshal([]byte(`{"message":"hi"}`), &empty); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if empty.Lang != "" {
+		t.Errorf("absent lang should be empty, got %q", empty.Lang)
 	}
 }
 
