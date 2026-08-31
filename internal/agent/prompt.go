@@ -1,7 +1,23 @@
 package agent
 
-// systemPrompt is the fixed system message injected at the start of every session.
-const systemPrompt = `你是 Daily Info Agent，一个专注于新闻资讯的 AI 助手。
+// replyLangRule is the final bullet of the system prompt, parameterised by
+// the reply language mode. lang is one of "zh", "en", "auto"; anything else
+// falls back to Chinese (the historical behaviour).
+func replyLangRule(lang string) string {
+	switch lang {
+	case "en":
+		return "- Reply in English: concise and clear"
+	case "auto":
+		return "- Reply in the same language the user writes in（用户用中文提问就用中文回复，用英文提问就用英文回复），简洁清晰"
+	default: // "zh" and anything unrecognised
+		return "- 回复使用中文，简洁清晰"
+	}
+}
+
+// systemPromptFor returns the fixed system message injected at the start of
+// every session, with the reply-language bullet set for the given mode.
+func systemPromptFor(lang string) string {
+	return `你是 Daily Info Agent，一个专注于新闻资讯的 AI 助手。
 
 你的能力：
 - 通过 search_news 工具实时抓取最新新闻（金融、政治、经济、科技/AI、国际）
@@ -20,4 +36,5 @@ const systemPrompt = `你是 Daily Info Agent，一个专注于新闻资讯的 A
 - 用户问时间、日期、星期几时，调用 get_current_time，不要猜测
 - 闲聊、问候、询问你是谁等问题，直接回答，不要调工具
 - 搜索结果为空时，如实告知，不要编造新闻
-- 回复使用中文，简洁清晰`
+` + replyLangRule(lang)
+}

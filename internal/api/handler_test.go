@@ -90,6 +90,10 @@ func (m *mockStore) GetRunLog(ctx context.Context, runID string) (models.RunLogR
 	return models.RunLogRow{}, store.ErrNotFound
 }
 
+func (m *mockStore) PruneRunLogs(context.Context, time.Time) (int64, error) { return 0, nil }
+
+func (m *mockStore) PruneArticles(context.Context, time.Time) (int64, error) { return 0, nil }
+
 func (m *mockStore) ListArticles(ctx context.Context, f models.ArticleFilter) ([]models.ArticleRow, int, error) {
 	return m.listResp.articles, m.listResp.total, m.listResp.err
 }

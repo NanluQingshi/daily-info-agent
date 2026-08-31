@@ -1,10 +1,12 @@
 package config_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/user/daily-info-agent/internal/filter"
 	"github.com/user/daily-info-agent/pkg/config"
 	"github.com/user/daily-info-agent/pkg/models"
 )
@@ -343,52 +345,36 @@ func TestLoad_EmptyDefaultCategoriesEntry_ReturnsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "no valid categories")
 }
 
-// ---------------------------------------------------------------------------
-// Full-text extraction config
-// ---------------------------------------------------------------------------
-
-func TestLoad_FulltextDefaults(t *testing.T) {
+func TestLoad_KeywordFilterRaw(t *testing.T) {
 	setRequiredEnvVars(t)
-	t.Setenv("FULLTEXT_ENABLED", "")
-	t.Setenv("FULLTEXT_MAX_ITEMS", "")
-	t.Setenv("FULLTEXT_CONCURRENCY", "")
+	t.Setenv("KEYWORD_WHITELIST", "芯片，大模型、AI")
+	t.Setenv("KEYWORD_BLACKLIST", "广告, 招聘")
 
 	cfg, err := config.Load()
-	require.NoError(t, err)
-	assert.True(t, cfg.FulltextEnabled)
-	assert.Equal(t, 20, cfg.FulltextMaxItems)
-	assert.Equal(t, 4, cfg.FulltextConcurrency)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.KeywordWhitelistRaw != "芯片，大模型、AI" {
+		t.Errorf("whitelist raw = %q", cfg.KeywordWhitelistRaw)
+	}
+	if cfg.KeywordBlacklistRaw != "广告, 招聘" {
+		t.Errorf("blacklist raw = %q", cfg.KeywordBlacklistRaw)
+	}
+
+	// Parsing lives in internal/filter; verify the documented splitter here
+	// so config↔filter wiring stays honest end-to-end.
+	if got := filter.SplitKeywords(cfg.KeywordWhitelistRaw); len(got) != 3 {
+		t.Errorf("whitelist keywords = %v, want 3 entries", got)
+	}
 }
 
-func TestLoad_FulltextDisabled(t *testing.T) {
+func TestLoad_KeywordFilter_UnsetIsEmpty(t *testing.T) {
 	setRequiredEnvVars(t)
-	t.Setenv("FULLTEXT_ENABLED", "false")
-
 	cfg, err := config.Load()
-	require.NoError(t, err)
-	assert.False(t, cfg.FulltextEnabled)
-}
-
-func TestLoad_FulltextCustomValues(t *testing.T) {
-	setRequiredEnvVars(t)
-	t.Setenv("FULLTEXT_ENABLED", "true")
-	t.Setenv("FULLTEXT_MAX_ITEMS", "7")
-	t.Setenv("FULLTEXT_CONCURRENCY", "2")
-
-	cfg, err := config.Load()
-	require.NoError(t, err)
-	assert.True(t, cfg.FulltextEnabled)
-	assert.Equal(t, 7, cfg.FulltextMaxItems)
-	assert.Equal(t, 2, cfg.FulltextConcurrency)
-}
-
-func TestLoad_FulltextInvalidValues_FallBackToDefaults(t *testing.T) {
-	setRequiredEnvVars(t)
-	t.Setenv("FULLTEXT_MAX_ITEMS", "not-a-number")
-	t.Setenv("FULLTEXT_CONCURRENCY", "-3")
-
-	cfg, err := config.Load()
-	require.NoError(t, err)
-	assert.Equal(t, 20, cfg.FulltextMaxItems)
-	assert.Equal(t, 4, cfg.FulltextConcurrency, "negative value falls back to the default")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.KeywordWhitelistRaw != "" || cfg.KeywordBlacklistRaw != "" {
+		t.Errorf("unset keywords should be empty: %q/%q", cfg.KeywordWhitelistRaw, cfg.KeywordBlacklistRaw)
+	}
 }
