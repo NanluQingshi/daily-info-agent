@@ -378,6 +378,17 @@ func parsePort(raw string, fallback int) int {
 
 // parseIntOrDefault parses a non-negative integer, returning fallback on
 // missing/invalid input.
+func parseBoolOrDefault(raw string, fallback bool) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "true", "1", "yes":
+		return true
+	case "false", "0", "no":
+		return false
+	default:
+		return fallback
+	}
+}
+
 func parseIntOrDefault(raw string, fallback int) int {
 	if raw == "" {
 		return fallback
