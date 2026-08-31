@@ -39,6 +39,10 @@ type Counters struct {
 	// Runs
 	RunsCompleted atomic.Int64 // pipeline runs that finished (incl. aborted)
 	RunsFailed    atomic.Int64 // pipeline runs aborted with fatal error
+
+	// User feedback on AI output (API upserts; process-lifetime counts)
+	FeedbackUp   atomic.Int64 // 👍 ratings stored (summary/category combined)
+	FeedbackDown atomic.Int64 // 👎 ratings stored (summary/category combined)
 }
 
 // App is the shared global counter set used across pipeline stages.

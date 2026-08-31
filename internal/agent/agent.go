@@ -41,15 +41,15 @@ type RunResult struct {
 
 // Runner is the stateful agent that manages sessions and drives the LLM loop.
 type Runner struct {
-	baseURL       string
-	apiKey        string
-	modelID       string
-	httpClient    *http.Client // non-streaming calls; bounded by Timeout
-	streamClient  *http.Client // streaming calls; no overall timeout (ctx controls lifetime)
-	sessions      *SessionStore
-	executor      *toolExecutor
-	logger        *slog.Logger
-	replyLang     string // default reply language: "zh", "en", or "auto"
+	baseURL      string
+	apiKey       string
+	modelID      string
+	httpClient   *http.Client // non-streaming calls; bounded by Timeout
+	streamClient *http.Client // streaming calls; no overall timeout (ctx controls lifetime)
+	sessions     *SessionStore
+	executor     *toolExecutor
+	logger       *slog.Logger
+	replyLang    string // default reply language: "zh", "en", or "auto"
 }
 
 // New creates a Runner.
@@ -75,15 +75,15 @@ func NewWithSessionPersistence(
 	persist SessionPersistence,
 ) *Runner {
 	return &Runner{
-		baseURL:     strings.TrimRight(baseURL, "/"),
-		apiKey:      apiKey,
-		modelID:     modelID,
-		httpClient:  &http.Client{Timeout: 60 * time.Second},
+		baseURL:      strings.TrimRight(baseURL, "/"),
+		apiKey:       apiKey,
+		modelID:      modelID,
+		httpClient:   &http.Client{Timeout: 60 * time.Second},
 		streamClient: &http.Client{}, // no overall timeout; SSE lifetime is bounded by ctx
-		sessions:    NewSessionStore(persist, logger),
-		executor:    newToolExecutor(mgr, db),
-		logger:      logger,
-		replyLang:   "zh",
+		sessions:     NewSessionStore(persist, logger),
+		executor:     newToolExecutor(mgr, db),
+		logger:       logger,
+		replyLang:    "zh",
 	}
 }
 
@@ -252,11 +252,11 @@ func (r *Runner) run(ctx context.Context, sessionID, userMessage, lang string) (
 // llmMessage mirrors openai.ChatCompletionMessage but also exposes the
 // deepseek-specific reasoning_content field that the SDK struct omits.
 type llmMessage struct {
-	Role             string             `json:"role"`
-	Content          string             `json:"content"`
-	ReasoningContent string             `json:"reasoning_content,omitempty"`
-	ToolCalls        []openai.ToolCall  `json:"tool_calls,omitempty"`
-	ToolCallID       string             `json:"tool_call_id,omitempty"`
+	Role             string            `json:"role"`
+	Content          string            `json:"content"`
+	ReasoningContent string            `json:"reasoning_content,omitempty"`
+	ToolCalls        []openai.ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID       string            `json:"tool_call_id,omitempty"`
 }
 
 // llmResponse is the minimal shape of an OpenAI chat completion response that
