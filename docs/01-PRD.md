@@ -171,8 +171,15 @@ Notify (email digest)
 | FR-MGT-005 | The service MUST expose `POST /api/fetch` to trigger a full scheduled fetch run via the API. | Returns a `run_id`; articles appear in the database after completion. |
 | FR-MGT-006 | The service MUST expose `POST /api/fetch/:category` to trigger a fetch for a specific category. | Only articles matching the given category are fetched and processed. |
 | FR-MGT-007 | The service MUST expose `GET /api/stats` returning daily run statistics. | Returns fetch count, publish count, skip count, and source distribution. |
+| FR-MGT-010 | The service MUST expose `GET /api/sources/health` returning per-source fetch health for the dashboard. | Merges live manager state (consecutive failures, auto-disable, success rate) with per-domain DB article activity of the last 7 days; empty state is a valid response. |
+| FR-MGT-011 | The service MUST expose `GET /api/runs?limit=N` returning recent pipeline run summaries. | Each run records stage counts (fetch/extract/process/save/publish/skip/fail), duration, and status; empty database yields an empty list. |
+| FR-MGT-012 | The service MUST persist per-article bookmark and read state. | `PATCH /api/articles/:id/flags` with `{bookmarked?, read?}`; omitted fields unchanged; `read=false` undoes; list API supports `bookmarked` / `unread` filters. |
+
+| FR-MGT-013 | The service MUST persist user feedback (👍/👎) on AI summaries and categories. | `POST /api/articles/:id/feedback` upserts `{kind, rating}` — one row per article+kind; aggregated stats via `GET /api/feedback/stats`; counters in `/metrics`. |
+| FR-MGT-014 | The service MUST provide batch backfill of `content_text` for articles stored before extraction shipped. | `POST /api/articles/backfill-content?limit=N` (N ≤ 200/call); single-page failures degrade silently; response reports processed/updated/failed/remaining. |
+| FR-MGT-015 | Chinese full-text search MUST segment CJK text by word. | `search_tsv` uses the zhparser-based `zh` config; `q=中文` matches articles containing the term; English search unchanged; one-command docker-compose env with the extension preinstalled. |
 | FR-MGT-008 | The service MUST expose SSE `GET /api/fetch/stream` for real-time fetch progress. | Client receives progress events as fetching and processing proceed. |
-| FR-MGT-009 | The service MUST support configurable data retention. | `RETENTION_DAYS=N` (>0) prunes run_logs and articles older than N days after each scheduled run and daily in server mode; removal counts in `/metrics`; 0 (default) deletes nothing. |
+| FR-MGT-009 | The service MUST expose `GET /api/articles/export?format=csv\|json\|markdown` to download the filtered article list. | CSV (Excel-friendly BOM, escaped fields, content_text column), JSON (full rows), or Markdown (readable archive); accepts the same category/status/date/q filters as the list endpoint; capped at 10 000 rows per export. |
 
 ### FR-Fetching: Data Source Adapters
 
