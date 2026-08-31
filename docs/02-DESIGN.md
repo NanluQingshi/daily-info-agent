@@ -751,6 +751,7 @@ func New(proc *processor.Processor, mgr *fetcher.Manager, sched *scheduler.Sched
 func (h *Handler) Register(g *echo.Group)
 // Registers:
 //   GET    /api/articles
+//   GET    /api/articles/export   (format=csv|json|markdown; same filters as list)
 //   GET    /api/articles/:id
 //   POST   /api/articles/:id/publish
 //   POST   /api/articles/:id/retry
@@ -759,14 +760,77 @@ func (h *Handler) Register(g *echo.Group)
 //   POST   /api/fetch/:category
 //   GET    /api/fetch/status/:runID
 //   GET    /api/fetch/stream
+//   PATCH  /api/articles/:id/flags (bookmark / read tracking)
+
+//   POST   /api/articles/:id/feedback (👍/👎 on summary/category)
+//   GET    /api/articles/:id/feedback
+//   GET    /api/feedback/stats
+//   POST   /api/articles/backfill-content (batch content_text backfill)
+
+//   (all routes above additionally guarded by optional API_TOKEN Bearer
+//    auth — 401 when configured and missing/wrong)
 //   GET    /api/stats
+//   GET    /api/sources/health
+//   GET    /api/runs
 ```
 
-Data retention (#74, `internal/retention`):
-- `RETENTION_DAYS` (default 0 = disabled) → `retention.Runner` prunes `run_logs` (by `started_at`) and `articles` (by `created_at`, any status — a pending article older than the cutoff is stale by definition); feedback/bookmark rows cascade via FK
-- schedule mode prunes after every run; server mode prunes at startup then every 24 h in a goroutine cancelled at shutdown
-- per-table failures are logged and do not abort the other table's prune
-- cumulative removals in `/metrics`: `dia_run_logs_pruned`, `dia_articles_pruned`
+Source health details (`GET /api/sources/health`):
+- Live half: `fetcher.Manager` in-memory state per source URL — consecutive failures, auto-disable flag, attempt/failure totals, last outcome/error/timestamps (resets on restart)
+- DB half: per-`source_domain` article count and latest `fetched_at` within a 7-day window (`store.SourceActivity`)
+- Merge key: hostname of the source URL (port stripped, case-normalised); DB-only domains appear as `unknown` (no live state, e.g. after a restart)
+- Status mapping: `disabled` (auto-skipped) → `warning` (≥1 consecutive failure) → `ok`; ordering disabled-first for stable display
+- Graceful degradation: missing scheduler or store still serves the other half; a DB error is logged and does not fail the request
+- `/metrics` additionally exposes `dia_source_consecutive_failures{source=...}` and `dia_source_disabled{source=...}` gauges
+
+Export details (`GET /api/articles/export`):
+- `format=csv` (default): UTF-8 BOM so Excel renders Chinese; `encoding/csv` escaping; tags joined with `|`; includes `content_text`
+- `format=json`: indented full `ArticleRow` array
+- `format=markdown` (alias `md`): one section per article with the complete field set; `content_text` falls back to `content`; leading heading/list markers escaped so field bodies cannot break the document structure
+- Client pagination (`page`/`page_size`) is ignored — exports cover every matching row, paged internally at 100 rows/query
+- Row cap 10 000: exceeding it returns 400 `export_limited` asking the user to narrow filters
+- `Content-Disposition: attachment; filename="articles-<UTC timestamp>.<ext>"`
+
+Run history details (`GET /api/runs?limit=N`, default 20, max 100):
+- Data source: the existing `run_logs` table, written by `logRunSummary` after every scheduled and manually triggered run
+- Migration 006 adds `total_extracted` so the full-text extraction stage is visible per run alongside fetch/process/save/publish/skip/fail
+- `RunResult.TotalExtracted` is collected from `extractStage` (0 when no extractor is wired) and flows into the persisted row
+- Empty database returns `{"runs": []}` — the frontend panel treats that as a first-run state, not an error
+
+Article flag details (bookmark & read, migration 007):
+- `articles.bookmarked BOOLEAN NOT NULL DEFAULT FALSE`, `articles.read_at TIMESTAMPTZ` (NULL = unread); partial index on bookmarked rows
+- `PATCH /api/articles/:id/flags` body `{bookmarked?, read?}` — nil fields untouched; `read: true` stamps NOW(), `read: false` clears (undo); idempotent; returns the updated article
+- List filters: `?bookmarked=true` (starred only), `?unread=true` (read_at IS NULL) — composable with category/status/date/FTS filters
+- Frontend: star toggle + "已读" action on ArticleCard (read articles render dimmed), 仅收藏/仅未读 toggles in FilterBar
+
+Feedback details (migration 008, `article_feedback` table):
+- Unique `(article_id, kind)` with `kind ∈ {summary, category}`, `rating ∈ {1, -1}`; upsert semantics — repeat clicks overwrite, latest rating wins (idempotent per #61)
+- `GET /api/articles/:id/feedback` returns the stored rows so the UI echoes back prior ratings across refreshes
+- `GET /api/feedback/stats` aggregates up/down per kind — the export channel for prompt tuning
+- `/metrics` exposes process-lifetime counters `dia_feedback_up` / `dia_feedback_down` (incremented on each stored upsert)
+Content backfill details (#56):
+- Target: articles with empty `content_text` and a non-empty `source_url` (saved before FULLTEXT shipped); oldest first
+- `POST /api/articles/backfill-content?limit=N` reuses `internal/extract` in batches of 20 (cap 200/call to bound latency); per-page failures leave stored data untouched and count into `failed`
+- Response `{processed, updated, failed, remaining}` lets the admin loop until `remaining` is 0
+- 503 `fulltext_disabled` when `FULLTEXT_ENABLED=false` (no extractor wired)
+
+Chinese full-text search details (#55, migration 009):
+- `search_tsv` rebuilt with text search config `zh` = zhparser parser + `simple` dictionaries (stemming is meaningless for Chinese; segmentation is what matters)
+- zhparser is not a trusted extension: docker-compose installs it as superuser at data-volume init (`docker/postgres-zhparser/initdb/`); standalone PG needs a one-time `CREATE EXTENSION zhparser;` — migration 009's own `CREATE EXTENSION IF NOT EXISTS` covers superuser deployments
+- `docker/postgres-zhparser/Dockerfile` builds SCWS + zhparser against PGDG's `postgresql-server-dev-16` (exact header match with postgres:16) and purges the toolchain
+- `internal/store` predicates switch `plainto_tsquery('simple', …)` → `plainto_tsquery('zh', …)`; guarded by `TestFTSQueriesUseChineseConfig`
+- English queries behave as before — zhparser segments Latin words the same way `simple` did
+
+Management API auth (#73):
+- `API_TOKEN` (config, default empty) enables group-level `tokenAuth` middleware in `api.Register` — constant-time Bearer comparison, 401 `unauthorized` otherwise
+- Ordering: auth wraps before `rateLimited`, so rejected calls never consume per-IP quota
+- Exemptions come for free structurally: `/health` and `/metrics` are registered on the root Echo instance; `/api/chat*` lives outside the management group and keeps its own `CHAT_API_TOKEN` scheme
+- Unset token keeps the API open — local dev and the existing docker-compose defaults are unchanged
+
+Migration CI (#75, `.github/workflows/migrations.yml`):
+- runs only when `migrations/**`, `docker/**` or the workflow itself changes
+- database mirrors production: builds `docker/postgres-zhparser` when present (zhparser preinstalled via initdb), falls back to `postgres:16-alpine` for base-schema validation
+- cycle: `migrate up` → assert tables/columns/GIN index (+ extension, `zh` config and multi-lexeme Chinese segmentation when a zhparser migration exists) → step every migration `down 1` asserting the schema empties → `up` again
+- down-steps catch irreversible or partial down files; the re-up catches order dependencies
 
 ### 4.11 `internal/agent` — LLM Agent Orchestration
 

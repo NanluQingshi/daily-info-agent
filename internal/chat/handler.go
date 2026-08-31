@@ -17,10 +17,10 @@ const maxMessageLen = 500
 
 // Handler implements the Echo handler for POST /api/chat.
 type Handler struct {
-	runner    *agent.Runner
-	logger    *slog.Logger
-	apiToken  string // when non-empty, requests must carry it in a header
-	limiter   *rateLimiter
+	runner   *agent.Runner
+	logger   *slog.Logger
+	apiToken string // when non-empty, requests must carry it in a header
+	limiter  *rateLimiter
 }
 
 // New creates a Handler backed by the given agent Runner.

@@ -1,10 +1,11 @@
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
 import { getStats } from "../api/client";
+import { RunHistoryPanel } from "./RunHistoryPanel";
 import type { StatsResult } from "../types";
+import { SourceHealthPanel } from "./SourceHealthPanel";
 
 // ── Color palette for categories ─────────────────────────────────────────
 
@@ -239,55 +240,11 @@ export function StatsPanel() {
         </CardContent>
       </Card>
 
-      {/* Recent Runs */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-sm font-medium">最近运行记录</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {recentRuns.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-4">暂无记录</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="text-muted-foreground border-b">
-                    <th className="pb-2 font-medium text-left">Run ID</th>
-                    <th className="pb-2 font-medium text-right">抓取</th>
-                    <th className="pb-2 font-medium text-right">处理</th>
-                    <th className="pb-2 font-medium text-right">保存</th>
-                    <th className="pb-2 font-medium text-right">发布</th>
-                    <th className="pb-2 font-medium text-right">跳过</th>
-                    <th className="pb-2 font-medium text-right">失败</th>
-                    <th className="pb-2 font-medium text-right">耗时</th>
-                    <th className="pb-2 font-medium text-right">时间</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {recentRuns.map((r, i) => (
-                    <Fragment key={r.run_id}>
-                      <tr className="text-foreground hover:bg-muted/30 transition-colors">
-                        <td className="py-2 font-mono">{r.run_id.slice(0, 8)}…</td>
-                        <td className="py-2 text-right">{r.total_fetched}</td>
-                        <td className="py-2 text-right">{r.total_processed}</td>
-                        <td className="py-2 text-right">{r.total_saved}</td>
-                        <td className="py-2 text-right font-medium text-green-600">{r.total_published}</td>
-                        <td className="py-2 text-right text-muted-foreground">{r.total_skipped}</td>
-                        <td className="py-2 text-right">{r.total_failed > 0 ? <span className="text-destructive">{r.total_failed}</span> : r.total_failed}</td>
-                        <td className="py-2 text-right">{(r.duration_ms / 1000).toFixed(1)}s</td>
-                        <td className="py-2 text-right text-muted-foreground">{new Date(r.started_at).toLocaleString("zh-CN")}</td>
-                      </tr>
-                      {i < recentRuns.length - 1 && (
-                        <tr key={`sep-${r.run_id}`}><td colSpan={9}><Separator /></td></tr>
-                      )}
-                    </Fragment>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {/* Run history */}
+      <RunHistoryPanel />
+
+      {/* Source health */}
+      <SourceHealthPanel />
     </div>
   );
 }

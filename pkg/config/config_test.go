@@ -86,6 +86,19 @@ func TestLoad_MissingNewsAPIKey_Succeeds(t *testing.T) {
 	assert.Empty(t, cfg.NewsAPIKey)
 }
 
+func TestLoad_APIToken_OptionalAndTrimmed(t *testing.T) {
+	setRequiredEnvVars(t)
+	t.Setenv("API_TOKEN", "")
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Empty(t, cfg.APIToken)
+
+	t.Setenv("API_TOKEN", "  s3cret  ")
+	cfg, err = config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, "s3cret", cfg.APIToken)
+}
+
 func TestLoad_MissingWebsiteBaseURL_DisablesPublisher(t *testing.T) {
 	setRequiredEnvVars(t)
 	t.Setenv("WEBSITE_API_BASE_URL", "")
@@ -343,6 +356,29 @@ func TestLoad_EmptyDefaultCategoriesEntry_ReturnsError(t *testing.T) {
 	_, err := config.Load()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no valid categories")
+}
+
+func TestLoad_IMWebhookChannels(t *testing.T) {
+	setRequiredEnvVars(t)
+	t.Setenv("NOTIFY_TELEGRAM_BOT_TOKEN", "111:AAA")
+	t.Setenv("NOTIFY_TELEGRAM_CHAT_ID", "42")
+	t.Setenv("NOTIFY_WECOM_WEBHOOK_URL", "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=k")
+	t.Setenv("NOTIFY_DINGTALK_ACCESS_TOKEN", "tok")
+	t.Setenv("NOTIFY_DINGTALK_SECRET", "sec")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.TelegramBotToken != "111:AAA" || cfg.TelegramChatID != "42" {
+		t.Errorf("telegram = %q/%q", cfg.TelegramBotToken, cfg.TelegramChatID)
+	}
+	if cfg.WeComWebhookURL == "" || !strings.Contains(cfg.WeComWebhookURL, "key=k") {
+		t.Errorf("wecom url = %q", cfg.WeComWebhookURL)
+	}
+	if cfg.DingTalkToken != "tok" || cfg.DingTalkSecret != "sec" {
+		t.Errorf("dingtalk = %q/%q", cfg.DingTalkToken, cfg.DingTalkSecret)
+	}
 }
 
 func TestLoad_KeywordFilterRaw(t *testing.T) {
