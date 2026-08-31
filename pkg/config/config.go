@@ -97,6 +97,12 @@ type Config struct {
 	SkipVerification  bool
 	DefaultCategories []models.Category
 
+	// Keyword subscription filter (optional — applied after fetch/dedup,
+	// before AI processing; empty = no filtering, behaviour unchanged).
+	// Raw comma-separated values; internal/filter owns the parsing rules.
+	KeywordWhitelistRaw string // KEYWORD_WHITELIST: keep only matching items
+	KeywordBlacklistRaw string // KEYWORD_BLACKLIST: drop matching items
+
 	// Publishing (optional — leave blank to disable Java API publishing)
 	WebsiteAPIBaseURL    string
 	WebsiteAPIToken      string
@@ -151,6 +157,11 @@ type Config struct {
 	// Observability
 	LogLevel     slog.Level
 	AgentVersion string // injected at build time via -ldflags
+
+	// Summary output language: "zh", "en", or "auto" (follow each article's
+	// own language). Also serves as the default chat reply language.
+	// Invalid values fall back to "zh".
+	SummaryLang string
 
 	// Runtime
 	CacheFilePath string // default: "cache/dedup.json"
@@ -300,6 +311,11 @@ func Load() (*Config, error) {
 		cfg.TrustedDomains = defaultTrustedDomains
 	}
 
+	// Keyword subscription filter — parsing (ASCII/，/、 commas) lives in
+	// internal/filter to keep pkg/ free of internal dependencies.
+	cfg.KeywordWhitelistRaw = os.Getenv("KEYWORD_WHITELIST")
+	cfg.KeywordBlacklistRaw = os.Getenv("KEYWORD_BLACKLIST")
+
 	// Default categories
 	if raw := os.Getenv("DEFAULT_CATEGORIES"); raw != "" {
 		parts := strings.Split(raw, ",")
@@ -331,6 +347,9 @@ func Load() (*Config, error) {
 	// Skip verification
 	cfg.SkipVerification = strings.ToLower(os.Getenv("SKIP_VERIFICATION")) == "true"
 
+	// Summary / chat reply language
+	cfg.SummaryLang = parseLangOrDefault(os.Getenv("SUMMARY_LANG"), "zh")
+
 	// Log level
 	cfg.LogLevel = parseLogLevel(os.Getenv("LOG_LEVEL"))
 
@@ -359,6 +378,17 @@ func parsePort(raw string, fallback int) int {
 
 // parseIntOrDefault parses a non-negative integer, returning fallback on
 // missing/invalid input.
+func parseBoolOrDefault(raw string, fallback bool) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "true", "1", "yes":
+		return true
+	case "false", "0", "no":
+		return false
+	default:
+		return fallback
+	}
+}
+
 func parseIntOrDefault(raw string, fallback int) int {
 	if raw == "" {
 		return fallback
@@ -370,15 +400,13 @@ func parseIntOrDefault(raw string, fallback int) int {
 	return n
 }
 
-// parseBoolOrDefault parses "true"/"1"/"yes" (case-insensitive) as true,
-// "false"/"0"/"no"/"" as the fallback for empty input, and the fallback for
-// anything unrecognised.
-func parseBoolOrDefault(raw string, fallback bool) bool {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "true", "1", "yes":
-		return true
-	case "false", "0", "no":
-		return false
+// parseLangOrDefault normalises a language selector, returning fallback on
+// missing/invalid input. Valid values: zh, en, auto.
+func parseLangOrDefault(raw, fallback string) string {
+	normalized := strings.ToLower(strings.TrimSpace(raw))
+	switch normalized {
+	case "zh", "en", "auto":
+		return normalized
 	default:
 		return fallback
 	}

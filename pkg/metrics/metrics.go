@@ -10,8 +10,9 @@ import "sync/atomic"
 // text metrics. Zero values are valid — every counter is an atomic.
 type Counters struct {
 	// Fetch stage
-	ItemsFetched atomic.Int64 // raw items fetched across all sources
-	ItemsDeduped atomic.Int64 // items removed by title-similarity dedup
+	ItemsFetched         atomic.Int64 // raw items fetched across all sources
+	ItemsDeduped         atomic.Int64 // items removed by title-similarity dedup
+	ItemsKeywordFiltered atomic.Int64 // items removed by keyword whitelist/blacklist
 
 	// Full-text extraction stage
 	ItemsExtracted atomic.Int64 // pages whose readable full text was extracted
@@ -38,6 +39,10 @@ type Counters struct {
 	// Runs
 	RunsCompleted atomic.Int64 // pipeline runs that finished (incl. aborted)
 	RunsFailed    atomic.Int64 // pipeline runs aborted with fatal error
+
+	// User feedback on AI output (API upserts; process-lifetime counts)
+	FeedbackUp   atomic.Int64 // 👍 ratings stored (summary/category combined)
+	FeedbackDown atomic.Int64 // 👎 ratings stored (summary/category combined)
 }
 
 // App is the shared global counter set used across pipeline stages.

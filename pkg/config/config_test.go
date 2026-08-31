@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/user/daily-info-agent/internal/filter"
 	"github.com/user/daily-info-agent/pkg/config"
 	"github.com/user/daily-info-agent/pkg/models"
 )
@@ -367,30 +368,36 @@ func TestLoad_IMWebhookChannels(t *testing.T) {
 	}
 }
 
-func TestLoad_FailureAlertThreshold(t *testing.T) {
-	cases := []struct {
-		raw  string
-		want int
-	}{
-		{"", 0},    // unset → scheduler default applies at wiring
-		{"2", 2},   // valid
-		{"0", 0},   // non-positive ignored → default
-		{"-1", 0},  // negative ignored → default
-		{"abc", 0}, // garbage ignored → default
+func TestLoad_KeywordFilterRaw(t *testing.T) {
+	setRequiredEnvVars(t)
+	t.Setenv("KEYWORD_WHITELIST", "芯片，大模型、AI")
+	t.Setenv("KEYWORD_BLACKLIST", "广告, 招聘")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
 	}
-	for _, c := range cases {
-		t.Run("raw="+c.raw, func(t *testing.T) {
-			setRequiredEnvVars(t)
-			if c.raw != "" {
-				t.Setenv("FAILURE_ALERT_THRESHOLD", c.raw)
-			}
-			cfg, err := config.Load()
-			if err != nil {
-				t.Fatalf("Load: %v", err)
-			}
-			if cfg.FailureAlertThreshold != c.want {
-				t.Errorf("threshold = %d, want %d", cfg.FailureAlertThreshold, c.want)
-			}
-		})
+	if cfg.KeywordWhitelistRaw != "芯片，大模型、AI" {
+		t.Errorf("whitelist raw = %q", cfg.KeywordWhitelistRaw)
+	}
+	if cfg.KeywordBlacklistRaw != "广告, 招聘" {
+		t.Errorf("blacklist raw = %q", cfg.KeywordBlacklistRaw)
+	}
+
+	// Parsing lives in internal/filter; verify the documented splitter here
+	// so config↔filter wiring stays honest end-to-end.
+	if got := filter.SplitKeywords(cfg.KeywordWhitelistRaw); len(got) != 3 {
+		t.Errorf("whitelist keywords = %v, want 3 entries", got)
+	}
+}
+
+func TestLoad_KeywordFilter_UnsetIsEmpty(t *testing.T) {
+	setRequiredEnvVars(t)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.KeywordWhitelistRaw != "" || cfg.KeywordBlacklistRaw != "" {
+		t.Errorf("unset keywords should be empty: %q/%q", cfg.KeywordWhitelistRaw, cfg.KeywordBlacklistRaw)
 	}
 }

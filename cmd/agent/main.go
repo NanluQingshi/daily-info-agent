@@ -134,7 +134,7 @@ func main() {
 		aiClient,
 		cfg.LLMModelID,
 		logger.With(slog.String("component", "processor")),
-	)
+	).WithSummaryLang(cfg.SummaryLang)
 
 	// Optional local LLM fallback (e.g. Ollama) when the primary API is down.
 	if cfg.LLMFallbackBaseURL != "" && cfg.LLMFallbackModelID != "" {
@@ -229,10 +229,26 @@ func main() {
 	}
 	multi := notifier.NewMulti(notifLogger, senders...)
 
+	// ---- Build full-text extractor (optional) ----
+	var extractor *extract.Extractor
+	if cfg.FulltextEnabled {
+		extractor = extract.New(
+			httpClient,
+			cfg.FulltextMaxItems,
+			cfg.FulltextConcurrency,
+			logger.With(slog.String("component", "extract")),
+		)
+		logger.Info("full-text extraction enabled",
+			slog.Int("max_items", cfg.FulltextMaxItems),
+			slog.Int("concurrency", cfg.FulltextConcurrency))
+	} else {
+		logger.Info("full-text extraction disabled (FULLTEXT_ENABLED=false)")
+	}
+
 	// ---- Dispatch mode ----
 	switch *modeFlag {
 	case "schedule":
-		runScheduleMode(cfg, mgr, proc, ver, pub, articleStore, multi, logger)
+		runScheduleMode(cfg, mgr, proc, ver, pub, articleStore, multi, extractor, logger)
 	case "server":
 		runServerMode(cfg, mgr, proc, ver, pub, articleStore, extractor, logger)
 	default:
@@ -250,12 +266,16 @@ func runScheduleMode(
 	pub *publisher.Client,
 	st store.ArticleStore,
 	notif *notifier.Multi,
+	extractor *extract.Extractor,
 	logger *slog.Logger,
 ) {
 	sched := scheduler.New(
 		mgr, proc, ver, pub, st, cfg,
 		logger.With(slog.String("component", "scheduler")),
 	)
+	if extractor != nil {
+		sched.WithExtractor(extractor)
+	}
 	if notif != nil && notif.Len() > 0 {
 		sched.WithNotifier(notif)
 
@@ -328,7 +348,7 @@ func runServerMode(
 		st, // nil when DATABASE_DSN is not set; search_stored_articles is disabled
 		logger.With(slog.String("component", "agent")),
 		sessionPersist,
-	)
+	).WithReplyLang(cfg.SummaryLang)
 	chatHandler := chat.New(
 		agentRunner,
 		cfg.ChatAPIToken,
@@ -372,7 +392,7 @@ func runServerMode(
 	e.POST("/api/chat/stream", chatHandler.HandleStream)
 	e.DELETE("/api/sessions/:id", chatHandler.HandleDeleteSession)
 	e.GET("/health", healthHandler(version, st, startTime, cfg.CacheFilePath, cfg.LLMAPIKey != ""))
-	e.GET("/metrics", echo.WrapHandler(http.HandlerFunc(metricsHandler)))
+	e.GET("/metrics", echo.WrapHandler(metricsHandlerWithSources(mgr)))
 
 	// Article management API (database-dependent endpoints return clear
 	// errors when DATABASE_DSN is not configured).
@@ -380,7 +400,7 @@ func runServerMode(
 		mgr, proc, ver, pub, st, cfg,
 		logger.With(slog.String("component", "scheduler")),
 	).WithExtractor(extractor)
-	apiHandler := api.New(st, sched, pub, cfg, logger.With(slog.String("component", "api")))
+	apiHandler := api.New(st, sched, pub, cfg, extractor, logger.With(slog.String("component", "api")))
 	apiHandler.Register(e.Group("/api"))
 
 	// Serve React frontend static files
@@ -568,6 +588,18 @@ func maskDSN(dsn string) string {
 // metricsHandler exposes Go runtime metrics and application counters in
 // a simple text/plain format. Compatible with Prometheus text format parsers.
 func metricsHandler(w http.ResponseWriter, r *http.Request) {
+	writeMetrics(w, r, nil)
+}
+
+// metricsHandlerWithSources additionally exposes per-source fetch health
+// gauges from the fetcher manager (nil manager skips that section).
+func metricsHandlerWithSources(mgr *fetcher.Manager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		writeMetrics(w, r, mgr)
+	}
+}
+
+func writeMetrics(w http.ResponseWriter, r *http.Request, mgr *fetcher.Manager) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 
 	var m runtime.MemStats
@@ -603,13 +635,9 @@ func metricsHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "# TYPE dia_items_deduped counter\n")
 	fmt.Fprintf(w, "dia_items_deduped %d\n", mc.ItemsDeduped.Load())
 
-	fmt.Fprintf(w, "# HELP dia_items_extracted Pages whose full text was extracted\n")
-	fmt.Fprintf(w, "# TYPE dia_items_extracted counter\n")
-	fmt.Fprintf(w, "dia_items_extracted %d\n", mc.ItemsExtracted.Load())
-
-	fmt.Fprintf(w, "# HELP dia_extract_failed Page extractions that failed (fell back to summary)\n")
-	fmt.Fprintf(w, "# TYPE dia_extract_failed counter\n")
-	fmt.Fprintf(w, "dia_extract_failed %d\n", mc.ExtractFailed.Load())
+	fmt.Fprintf(w, "# HELP dia_items_keyword_filtered Items removed by keyword filter\n")
+	fmt.Fprintf(w, "# TYPE dia_items_keyword_filtered counter\n")
+	fmt.Fprintf(w, "dia_items_keyword_filtered %d\n", mc.ItemsKeywordFiltered.Load())
 
 	fmt.Fprintf(w, "# HELP dia_items_processed Items through AI processing\n")
 	fmt.Fprintf(w, "# TYPE dia_items_processed counter\n")
@@ -658,4 +686,33 @@ func metricsHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "# HELP dia_runs_failed Pipeline runs aborted\n")
 	fmt.Fprintf(w, "# TYPE dia_runs_failed counter\n")
 	fmt.Fprintf(w, "dia_runs_failed %d\n", mc.RunsFailed.Load())
+
+	fmt.Fprintf(w, "# HELP dia_feedback_up User up-ratings on AI output stored\n")
+	fmt.Fprintf(w, "# TYPE dia_feedback_up counter\n")
+	fmt.Fprintf(w, "dia_feedback_up %d\n", mc.FeedbackUp.Load())
+
+	fmt.Fprintf(w, "# HELP dia_feedback_down User down-ratings on AI output stored\n")
+	fmt.Fprintf(w, "# TYPE dia_feedback_down counter\n")
+	fmt.Fprintf(w, "dia_feedback_down %d\n", mc.FeedbackDown.Load())
+
+	// ── Per-source fetch health (manager in-memory state) ───────────────
+	if mgr != nil {
+		snaps := mgr.Health()
+		if len(snaps) > 0 {
+			fmt.Fprintf(w, "# HELP dia_source_consecutive_failures Consecutive fetch failures per source\n")
+			fmt.Fprintf(w, "# TYPE dia_source_consecutive_failures gauge\n")
+			for _, s := range snaps {
+				fmt.Fprintf(w, "dia_source_consecutive_failures{source=%q} %d\n", s.Source, s.ConsecutiveFailures)
+			}
+			fmt.Fprintf(w, "# HELP dia_source_disabled 1 when the source is auto-disabled after repeated failures\n")
+			fmt.Fprintf(w, "# TYPE dia_source_disabled gauge\n")
+			for _, s := range snaps {
+				v := 0
+				if s.Skipped {
+					v = 1
+				}
+				fmt.Fprintf(w, "dia_source_disabled{source=%q} %d\n", s.Source, v)
+			}
+		}
+	}
 }
