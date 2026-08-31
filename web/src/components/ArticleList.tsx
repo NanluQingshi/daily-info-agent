@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { Check, RefreshCw, Tags } from "lucide-react";
+import { Check, Download, RefreshCw, Tags } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { batchUpdateTags, listArticles } from "../api/client";
+import { batchUpdateTags, exportArticles, listArticles } from "../api/client";
+import type { ExportFormat } from "../api/client";
 import type { ArticleFilter, ArticleListResponse, ArticleRow } from "../types";
 import { ArticleCard } from "./ArticleCard";
 import { ArticleDetail } from "./ArticleDetail";
@@ -18,6 +19,20 @@ export function ArticleList() {
   const [selected, setSelected] = useState<ArticleRow | null>(null);
   const [checkedIds, setCheckedIds] = useState<Set<number>>(new Set());
   const [tagInput, setTagInput] = useState("");
+  const [exporting, setExporting] = useState<ExportFormat | null>(null);
+
+  const handleExport = async (format: ExportFormat) => {
+    setExporting(format);
+    try {
+      await exportArticles(filter, format);
+      const label = format === "md" ? "Markdown" : format.toUpperCase();
+      showToast("success", `已导出 ${label} 文件`);
+    } catch (e) {
+      showToast("error", (e as Error).message);
+    } finally {
+      setExporting(null);
+    }
+  };
 
   const load = useCallback(() => {
     setLoading(true);
@@ -111,6 +126,33 @@ export function ArticleList() {
           {data && <span className="ml-2 text-sm font-normal text-slate-400">共 {data.total} 篇</span>}
         </h2>
         <div className="flex items-center gap-2">
+          <Button
+            variant="ghost" size="sm" className="h-8 px-2 text-xs"
+            onClick={() => handleExport("csv")}
+            disabled={exporting !== null || (data?.total ?? 0) === 0}
+            title="导出当前筛选结果为 CSV（Excel 可直接打开）"
+          >
+            <Download className={`w-4 h-4 ${exporting === "csv" ? "animate-pulse" : ""}`} />
+            CSV
+          </Button>
+          <Button
+            variant="ghost" size="sm" className="h-8 px-2 text-xs"
+            onClick={() => handleExport("json")}
+            disabled={exporting !== null || (data?.total ?? 0) === 0}
+            title="导出当前筛选结果为 JSON（全字段）"
+          >
+            <Download className={`w-4 h-4 ${exporting === "json" ? "animate-pulse" : ""}`} />
+            JSON
+          </Button>
+          <Button
+            variant="ghost" size="sm" className="h-8 px-2 text-xs"
+            onClick={() => handleExport("md")}
+            disabled={exporting !== null || (data?.total ?? 0) === 0}
+            title="导出当前筛选结果为 Markdown（可读存档）"
+          >
+            <Download className={`w-4 h-4 ${exporting === "md" ? "animate-pulse" : ""}`} />
+            MD
+          </Button>
           <Button variant="ghost" size="sm" onClick={load} disabled={loading} className="h-8 px-2">
             <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
           </Button>

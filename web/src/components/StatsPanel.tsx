@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getStats } from "../api/client";
 import { RunHistoryPanel } from "./RunHistoryPanel";
 import type { StatsResult } from "../types";
+import { SourceHealthPanel } from "./SourceHealthPanel";
 
 // ── Color palette for categories ─────────────────────────────────────────
 
@@ -241,6 +242,9 @@ export function StatsPanel() {
 
       {/* Run history */}
       <RunHistoryPanel />
+
+      {/* Source health */}
+      <SourceHealthPanel />
     </div>
   );
 }

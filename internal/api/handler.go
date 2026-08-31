@@ -33,6 +33,10 @@ type Handler struct {
 
 	limiter *ratelimit.Limiter // nil when API rate limiting is disabled
 
+	// sourceHealth supplies live per-source fetch health; defaults to the
+	// scheduler when wired, overridable for tests.
+	sourceHealth SourceHealthProvider
+
 	pipelineMu      sync.Mutex
 	pipelineRunning bool
 	activeRunID     string
@@ -93,6 +97,9 @@ func New(
 		logger:    logger,
 		runs:      make(map[string]models.RunResult),
 	}
+	if sched != nil {
+		h.sourceHealth = sched
+	}
 	// Optional per-IP rate limit for the management API.
 	if cfg.APIRateLimitPerMin > 0 {
 		h.limiter = ratelimit.New(cfg.APIRateLimitPerMin, time.Minute/time.Duration(cfg.APIRateLimitPerMin))
@@ -128,6 +135,7 @@ func (h *Handler) requireStore(c echo.Context) error {
 // Register attaches all article management routes to the given Echo group.
 func (h *Handler) Register(g *echo.Group) {
 	g.GET("/articles", h.rateLimited(h.ListArticles))
+	g.GET("/articles/export", h.rateLimited(h.ExportArticles))
 	g.GET("/articles/:id", h.rateLimited(h.GetArticle))
 	g.POST("/articles/:id/publish", h.rateLimited(h.PublishArticle))
 	g.POST("/articles/:id/retry", h.rateLimited(h.RetryArticle))
@@ -137,15 +145,14 @@ func (h *Handler) Register(g *echo.Group) {
 	g.GET("/fetch/stream", h.rateLimited(h.StreamFetch))
 	g.GET("/fetch/:run_id", h.rateLimited(h.GetFetchStatus))
 	g.GET("/stats", h.rateLimited(h.GetStats))
+	g.GET("/sources/health", h.rateLimited(h.GetSourceHealth))
 	g.GET("/runs", h.rateLimited(h.GetRuns))
 }
 
-// ListArticles handles GET /api/articles
-func (h *Handler) ListArticles(c echo.Context) error {
-	if err := h.requireStore(c); err != nil {
-		return err
-	}
-
+// parseArticleFilter builds an ArticleFilter from query parameters shared by
+// the list and export endpoints. It writes the error response itself and
+// reports false when a parameter is invalid.
+func parseArticleFilter(c echo.Context) (models.ArticleFilter, bool) {
 	f := models.ArticleFilter{}
 
 	if v := c.QueryParam("category"); v != "" {
@@ -158,14 +165,16 @@ func (h *Handler) ListArticles(c echo.Context) error {
 	if v := c.QueryParam("date_from"); v != "" {
 		t, err := time.Parse(time.DateOnly, v)
 		if err != nil {
-			return errJSON(c, http.StatusBadRequest, "invalid_param", "date_from must be YYYY-MM-DD")
+			errJSON(c, http.StatusBadRequest, "invalid_param", "date_from must be YYYY-MM-DD")
+			return f, false
 		}
 		f.DateFrom = &t
 	}
 	if v := c.QueryParam("date_to"); v != "" {
 		t, err := time.Parse(time.DateOnly, v)
 		if err != nil {
-			return errJSON(c, http.StatusBadRequest, "invalid_param", "date_to must be YYYY-MM-DD")
+			errJSON(c, http.StatusBadRequest, "invalid_param", "date_to must be YYYY-MM-DD")
+			return f, false
 		}
 		end := t.Add(24*time.Hour - time.Second)
 		f.DateTo = &end
@@ -173,18 +182,33 @@ func (h *Handler) ListArticles(c echo.Context) error {
 	if v := c.QueryParam("page"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1 {
-			return errJSON(c, http.StatusBadRequest, "invalid_param", "page must be a positive integer")
+			errJSON(c, http.StatusBadRequest, "invalid_param", "page must be a positive integer")
+			return f, false
 		}
 		f.Page = n
 	}
 	if v := c.QueryParam("page_size"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1 || n > 100 {
-			return errJSON(c, http.StatusBadRequest, "invalid_param", "page_size must be between 1 and 100")
+			errJSON(c, http.StatusBadRequest, "invalid_param", "page_size must be between 1 and 100")
+			return f, false
 		}
 		f.PageSize = n
 	}
 	f.Query = c.QueryParam("q")
+	return f, true
+}
+
+// ListArticles handles GET /api/articles
+func (h *Handler) ListArticles(c echo.Context) error {
+	if err := h.requireStore(c); err != nil {
+		return err
+	}
+
+	f, ok := parseArticleFilter(c)
+	if !ok {
+		return nil
+	}
 
 	articles, total, err := h.store.ListArticles(c.Request().Context(), f)
 	if err != nil {

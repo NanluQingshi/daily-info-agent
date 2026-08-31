@@ -751,6 +751,7 @@ func New(proc *processor.Processor, mgr *fetcher.Manager, sched *scheduler.Sched
 func (h *Handler) Register(g *echo.Group)
 // Registers:
 //   GET    /api/articles
+//   GET    /api/articles/export   (format=csv|json|markdown; same filters as list)
 //   GET    /api/articles/:id
 //   POST   /api/articles/:id/publish
 //   POST   /api/articles/:id/retry
@@ -760,8 +761,25 @@ func (h *Handler) Register(g *echo.Group)
 //   GET    /api/fetch/status/:runID
 //   GET    /api/fetch/stream
 //   GET    /api/stats
+//   GET    /api/sources/health
 //   GET    /api/runs
 ```
+
+Source health details (`GET /api/sources/health`):
+- Live half: `fetcher.Manager` in-memory state per source URL — consecutive failures, auto-disable flag, attempt/failure totals, last outcome/error/timestamps (resets on restart)
+- DB half: per-`source_domain` article count and latest `fetched_at` within a 7-day window (`store.SourceActivity`)
+- Merge key: hostname of the source URL (port stripped, case-normalised); DB-only domains appear as `unknown` (no live state, e.g. after a restart)
+- Status mapping: `disabled` (auto-skipped) → `warning` (≥1 consecutive failure) → `ok`; ordering disabled-first for stable display
+- Graceful degradation: missing scheduler or store still serves the other half; a DB error is logged and does not fail the request
+- `/metrics` additionally exposes `dia_source_consecutive_failures{source=...}` and `dia_source_disabled{source=...}` gauges
+
+Export details (`GET /api/articles/export`):
+- `format=csv` (default): UTF-8 BOM so Excel renders Chinese; `encoding/csv` escaping; tags joined with `|`; includes `content_text`
+- `format=json`: indented full `ArticleRow` array
+- `format=markdown` (alias `md`): one section per article with the complete field set; `content_text` falls back to `content`; leading heading/list markers escaped so field bodies cannot break the document structure
+- Client pagination (`page`/`page_size`) is ignored — exports cover every matching row, paged internally at 100 rows/query
+- Row cap 10 000: exceeding it returns 400 `export_limited` asking the user to narrow filters
+- `Content-Disposition: attachment; filename="articles-<UTC timestamp>.<ext>"`
 
 Run history details (`GET /api/runs?limit=N`, default 20, max 100):
 - Data source: the existing `run_logs` table, written by `logRunSummary` after every scheduled and manually triggered run

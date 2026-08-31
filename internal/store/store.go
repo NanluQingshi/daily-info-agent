@@ -41,8 +41,29 @@ type ArticleStore interface {
 	MarkFailed(ctx context.Context, id int64) error
 	MarkPending(ctx context.Context, id int64) error
 	GetStats(ctx context.Context, since time.Time) (models.StatsResult, error)
+	SourceActivity(ctx context.Context, since time.Time) ([]models.SourceActivity, error)
 	UpdateArticlesTags(ctx context.Context, ids []int64, tags []string) (int, error)
 	Ping(ctx context.Context) error
+}
+
+// SourceActivity returns per-domain article counts and the latest fetch time
+// since the given timestamp. Used by the source health panel.
+func (s *PostgresStore) SourceActivity(ctx context.Context, since time.Time) ([]models.SourceActivity, error) {
+	rows, err := s.pool.Query(ctx, sqlSourceActivity, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]models.SourceActivity, 0)
+	for rows.Next() {
+		var a models.SourceActivity
+		if err := rows.Scan(&a.Domain, &a.Articles, &a.LastFetchedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
 }
 
 // SessionStore is the persistence interface for chat session history.
