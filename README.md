@@ -34,6 +34,21 @@ go run ./cmd/agent --mode=schedule # 定时抓取模式（一次性）
 
 详见 [开发指南](docs/03-DEV-GUIDE.md)。
 
+## Docker 一键部署（含中文全文检索）
+
+`docker compose up -d` 使用 `docker/postgres-zhparser/` 构建的 PostgreSQL 16 镜像：
+内置 [zhparser](https://github.com/amosbird/zhparser) 扩展，中文按词切分（迁移 006 建
+`zh` 配置并重建 `search_tsv`），英文按旧行为不变。数据卷首次初始化时由 initdb 脚本以
+超级用户安装扩展；随后 Agent 启动即自动执行全部迁移。
+
+```bash
+cp .env.example .env && $EDITOR .env   # LLM_API_KEY / LLM_MODEL_ID 必填
+docker compose up -d                   # 构建镜像 + 起库 + 起服务
+```
+
+> 自建 PostgreSQL 时需先以超级用户执行 `CREATE EXTENSION zhparser;`（或直接复用上述
+> Dockerfile），再启动 Agent 迁移。
+
 ## 文档索引
 
 | 编号 | 文档 | 内容 |
@@ -75,6 +90,7 @@ daily-info-agent/
 ├── .dockerignore                  # Docker 构建上下文排除
 ├── Dockerfile                     # 多阶段 Docker 构建
 ├── docker-compose.yml             # 容器编排（PostgreSQL + Agent）
+├── docker/postgres-zhparser/      # 带 zhparser 中文分词扩展的 PG 镜像（#55）
 ├── CHANGELOG.md                   # 版本发布历史
 ├── CONTRIBUTING.md                # 贡献指南
 └── Makefile

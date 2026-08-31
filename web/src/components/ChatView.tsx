@@ -12,6 +12,15 @@ import { ConversationList } from "./ConversationList";
 // ── localStorage persistence ─────────────────────────────────────────────
 
 const STORAGE_KEY = "dia.chat_state";
+const LANG_KEY = "dia.chat_lang";
+
+/** Valid reply-language selectors accepted by the backend. */
+export type ChatLang = "zh" | "en" | "auto";
+
+function loadLang(): ChatLang {
+  const v = localStorage.getItem(LANG_KEY);
+  return v === "en" || v === "auto" ? v : "zh";
+}
 
 // Size limits to keep localStorage usage bounded (~5MB browser quota):
 // - Keep at most MAX_CONVERSATIONS conversations (oldest dropped).
@@ -100,6 +109,13 @@ export function ChatView() {
   const [messagesMap, setMessagesMap] = useState<Record<string, Message[]>>({});
   const [loadingMap, setLoadingMap] = useState<Record<string, boolean>>({});
   const [inputMap, setInputMap] = useState<Record<string, string>>({});
+  const [lang, setLang] = useState<ChatLang>(() => loadLang());
+
+  // Persist the reply-language choice across reloads.
+  const handleLangChange = useCallback((v: ChatLang) => {
+    setLang(v);
+    localStorage.setItem(LANG_KEY, v);
+  }, []);
 
   // Load persisted state on mount
   useEffect(() => {
@@ -260,7 +276,7 @@ export function ChatView() {
           setLoadingMap((prev) => ({ ...prev, [convId]: false }));
           break;
       }
-    }, controller.signal).catch((e: unknown) => {
+    }, controller.signal, lang).catch((e: unknown) => {
       abortRef.current = null;
       // Ignore abort errors
       if ((e as Error).name === "AbortError") return;
@@ -271,7 +287,7 @@ export function ChatView() {
       }));
       setLoadingMap((prev) => ({ ...prev, [convId]: false }));
     });
-  }, [activeId, inputMap, loadingMap, conversations, updateConv, updateLastMessage]);
+  }, [activeId, inputMap, loadingMap, conversations, updateConv, updateLastMessage, lang]);
 
   // ── Conversation management ────────────────────────────────────────────
 
@@ -334,6 +350,8 @@ export function ChatView() {
           }
           onSend={handleSend}
           onStop={handleStop}
+          lang={lang}
+          onLangChange={handleLangChange}
         />
       </div>
     </div>

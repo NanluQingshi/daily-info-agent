@@ -38,10 +38,37 @@ type mockStore struct {
 		article models.ArticleRow
 		err     error
 	}
+	backfillResp struct {
+		refs      []store.ArticleContentRef
+		total     int
+		err       error
+		updateErr error
+		updated   []int64
+		content   map[int64]string
+	}
+
+	feedbackResp struct {
+		upsert models.ArticleFeedbackRow
+		list   []models.ArticleFeedbackRow
+		stats  []models.FeedbackStat
+		err    error
+	}
+
+	flagsResp struct {
+		article models.ArticleRow
+		err     error
+	}
+
 	statsResp struct {
 		stats models.StatsResult
 		err   error
 	}
+
+	listRunsResp struct {
+		runs []models.RunLogRow
+		err  error
+	}
+
 	deleteErr    error
 	markPubErr   error
 	markFailErr  error
@@ -49,6 +76,12 @@ type mockStore struct {
 	saveRunErr   error
 	saveArtErr   error
 	batchTagsErr error
+
+	activity    []models.SourceActivity
+	activityErr error
+	// listFn overrides ListArticles when set (filter-aware behaviour for
+	// tests like export pagination).
+	listFn func(f models.ArticleFilter) ([]models.ArticleRow, int, error)
 }
 
 func (m *mockStore) SaveArticles(ctx context.Context, articles []models.ProcessedArticle, runID string) (int, error) {
@@ -63,6 +96,20 @@ func (m *mockStore) SaveRunLog(ctx context.Context, log models.RunLogRow) error 
 	return m.saveRunErr
 }
 
+func (m *mockStore) ListRunLogs(_ context.Context, limit int) ([]models.RunLogRow, error) {
+	if m.listRunsResp.err != nil {
+		return nil, m.listRunsResp.err
+	}
+	out := make([]models.RunLogRow, 0, len(m.listRunsResp.runs))
+	for i, r := range m.listRunsResp.runs {
+		if i >= limit {
+			break
+		}
+		out = append(out, r)
+	}
+	return out, nil
+}
+
 func (m *mockStore) GetRunLog(ctx context.Context, runID string) (models.RunLogRow, error) {
 	if m.runLogs != nil {
 		if r, ok := m.runLogs[runID]; ok {
@@ -72,7 +119,86 @@ func (m *mockStore) GetRunLog(ctx context.Context, runID string) (models.RunLogR
 	return models.RunLogRow{}, store.ErrNotFound
 }
 
+func (m *mockStore) ArticlesMissingContentText(_ context.Context, limit int) ([]store.ArticleContentRef, int, error) {
+	if m.backfillResp.err != nil {
+		return nil, 0, m.backfillResp.err
+	}
+	refs := make([]store.ArticleContentRef, 0, len(m.backfillResp.refs))
+	for i, r := range m.backfillResp.refs {
+		if limit > 0 && i >= limit {
+			break
+		}
+		refs = append(refs, r)
+	}
+	return refs, m.backfillResp.total, nil
+}
+
+func (m *mockStore) UpdateArticleContentText(_ context.Context, id int64, contentText string) error {
+	if m.backfillResp.updateErr != nil {
+		return m.backfillResp.updateErr
+	}
+	m.backfillResp.updated = append(m.backfillResp.updated, id)
+	m.backfillResp.content[id] = contentText
+	return nil
+}
+
+func (m *mockStore) UpsertArticleFeedback(_ context.Context, articleID int64, kind string, rating int16) (models.ArticleFeedbackRow, error) {
+	if m.feedbackResp.err != nil {
+		return models.ArticleFeedbackRow{}, m.feedbackResp.err
+	}
+	if m.feedbackResp.upsert.ID != 0 {
+		return m.feedbackResp.upsert, nil
+	}
+	return models.ArticleFeedbackRow{
+		ID: 1, ArticleID: articleID, Kind: kind, Rating: rating,
+		CreatedAt: time.Now().UTC(),
+	}, nil
+}
+
+func (m *mockStore) GetArticleFeedback(_ context.Context, _ int64) ([]models.ArticleFeedbackRow, error) {
+	if m.feedbackResp.err != nil {
+		return nil, m.feedbackResp.err
+	}
+	return m.feedbackResp.list, nil
+}
+
+func (m *mockStore) FeedbackStats(_ context.Context) ([]models.FeedbackStat, error) {
+	if m.feedbackResp.err != nil {
+		return nil, m.feedbackResp.err
+	}
+	return m.feedbackResp.stats, nil
+}
+func (m *mockStore) SetArticleFlags(_ context.Context, id int64, bookmarked, read *bool) (models.ArticleRow, error) {
+	if m.flagsResp.err != nil {
+		return models.ArticleRow{}, m.flagsResp.err
+	}
+	if a, ok := m.articles[id]; ok {
+		if bookmarked != nil {
+			a.Bookmarked = *bookmarked
+		}
+		if read != nil && *read {
+			now := time.Now().UTC()
+			a.ReadAt = &now
+		} else if read != nil {
+			a.ReadAt = nil
+		}
+		m.articles[id] = a
+		return a, nil
+	}
+	if m.flagsResp.article.ID != 0 {
+		return m.flagsResp.article, nil
+	}
+	return models.ArticleRow{}, store.ErrNotFound
+}
+
+func (m *mockStore) PruneRunLogs(context.Context, time.Time) (int64, error) { return 0, nil }
+
+func (m *mockStore) PruneArticles(context.Context, time.Time) (int64, error) { return 0, nil }
+
 func (m *mockStore) ListArticles(ctx context.Context, f models.ArticleFilter) ([]models.ArticleRow, int, error) {
+	if m.listFn != nil {
+		return m.listFn(f)
+	}
 	return m.listResp.articles, m.listResp.total, m.listResp.err
 }
 
@@ -98,6 +224,13 @@ func (m *mockStore) MarkPending(ctx context.Context, id int64) error {
 
 func (m *mockStore) GetStats(ctx context.Context, since time.Time) (models.StatsResult, error) {
 	return m.statsResp.stats, m.statsResp.err
+}
+
+func (m *mockStore) SourceActivity(ctx context.Context, since time.Time) ([]models.SourceActivity, error) {
+	if m.activityErr != nil {
+		return nil, m.activityErr
+	}
+	return m.activity, nil
 }
 
 func (m *mockStore) Ping(ctx context.Context) error {
@@ -131,16 +264,16 @@ func newEcho() *echo.Echo {
 }
 
 func newHandler(st store.ArticleStore, sched *scheduler.Scheduler, pub *publisher.Client) *Handler {
-	return New(st, sched, pub, &config.Config{}, slog.Default())
+	return New(st, sched, pub, &config.Config{}, nil, slog.Default())
 }
 
 // newHandlerWithCfg builds a Handler with an explicit config (auth tests).
 func newHandlerWithCfg(cfg *config.Config) *Handler {
-	return New(nil, nil, nil, cfg, slog.Default())
+	return New(nil, nil, nil, cfg, nil, slog.Default())
 }
 
 func newHandlerWithRateLimit(perMin int) *Handler {
-	return New(nil, nil, nil, &config.Config{APIRateLimitPerMin: perMin}, slog.Default())
+	return New(nil, nil, nil, &config.Config{APIRateLimitPerMin: perMin}, nil, slog.Default())
 }
 
 // noopScheduler returns immediately — avoids goroutine panics in async fetch tests.

@@ -322,3 +322,52 @@ func TestHandler_Chat_TokenRequired_BearerAuth_Passes(t *testing.T) {
 	require.NoError(t, h.Handle(c))
 	assert.Equal(t, http.StatusOK, rec.Code)
 }
+
+// ---------------------------------------------------------------------------
+// Reply language selection (issue #48)
+// ---------------------------------------------------------------------------
+
+func TestHandler_Chat_InvalidLang_Returns400(t *testing.T) {
+	e := echo.New()
+	h := newHandlerWithError(t) // LLM never reached
+
+	c, rec := echoContext(e, http.MethodPost, "/api/chat", `{"message":"hi","lang":"french"}`)
+	require.NoError(t, h.Handle(c))
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+	var resp models.ChatErrorResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	assert.Equal(t, "validation_error", resp.Error)
+	assert.Contains(t, resp.Message, "lang")
+}
+
+func TestHandler_Chat_ValidLang_Returns200(t *testing.T) {
+	h := newHandler(t, "Here is your answer.")
+
+	e := echo.New()
+	body, _ := json.Marshal(models.ChatRequest{Message: "any news?", Lang: "en"})
+	c, rec := echoContext(e, http.MethodPost, "/api/chat", string(body))
+	require.NoError(t, h.Handle(c))
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestHandler_Chat_AllLangValues_Accepted(t *testing.T) {
+	h := newHandler(t, "ok")
+
+	for _, lang := range []string{"", "zh", "en", "auto"} {
+		e := echo.New()
+		body, _ := json.Marshal(models.ChatRequest{Message: "hi", Lang: lang})
+		c, rec := echoContext(e, http.MethodPost, "/api/chat", string(body))
+		require.NoError(t, h.Handle(c))
+		assert.Equal(t, http.StatusOK, rec.Code, "lang %q should be accepted", lang)
+	}
+}
+
+func TestHandler_Stream_InvalidLang_Returns400(t *testing.T) {
+	e := echo.New()
+	h := newHandlerWithError(t)
+
+	c, rec := echoContext(e, http.MethodPost, "/api/chat/stream", `{"message":"hi","lang":"xx"}`)
+	require.NoError(t, h.HandleStream(c))
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}

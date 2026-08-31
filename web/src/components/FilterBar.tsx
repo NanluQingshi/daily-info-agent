@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { Search, X } from "lucide-react";
+import { Bookmark, Search, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -41,6 +41,27 @@ export function FilterBar({ filter, onChange }: Props) {
 
   return (
     <div className="flex flex-wrap gap-2 p-3 bg-card border rounded-xl">
+      {/* Bookmarked only */}
+      <Button
+        variant={filter.bookmarked ? "default" : "outline"}
+        onClick={() => set({ bookmarked: filter.bookmarked ? undefined : true })}
+        className="h-9 text-xs"
+        title="仅显示收藏的文章"
+      >
+        <Bookmark className={`w-3.5 h-3.5 ${filter.bookmarked ? "fill-current" : ""}`} />
+        仅收藏
+      </Button>
+
+      {/* Unread only */}
+      <Button
+        variant={filter.unread ? "default" : "outline"}
+        onClick={() => set({ unread: filter.unread ? undefined : true })}
+        className="h-9 text-xs"
+        title="仅显示未读的文章"
+      >
+        仅未读
+      </Button>
+
       {/* Search */}
       <div className="relative flex-1 min-w-40">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
