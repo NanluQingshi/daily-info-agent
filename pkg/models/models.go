@@ -218,6 +218,7 @@ type PublishErrorResponse struct {
 type ChatRequest struct {
 	Message   string `json:"message"`
 	SessionID string `json:"session_id,omitempty"` // empty on first turn; echoed back thereafter
+	Lang      string `json:"lang,omitempty"`       // optional reply language: "zh", "en", or "auto"
 }
 
 // ChatSource is a single source article referenced in a chat response.
@@ -251,6 +252,7 @@ type ChatErrorResponse struct {
 type RunResult struct {
 	RunID          string
 	TotalFetched   int
+	TotalExtracted int // items whose original-page full text was extracted
 	TotalProcessed int
 	TotalSaved     int
 	TotalPublished int
@@ -334,6 +336,7 @@ type BatchTagsResponse struct {
 type RunLogRow struct {
 	RunID          string    `json:"run_id"`
 	TotalFetched   int       `json:"total_fetched"`
+	TotalExtracted int       `json:"total_extracted"`
 	TotalProcessed int       `json:"total_processed"`
 	TotalSaved     int       `json:"total_saved"`
 	TotalPublished int       `json:"total_published"`
@@ -343,6 +346,37 @@ type RunLogRow struct {
 	FatalError     string    `json:"fatal_error"`
 	StartedAt      time.Time `json:"started_at"`
 	FinishedAt     time.Time `json:"finished_at"`
+}
+
+// SourceActivity is per-domain article activity from the database, used by
+// the source health panel.
+type SourceActivity struct {
+	Domain        string    `json:"domain"`
+	Articles      int       `json:"articles"`
+	LastFetchedAt time.Time `json:"last_fetched_at"`
+}
+
+// SourceHealthRow merges in-memory fetch health with DB activity for one
+// source; returned by GET /api/sources/health.
+type SourceHealthRow struct {
+	Source              string     `json:"source"` // feed URL as configured
+	Domain              string     `json:"domain"` // host of the source URL
+	Status              string     `json:"status"` // "ok" | "warning" | "disabled" | "unknown"
+	ConsecutiveFailures int        `json:"consecutive_failures"`
+	TotalAttempts       int64      `json:"total_attempts"`
+	TotalFailures       int64      `json:"total_failures"`
+	LastOutcome         string     `json:"last_outcome,omitempty"` // "ok" | "error"
+	LastError           string     `json:"last_error,omitempty"`
+	LastAttemptAt       *time.Time `json:"last_attempt_at,omitempty"`
+	LastSuccessAt       *time.Time `json:"last_success_at,omitempty"`
+	RecentArticles      int        `json:"recent_articles"` // saved articles in the activity window
+	LastArticleAt       *time.Time `json:"last_article_at,omitempty"`
+}
+
+// SourceHealthResponse is the JSON body of GET /api/sources/health.
+type SourceHealthResponse struct {
+	Sources    []SourceHealthRow `json:"sources"`
+	WindowDays int               `json:"window_days"`
 }
 
 // StatsResult is returned by GET /api/stats.

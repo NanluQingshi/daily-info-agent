@@ -93,6 +93,7 @@ func buildTestScheduler(
 	items []models.RawItem,
 	trustedDomains []string,
 	publishSrv *httptest.Server,
+	cfgMutators ...func(*config.Config),
 ) *scheduler.Scheduler {
 	t.Helper()
 
@@ -121,9 +122,15 @@ func buildTestScheduler(
 
 	// Config: only RSS feeds (not NewsAPI) so only the RSS fetcher is exercised.
 	cfg := &config.Config{
-		RSSFeeds: []string{"http://mock-feed.example.com/rss"}, // single placeholder
+		RSSFeeds:          []string{"http://mock-feed.example.com/rss"}, // single placeholder
 		DefaultCategories: models.AllCategories,
-		SkipVerification: false,
+		SkipVerification:  false,
+	}
+
+	for _, m := range cfgMutators {
+		if m != nil {
+			m(cfg)
+		}
 	}
 
 	return scheduler.New(mgr, proc, ver, pub, nil, cfg,
@@ -280,7 +287,7 @@ func TestScheduler_RunForCategories_MixedVerification_OnlyPassingPublished(t *te
 			capturedBodies = append(capturedBodies, req)
 
 			resp := models.PublishResponse{
-				ID: int64(publishCallCount.Load()),
+				ID:        int64(publishCallCount.Load()),
 				CreatedAt: time.Now().UTC().Format(time.RFC3339), Status: "published",
 			}
 			w.WriteHeader(http.StatusCreated)

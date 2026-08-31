@@ -4,6 +4,8 @@ import type {
   ArticleRow,
   ChatResponse,
   FetchTriggerResponse,
+  RunListResponse,
+  SourceHealthResponse,
   StatsResult,
   StreamEvent,
 } from "../types";
@@ -66,6 +68,45 @@ export function listArticles(f: ArticleFilter = {}): Promise<ArticleListResponse
   return request(`/articles${buildQuery(f as Record<string, string | number | boolean | undefined>)}`);
 }
 
+/** Format of the article export download. "md" renders a readable archive. */
+export type ExportFormat = "csv" | "json" | "md";
+
+/** Triggers a browser download of the article export. */
+export async function exportArticles(filter: ArticleFilter, format: ExportFormat): Promise<void> {
+  // Export always covers every matching row: client-side pagination is
+  // intentionally not forwarded.
+  const params: Record<string, string | number | undefined> = {
+    category: filter.category,
+    status: filter.status,
+    date_from: filter.date_from,
+    date_to: filter.date_to,
+    q: filter.q,
+    format,
+  };
+  const res = await fetch(BASE + "/articles/export" + buildQuery(params), {
+    headers: withAuthHeaders(),
+  });
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`;
+    try {
+      const body = await res.json();
+      if (body.message) message = body.message;
+    } catch { /* keep status-based message */ }
+    throw new Error(message);
+  }
+  const blob = await res.blob();
+  const cd = res.headers.get("Content-Disposition") ?? "";
+  const m = /filename="?([^";]+)"?/.exec(cd);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = m?.[1] ?? `articles.${format}`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export function getArticle(id: number): Promise<ArticleRow> {
   return request(`/articles/${id}`);
 }
@@ -106,6 +147,16 @@ export function triggerFetch(): Promise<FetchTriggerResponse> {
   return request("/fetch", { method: "POST" });
 }
 
+/** Recent pipeline runs for the run history panel. */
+export function getRuns(limit = 30): Promise<RunListResponse> {
+  return request<RunListResponse>(`/runs?limit=${limit}`);
+}
+
+/** Per-source fetch health for the source health panel. */
+export function getSourceHealth(): Promise<SourceHealthResponse> {
+  return request<SourceHealthResponse>("/sources/health");
+}
+
 export function getStats(since?: string): Promise<StatsResult> {
   return request(`/stats${since ? `?since=${since}` : ""}`);
 }
@@ -118,28 +169,30 @@ export async function deleteSession(sessionId: string): Promise<void> {
   }).catch(() => {/* fire-and-forget */});
 }
 
-export function sendChat(message: string, sessionId?: string): Promise<ChatResponse> {
+export function sendChat(message: string, sessionId?: string, lang?: string): Promise<ChatResponse> {
   return request("/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, session_id: sessionId }),
+    body: JSON.stringify({ message, session_id: sessionId, lang }),
   });
 }
 
 /**
  * sendChatStream opens a streaming connection to POST /api/chat/stream
  * and calls onEvent for each SSE event. Returns when the stream ends.
+ * lang optionally sets the reply language ("zh" | "en" | "auto").
  */
 export async function sendChatStream(
   message: string,
   sessionId: string | undefined,
   onEvent: (ev: StreamEvent) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  lang?: string
 ): Promise<void> {
   const res = await fetch("/api/chat/stream", {
     method: "POST",
     headers: withAuthHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify({ message, session_id: sessionId }),
+    body: JSON.stringify({ message, session_id: sessionId, lang }),
     signal,
   });
 

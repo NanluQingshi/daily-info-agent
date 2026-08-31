@@ -55,17 +55,35 @@ type Sender func(StreamEvent)
 //   - The final (answer) iteration uses a streaming LLM call, emitting one
 //     EventDelta per token and a single EventDone at the end.
 func (r *Runner) RunStream(ctx context.Context, sessionID, userMessage string, send Sender) {
+	r.runStream(ctx, sessionID, userMessage, "", send)
+}
+
+// RunStreamWithLang is like RunStream but sets the reply language for this
+// turn ("zh", "en", or "auto"); empty/unrecognised falls back to the
+// Runner's default. See RunWithLang for session-switch semantics.
+func (r *Runner) RunStreamWithLang(ctx context.Context, sessionID, userMessage, lang string, send Sender) {
+	r.runStream(ctx, sessionID, userMessage, lang, send)
+}
+
+func (r *Runner) runStream(ctx context.Context, sessionID, userMessage, lang string, send Sender) {
 	start := time.Now()
 
 	if sessionID == "" {
 		sessionID = uuid.New().String()
 	}
 
+	effectiveLang := normalizeReplyLang(lang)
+	if effectiveLang == "" {
+		effectiveLang = r.replyLang
+	}
+
 	messages := r.sessions.Get(sessionID)
 	if len(messages) == 0 {
 		messages = []openai.ChatCompletionMessage{
-			{Role: openai.ChatMessageRoleSystem, Content: systemPrompt},
+			{Role: openai.ChatMessageRoleSystem, Content: systemPromptFor(effectiveLang)},
 		}
+	} else if lang != "" && messages[0].Role == openai.ChatMessageRoleSystem {
+		messages[0].Content = systemPromptFor(effectiveLang)
 	}
 	messages = append(messages, openai.ChatCompletionMessage{
 		Role:    openai.ChatMessageRoleUser,

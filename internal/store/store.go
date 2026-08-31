@@ -31,16 +31,40 @@ type ArticleStore interface {
 	SaveArticles(ctx context.Context, articles []models.ProcessedArticle, runID string) (int, error)
 	SaveRunLog(ctx context.Context, log models.RunLogRow) error
 	GetRunLog(ctx context.Context, runID string) (models.RunLogRow, error)
+	ListRunLogs(ctx context.Context, limit int) ([]models.RunLogRow, error)
 	ListArticles(ctx context.Context, f models.ArticleFilter) ([]models.ArticleRow, int, error)
 	GetArticle(ctx context.Context, id int64) (models.ArticleRow, error)
 	SetArticleFlags(ctx context.Context, id int64, bookmarked, read *bool) (models.ArticleRow, error)
+	PruneRunLogs(ctx context.Context, before time.Time) (int64, error)
+	PruneArticles(ctx context.Context, before time.Time) (int64, error)
 	DeleteArticle(ctx context.Context, id int64) error
 	MarkPublished(ctx context.Context, id int64, externalID int64) error
 	MarkFailed(ctx context.Context, id int64) error
 	MarkPending(ctx context.Context, id int64) error
 	GetStats(ctx context.Context, since time.Time) (models.StatsResult, error)
+	SourceActivity(ctx context.Context, since time.Time) ([]models.SourceActivity, error)
 	UpdateArticlesTags(ctx context.Context, ids []int64, tags []string) (int, error)
 	Ping(ctx context.Context) error
+}
+
+// SourceActivity returns per-domain article counts and the latest fetch time
+// since the given timestamp. Used by the source health panel.
+func (s *PostgresStore) SourceActivity(ctx context.Context, since time.Time) ([]models.SourceActivity, error) {
+	rows, err := s.pool.Query(ctx, sqlSourceActivity, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]models.SourceActivity, 0)
+	for rows.Next() {
+		var a models.SourceActivity
+		if err := rows.Scan(&a.Domain, &a.Articles, &a.LastFetchedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
 }
 
 // SessionStore is the persistence interface for chat session history.
@@ -152,6 +176,7 @@ func (s *PostgresStore) SaveRunLog(ctx context.Context, log models.RunLogRow) er
 	_, err := s.pool.Exec(ctx, sqlInsertRunLog,
 		log.RunID,
 		log.TotalFetched,
+		log.TotalExtracted,
 		log.TotalProcessed,
 		log.TotalSaved,
 		log.TotalPublished,
@@ -172,6 +197,7 @@ func (s *PostgresStore) GetRunLog(ctx context.Context, runID string) (models.Run
 	err := row.Scan(
 		&r.RunID,
 		&r.TotalFetched,
+		&r.TotalExtracted,
 		&r.TotalProcessed,
 		&r.TotalSaved,
 		&r.TotalPublished,
@@ -186,6 +212,36 @@ func (s *PostgresStore) GetRunLog(ctx context.Context, runID string) (models.Run
 		return models.RunLogRow{}, ErrNotFound
 	}
 	return r, err
+}
+
+// ListRunLogs returns the most recent run logs, newest first. limit is
+// clamped to [1, 100].
+func (s *PostgresStore) ListRunLogs(ctx context.Context, limit int) ([]models.RunLogRow, error) {
+	if limit < 1 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	rows, err := s.pool.Query(ctx, sqlListRunLogs, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]models.RunLogRow, 0, limit)
+	for rows.Next() {
+		var r models.RunLogRow
+		if err := rows.Scan(
+			&r.RunID, &r.TotalFetched, &r.TotalExtracted, &r.TotalProcessed,
+			&r.TotalSaved, &r.TotalPublished, &r.TotalSkipped, &r.TotalFailed,
+			&r.DurationMs, &r.FatalError, &r.StartedAt, &r.FinishedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 // ListArticles returns a paginated, filtered list of articles and total count.
@@ -274,6 +330,27 @@ func (s *PostgresStore) SetArticleFlags(ctx context.Context, id int64, bookmarke
 		return models.ArticleRow{}, ErrNotFound
 	}
 	return scanArticle(rows)
+}
+
+// PruneRunLogs deletes run-log rows started before the cutoff and returns
+// how many were removed (data retention, #74).
+func (s *PostgresStore) PruneRunLogs(ctx context.Context, before time.Time) (int64, error) {
+	ct, err := s.pool.Exec(ctx, sqlPruneRunLogs, before)
+	if err != nil {
+		return 0, err
+	}
+	return ct.RowsAffected(), nil
+}
+
+// PruneArticles deletes articles created before the cutoff regardless of
+// status (a pending article older than the cutoff is stale by definition)
+// and returns how many were removed. Feedback and bookmark state cascade.
+func (s *PostgresStore) PruneArticles(ctx context.Context, before time.Time) (int64, error) {
+	ct, err := s.pool.Exec(ctx, sqlPruneArticles, before)
+	if err != nil {
+		return 0, err
+	}
+	return ct.RowsAffected(), nil
 }
 
 // DeleteArticle hard-deletes an article by id.

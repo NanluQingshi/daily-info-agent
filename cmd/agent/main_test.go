@@ -1,6 +1,14 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"log/slog"
+	"strings"
+
+	"github.com/user/daily-info-agent/internal/fetcher"
+	"github.com/user/daily-info-agent/pkg/models"
+
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -66,6 +74,49 @@ func TestMaskDSN_NoAtSign(t *testing.T) {
 // metricsHandler
 // ---------------------------------------------------------------------------
 
+// metricsFlakyFetcher fails for one source and succeeds for another; drives
+// the manager's health tracking through the public FetchAll API.
+type metricsFlakyFetcher struct{}
+
+func (metricsFlakyFetcher) Name() string { return "rss" }
+
+func (metricsFlakyFetcher) Fetch(_ context.Context, cfg models.FetchConfig) ([]models.RawItem, error) {
+	if strings.Contains(cfg.URL, "flaky") {
+		return nil, errors.New("boom")
+	}
+	return []models.RawItem{}, nil
+}
+
+func TestMetricsHandlerWithSources_ExportSourceGauges(t *testing.T) {
+	mgr := fetcher.NewManager([]fetcher.Fetcher{metricsFlakyFetcher{}}, nil, nil, "", slog.Default())
+	cfgs := []models.FetchConfig{
+		{Type: models.SourceTypeRSS, URL: "https://flaky.example/rss"},
+		{Type: models.SourceTypeRSS, URL: "https://flaky.example/rss"},
+		{Type: models.SourceTypeRSS, URL: "https://flaky.example/rss"}, // 3rd failure → disabled
+		{Type: models.SourceTypeRSS, URL: "https://ok.example/feed"},
+	}
+	_, _ = mgr.FetchAll(context.Background(), cfgs)
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rec := httptest.NewRecorder()
+	metricsHandlerWithSources(mgr)(rec, req)
+
+	body := rec.Body.String()
+	assert.Contains(t, body, `dia_source_consecutive_failures{source="https://flaky.example/rss"} 3`)
+	assert.Contains(t, body, `dia_source_disabled{source="https://flaky.example/rss"} 1`)
+	assert.Contains(t, body, `dia_source_consecutive_failures{source="https://ok.example/feed"} 0`)
+	assert.Contains(t, body, `dia_source_disabled{source="https://ok.example/feed"} 0`)
+}
+
+func TestMetricsHandlerWithSources_NilManager_SkipsGauges(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rec := httptest.NewRecorder()
+	metricsHandlerWithSources(nil)(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.NotContains(t, rec.Body.String(), "dia_source_")
+}
+
 func TestMetricsHandler_ReturnsRuntimeMetrics(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	rec := httptest.NewRecorder()
@@ -81,6 +132,12 @@ func TestMetricsHandler_ReturnsRuntimeMetrics(t *testing.T) {
 	assert.Contains(t, body, "go_mem_sys_bytes")
 	assert.Contains(t, body, "go_gc_total")
 	assert.Contains(t, body, "go_cgo_calls")
+
+	// Application counters, including the keyword-filter removal counter.
+	assert.Contains(t, body, "dia_items_fetched")
+	assert.Contains(t, body, "dia_items_deduped")
+	assert.Contains(t, body, "dia_items_keyword_filtered")
+	assert.Contains(t, body, "dia_items_processed")
 }
 
 func TestMetricsHandler_ContainsValidGaugeValue(t *testing.T) {

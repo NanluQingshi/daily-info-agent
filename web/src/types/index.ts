@@ -39,6 +39,7 @@ export interface ArticleListResponse {
 export interface RunLogRow {
   run_id: string;
   total_fetched: number;
+  total_extracted: number;
   total_processed: number;
   total_saved: number;
   total_published: number;
@@ -48,6 +49,10 @@ export interface RunLogRow {
   fatal_error: string;
   started_at: string;
   finished_at: string;
+}
+
+export interface RunListResponse {
+  runs: RunLogRow[];
 }
 
 export interface DayStat {
@@ -107,6 +112,26 @@ export interface ChatResponse {
   tool_called: boolean;
   fetched_at: string;
   latency_ms: number;
+}
+
+export interface SourceHealthRow {
+  source: string;
+  domain: string;
+  status: "ok" | "warning" | "disabled" | "unknown";
+  consecutive_failures: number;
+  total_attempts: number;
+  total_failures: number;
+  last_outcome?: string;
+  last_error?: string;
+  last_attempt_at?: string;
+  last_success_at?: string;
+  recent_articles: number;
+  last_article_at?: string;
+}
+
+export interface SourceHealthResponse {
+  sources: SourceHealthRow[];
+  window_days: number;
 }
 
 export interface ArticleFilter {

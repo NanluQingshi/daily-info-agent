@@ -46,6 +46,10 @@ type mockStore struct {
 		stats models.StatsResult
 		err   error
 	}
+	listRunsResp struct {
+		runs []models.RunLogRow
+		err  error
+	}
 	deleteErr    error
 	markPubErr   error
 	markFailErr  error
@@ -53,6 +57,12 @@ type mockStore struct {
 	saveRunErr   error
 	saveArtErr   error
 	batchTagsErr error
+
+	activity    []models.SourceActivity
+	activityErr error
+	// listFn overrides ListArticles when set (filter-aware behaviour for
+	// tests like export pagination).
+	listFn func(f models.ArticleFilter) ([]models.ArticleRow, int, error)
 }
 
 func (m *mockStore) SaveArticles(ctx context.Context, articles []models.ProcessedArticle, runID string) (int, error) {
@@ -65,6 +75,20 @@ func (m *mockStore) SaveRunLog(ctx context.Context, log models.RunLogRow) error 
 	}
 	m.runLogs[log.RunID] = log
 	return m.saveRunErr
+}
+
+func (m *mockStore) ListRunLogs(_ context.Context, limit int) ([]models.RunLogRow, error) {
+	if m.listRunsResp.err != nil {
+		return nil, m.listRunsResp.err
+	}
+	out := make([]models.RunLogRow, 0, len(m.listRunsResp.runs))
+	for i, r := range m.listRunsResp.runs {
+		if i >= limit {
+			break
+		}
+		out = append(out, r)
+	}
+	return out, nil
 }
 
 func (m *mockStore) GetRunLog(ctx context.Context, runID string) (models.RunLogRow, error) {
@@ -99,7 +123,14 @@ func (m *mockStore) SetArticleFlags(_ context.Context, id int64, bookmarked, rea
 	return models.ArticleRow{}, store.ErrNotFound
 }
 
+func (m *mockStore) PruneRunLogs(context.Context, time.Time) (int64, error) { return 0, nil }
+
+func (m *mockStore) PruneArticles(context.Context, time.Time) (int64, error) { return 0, nil }
+
 func (m *mockStore) ListArticles(ctx context.Context, f models.ArticleFilter) ([]models.ArticleRow, int, error) {
+	if m.listFn != nil {
+		return m.listFn(f)
+	}
 	return m.listResp.articles, m.listResp.total, m.listResp.err
 }
 
@@ -125,6 +156,13 @@ func (m *mockStore) MarkPending(ctx context.Context, id int64) error {
 
 func (m *mockStore) GetStats(ctx context.Context, since time.Time) (models.StatsResult, error) {
 	return m.statsResp.stats, m.statsResp.err
+}
+
+func (m *mockStore) SourceActivity(ctx context.Context, since time.Time) ([]models.SourceActivity, error) {
+	if m.activityErr != nil {
+		return nil, m.activityErr
+	}
+	return m.activity, nil
 }
 
 func (m *mockStore) Ping(ctx context.Context) error {
