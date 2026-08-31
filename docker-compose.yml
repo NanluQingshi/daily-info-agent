@@ -11,7 +11,11 @@
 services:
   # ── PostgreSQL ─────────────────────────────────────────────────────────
   postgres:
-    image: postgres:16-alpine
+    # Custom image bundling the zhparser extension for Chinese full-text
+    # search (#55); built from docker/postgres-zhparser on first `up`.
+    build:
+      context: ./docker/postgres-zhparser
+    image: dia-postgres-zhparser:16
     container_name: dia-postgres
     restart: unless-stopped
     environment:
@@ -22,6 +26,8 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      # Installs the zhparser extension (as superuser) on first volume init.
+      - ./docker/postgres-zhparser/initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U dia -d daily_info"]
       interval: 10s
@@ -54,6 +60,9 @@ services:
       TRUSTED_DOMAINS:      ${TRUSTED_DOMAINS:-}
       SKIP_VERIFICATION:    ${SKIP_VERIFICATION:-false}
       DEFAULT_CATEGORIES:   ${DEFAULT_CATEGORIES:-}
+      # Keyword subscription filter (optional)
+      KEYWORD_WHITELIST:    ${KEYWORD_WHITELIST:-}
+      KEYWORD_BLACKLIST:    ${KEYWORD_BLACKLIST:-}
       # Publishing (optional)
       WEBSITE_API_BASE_URL: ${WEBSITE_API_BASE_URL:-}
       WEBSITE_API_TOKEN:    ${WEBSITE_API_TOKEN:-}
@@ -66,6 +75,13 @@ services:
       SMTP_PASSWORD:        ${SMTP_PASSWORD:-}
       SMTP_FROM:            ${SMTP_FROM:-}
       NOTIFY_EMAIL:         ${NOTIFY_EMAIL:-}
+      # IM webhook notifications (optional, independent channels)
+      NOTIFY_TELEGRAM_BOT_TOKEN: ${NOTIFY_TELEGRAM_BOT_TOKEN:-}
+      NOTIFY_TELEGRAM_CHAT_ID:   ${NOTIFY_TELEGRAM_CHAT_ID:-}
+      NOTIFY_WECOM_WEBHOOK_URL:  ${NOTIFY_WECOM_WEBHOOK_URL:-}
+      NOTIFY_DINGTALK_ACCESS_TOKEN: ${NOTIFY_DINGTALK_ACCESS_TOKEN:-}
+      NOTIFY_DINGTALK_SECRET:    ${NOTIFY_DINGTALK_SECRET:-}
+      FAILURE_ALERT_THRESHOLD:   ${FAILURE_ALERT_THRESHOLD:-3}
       # HTTP server
       BIND_ADDR:            0.0.0.0:8080
       CORS_ORIGINS:         ${CORS_ORIGINS:-*}
