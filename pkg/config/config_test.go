@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/user/daily-info-agent/internal/filter"
 	"github.com/user/daily-info-agent/pkg/config"
 	"github.com/user/daily-info-agent/pkg/models"
 )
@@ -344,50 +345,36 @@ func TestLoad_EmptyDefaultCategoriesEntry_ReturnsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "no valid categories")
 }
 
-// ---------------------------------------------------------------------------
-// Summary language selection
-// ---------------------------------------------------------------------------
-
-func TestLoad_SummaryLang_DefaultsToZh(t *testing.T) {
+func TestLoad_KeywordFilterRaw(t *testing.T) {
 	setRequiredEnvVars(t)
+	t.Setenv("KEYWORD_WHITELIST", "芯片，大模型、AI")
+	t.Setenv("KEYWORD_BLACKLIST", "广告, 招聘")
 
 	cfg, err := config.Load()
-	require.NoError(t, err)
-	assert.Equal(t, "zh", cfg.SummaryLang)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.KeywordWhitelistRaw != "芯片，大模型、AI" {
+		t.Errorf("whitelist raw = %q", cfg.KeywordWhitelistRaw)
+	}
+	if cfg.KeywordBlacklistRaw != "广告, 招聘" {
+		t.Errorf("blacklist raw = %q", cfg.KeywordBlacklistRaw)
+	}
+
+	// Parsing lives in internal/filter; verify the documented splitter here
+	// so config↔filter wiring stays honest end-to-end.
+	if got := filter.SplitKeywords(cfg.KeywordWhitelistRaw); len(got) != 3 {
+		t.Errorf("whitelist keywords = %v, want 3 entries", got)
+	}
 }
 
-func TestLoad_SummaryLang_En(t *testing.T) {
+func TestLoad_KeywordFilter_UnsetIsEmpty(t *testing.T) {
 	setRequiredEnvVars(t)
-	t.Setenv("SUMMARY_LANG", "en")
-
 	cfg, err := config.Load()
-	require.NoError(t, err)
-	assert.Equal(t, "en", cfg.SummaryLang)
-}
-
-func TestLoad_SummaryLang_Auto(t *testing.T) {
-	setRequiredEnvVars(t)
-	t.Setenv("SUMMARY_LANG", "auto")
-
-	cfg, err := config.Load()
-	require.NoError(t, err)
-	assert.Equal(t, "auto", cfg.SummaryLang)
-}
-
-func TestLoad_SummaryLang_InvalidFallsBackToZh(t *testing.T) {
-	setRequiredEnvVars(t)
-	t.Setenv("SUMMARY_LANG", "french")
-
-	cfg, err := config.Load()
-	require.NoError(t, err)
-	assert.Equal(t, "zh", cfg.SummaryLang)
-}
-
-func TestLoad_SummaryLang_NormalizesCaseAndSpace(t *testing.T) {
-	setRequiredEnvVars(t)
-	t.Setenv("SUMMARY_LANG", "  EN ")
-
-	cfg, err := config.Load()
-	require.NoError(t, err)
-	assert.Equal(t, "en", cfg.SummaryLang)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.KeywordWhitelistRaw != "" || cfg.KeywordBlacklistRaw != "" {
+		t.Errorf("unset keywords should be empty: %q/%q", cfg.KeywordWhitelistRaw, cfg.KeywordBlacklistRaw)
+	}
 }

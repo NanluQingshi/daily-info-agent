@@ -97,6 +97,12 @@ type Config struct {
 	SkipVerification  bool
 	DefaultCategories []models.Category
 
+	// Keyword subscription filter (optional — applied after fetch/dedup,
+	// before AI processing; empty = no filtering, behaviour unchanged).
+	// Raw comma-separated values; internal/filter owns the parsing rules.
+	KeywordWhitelistRaw string // KEYWORD_WHITELIST: keep only matching items
+	KeywordBlacklistRaw string // KEYWORD_BLACKLIST: drop matching items
+
 	// Publishing (optional — leave blank to disable Java API publishing)
 	WebsiteAPIBaseURL    string
 	WebsiteAPIToken      string
@@ -304,6 +310,11 @@ func Load() (*Config, error) {
 	} else {
 		cfg.TrustedDomains = defaultTrustedDomains
 	}
+
+	// Keyword subscription filter — parsing (ASCII/，/、 commas) lives in
+	// internal/filter to keep pkg/ free of internal dependencies.
+	cfg.KeywordWhitelistRaw = os.Getenv("KEYWORD_WHITELIST")
+	cfg.KeywordBlacklistRaw = os.Getenv("KEYWORD_BLACKLIST")
 
 	// Default categories
 	if raw := os.Getenv("DEFAULT_CATEGORIES"); raw != "" {

@@ -81,6 +81,12 @@ func TestMetricsHandler_ReturnsRuntimeMetrics(t *testing.T) {
 	assert.Contains(t, body, "go_mem_sys_bytes")
 	assert.Contains(t, body, "go_gc_total")
 	assert.Contains(t, body, "go_cgo_calls")
+
+	// Application counters, including the keyword-filter removal counter.
+	assert.Contains(t, body, "dia_items_fetched")
+	assert.Contains(t, body, "dia_items_deduped")
+	assert.Contains(t, body, "dia_items_keyword_filtered")
+	assert.Contains(t, body, "dia_items_processed")
 }
 
 func TestMetricsHandler_ContainsValidGaugeValue(t *testing.T) {
