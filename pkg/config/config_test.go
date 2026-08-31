@@ -345,6 +345,29 @@ func TestLoad_EmptyDefaultCategoriesEntry_ReturnsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "no valid categories")
 }
 
+func TestLoad_IMWebhookChannels(t *testing.T) {
+	setRequiredEnvVars(t)
+	t.Setenv("NOTIFY_TELEGRAM_BOT_TOKEN", "111:AAA")
+	t.Setenv("NOTIFY_TELEGRAM_CHAT_ID", "42")
+	t.Setenv("NOTIFY_WECOM_WEBHOOK_URL", "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=k")
+	t.Setenv("NOTIFY_DINGTALK_ACCESS_TOKEN", "tok")
+	t.Setenv("NOTIFY_DINGTALK_SECRET", "sec")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.TelegramBotToken != "111:AAA" || cfg.TelegramChatID != "42" {
+		t.Errorf("telegram = %q/%q", cfg.TelegramBotToken, cfg.TelegramChatID)
+	}
+	if cfg.WeComWebhookURL == "" || !strings.Contains(cfg.WeComWebhookURL, "key=k") {
+		t.Errorf("wecom url = %q", cfg.WeComWebhookURL)
+	}
+	if cfg.DingTalkToken != "tok" || cfg.DingTalkSecret != "sec" {
+		t.Errorf("dingtalk = %q/%q", cfg.DingTalkToken, cfg.DingTalkSecret)
+	}
+}
+
 func TestLoad_KeywordFilterRaw(t *testing.T) {
 	setRequiredEnvVars(t)
 	t.Setenv("KEYWORD_WHITELIST", "芯片，大模型、AI")
