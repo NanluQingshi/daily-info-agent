@@ -71,12 +71,12 @@ func TestNormalizePagination_MaxPageSize(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 type mockPool struct {
-	execFunc       func(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
-	queryFunc      func(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
-	queryRowFunc   func(ctx context.Context, sql string, args ...any) pgx.Row
-	sendBatchFunc  func(ctx context.Context, b *pgx.Batch) pgx.BatchResults
-	pingFunc       func(ctx context.Context) error
-	closeFunc      func()
+	execFunc      func(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+	queryFunc     func(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	queryRowFunc  func(ctx context.Context, sql string, args ...any) pgx.Row
+	sendBatchFunc func(ctx context.Context, b *pgx.Batch) pgx.BatchResults
+	pingFunc      func(ctx context.Context) error
+	closeFunc     func()
 }
 
 func (m *mockPool) Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error) {
@@ -123,8 +123,8 @@ func (m *mockPool) Close() {
 // mockBatchResults implements pgx.BatchResults for testing.
 type mockBatchResults struct {
 	execResults []struct {
-		tag  pgconn.CommandTag
-		err  error
+		tag pgconn.CommandTag
+		err error
 	}
 	idx int
 }
@@ -407,7 +407,7 @@ func TestSaveArticles_WithArticles_Success(t *testing.T) {
 			return &mockBatchResults{
 				execResults: []struct {
 					tag pgconn.CommandTag
-					err  error
+					err error
 				}{
 					{tag: pgconn.NewCommandTag("INSERT 0 1"), err: nil},
 					{tag: pgconn.NewCommandTag("INSERT 0 1"), err: nil},
@@ -474,7 +474,7 @@ func TestSaveArticles_TagsNil_ConvertedToEmpty(t *testing.T) {
 			return &mockBatchResults{
 				execResults: []struct {
 					tag pgconn.CommandTag
-					err  error
+					err error
 				}{
 					{tag: pgconn.NewCommandTag("INSERT 0 1"), err: nil},
 				},
@@ -486,10 +486,10 @@ func TestSaveArticles_TagsNil_ConvertedToEmpty(t *testing.T) {
 	articles := []models.ProcessedArticle{
 		{
 			Raw: &models.RawItem{
-				URL:       "https://example.com/article",
-				Title:     "Test",
+				URL:          "https://example.com/article",
+				Title:        "Test",
 				SourceDomain: "example.com",
-				FetchedAt: time.Now().UTC(),
+				FetchedAt:    time.Now().UTC(),
 			},
 			Tags:         nil,
 			Verification: models.VerificationResult{Pass: true},
@@ -508,7 +508,7 @@ func TestSaveArticles_BatchExecError(t *testing.T) {
 			return &mockBatchResults{
 				execResults: []struct {
 					tag pgconn.CommandTag
-					err  error
+					err error
 				}{
 					{tag: pgconn.CommandTag{}, err: expectedErr},
 				},
@@ -519,10 +519,10 @@ func TestSaveArticles_BatchExecError(t *testing.T) {
 	articles := []models.ProcessedArticle{
 		{
 			Raw: &models.RawItem{
-				URL:       "https://example.com/article",
-				Title:     "Test",
+				URL:          "https://example.com/article",
+				Title:        "Test",
 				SourceDomain: "example.com",
-				FetchedAt: time.Now().UTC(),
+				FetchedAt:    time.Now().UTC(),
 			},
 			Tags:         []string{},
 			Verification: models.VerificationResult{Pass: true},
@@ -540,7 +540,7 @@ func TestSaveArticles_ArticleStatusMapping(t *testing.T) {
 			return &mockBatchResults{
 				execResults: []struct {
 					tag pgconn.CommandTag
-					err  error
+					err error
 				}{
 					{tag: pgconn.NewCommandTag("INSERT 0 1"), err: nil},
 				},
@@ -551,10 +551,10 @@ func TestSaveArticles_ArticleStatusMapping(t *testing.T) {
 	articles := []models.ProcessedArticle{
 		{
 			Raw: &models.RawItem{
-				URL:       "https://skipped.com/article",
-				Title:     "Skipped",
+				URL:          "https://skipped.com/article",
+				Title:        "Skipped",
 				SourceDomain: "skipped.com",
-				FetchedAt: time.Now().UTC(),
+				FetchedAt:    time.Now().UTC(),
 			},
 			Tags:         []string{},
 			Verification: models.VerificationResult{Pass: false, SkipReason: models.SkipReasonLowScore},
@@ -571,29 +571,29 @@ func TestSaveArticles_ArticleStatusMapping(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetArticle_Success(t *testing.T) {
-  now := time.Now().UTC()
-  s := &PostgresStore{pool: &mockPool{
-   queryFunc: func(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
-    return &mockRows{
-     rows: []models.ArticleRow{{}},
-     scanFunc: func(dest ...any) error {
-      vals := []any{
-       int64(1), "run-1", "https://example.com/article", "Test Title",
-       "Description", "Content", "Full body text", "Summary", "科技/AI",
-       "example.com", "rss", 0.85, []string{"tag1"},
-       "en", "en", "1.0.0", true, "", true,
-       "pending", (*int64)(nil), (*time.Time)(nil), now, now, now,
-      }
-      for i, v := range vals {
-       if i < len(dest) {
-        assign(dest[i], v)
-       }
-      }
-      return nil
-     },
-    }, nil
-   },
-  }}
+	now := time.Now().UTC()
+	s := &PostgresStore{pool: &mockPool{
+		queryFunc: func(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+			return &mockRows{
+				rows: []models.ArticleRow{{}},
+				scanFunc: func(dest ...any) error {
+					vals := []any{
+						int64(1), "run-1", "https://example.com/article", "Test Title",
+						"Description", "Content", "Full body text", "Summary", "科技/AI",
+						"example.com", "rss", 0.85, []string{"tag1"},
+						"en", "en", "1.0.0", true, "", true,
+						"pending", (*int64)(nil), (*time.Time)(nil), now, now, now,
+					}
+					for i, v := range vals {
+						if i < len(dest) {
+							assign(dest[i], v)
+						}
+					}
+					return nil
+				},
+			}, nil
+		},
+	}}
 
 	article, err := s.GetArticle(context.Background(), 1)
 	require.NoError(t, err)
@@ -627,7 +627,7 @@ func TestGetRunLog_Success(t *testing.T) {
 			return &mockRow{
 				scanFunc: func(dest ...any) error {
 					vals := []any{
-						"run-1", 100, 80, 50, 30, 20, 10,
+						"run-1", 100, 70, 80, 50, 30, 20, 10,
 						int64(5000), "", now, now,
 					}
 					for i, v := range vals {
