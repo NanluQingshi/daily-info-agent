@@ -10,8 +10,9 @@ import "sync/atomic"
 // text metrics. Zero values are valid — every counter is an atomic.
 type Counters struct {
 	// Fetch stage
-	ItemsFetched atomic.Int64 // raw items fetched across all sources
-	ItemsDeduped atomic.Int64 // items removed by title-similarity dedup
+	ItemsFetched         atomic.Int64 // raw items fetched across all sources
+	ItemsDeduped         atomic.Int64 // items removed by title-similarity dedup
+	ItemsKeywordFiltered atomic.Int64 // items removed by keyword whitelist/blacklist
 
 	// Full-text extraction stage
 	ItemsExtracted atomic.Int64 // pages whose readable full text was extracted
@@ -30,6 +31,10 @@ type Counters struct {
 	ItemsPublished atomic.Int64 // articles successfully published
 	PublishFailed  atomic.Int64 // articles that failed to publish (permanent)
 	PublishRetried atomic.Int64 // articles that succeeded after >= 1 retry
+
+	// Data retention (#74): cumulative rows removed from the database
+	RunLogsPruned  atomic.Int64
+	ArticlesPruned atomic.Int64
 
 	// Runs
 	RunsCompleted atomic.Int64 // pipeline runs that finished (incl. aborted)

@@ -12,6 +12,7 @@ import (
 	"github.com/user/daily-info-agent/internal/dedup"
 	"github.com/user/daily-info-agent/internal/extract"
 	"github.com/user/daily-info-agent/internal/fetcher"
+	"github.com/user/daily-info-agent/internal/filter"
 	"github.com/user/daily-info-agent/internal/processor"
 	"github.com/user/daily-info-agent/internal/publisher"
 	"github.com/user/daily-info-agent/internal/store"
@@ -31,26 +32,40 @@ type Scheduler struct {
 	mgr    *fetcher.Manager
 	proc   *processor.Processor
 	ver    *verifier.Verifier
-	pub    *publisher.Client   // may be nil when Java API is not configured
-	st     store.ArticleStore  // may be nil when DATABASE_DSN is not set
-	notif  DigestSender        // may be nil when SMTP is not configured
+	pub    *publisher.Client  // may be nil when Java API is not configured
+	st     store.ArticleStore // may be nil when DATABASE_DSN is not set
+	notif  DigestSender       // may be nil when SMTP is not configured
 	cfg    *config.Config
 	logger *slog.Logger
+	filter *filter.KeywordFilter // nil-safe: pass-through when unconfigured
 
 	// ext extracts original-page full text between fetch and process.
 	// nil disables the extract stage.
 	ext *extract.Extractor
 
 	// Consecutive-failure alerting.
-	failureMu      sync.Mutex
-	consecutiveFail int
-	onFailures     func(consecutiveFailures int) // called when threshold crossed (may be nil)
+	failureMu          sync.Mutex
+	consecutiveFail    int
+	onFailures         func(consecutiveFailures int) // called when threshold crossed (may be nil)
 	onFailureThreshold int
 }
 
 // OnFailureThreshold returns the default number of consecutive failed runs
 // before an alert fires. Exported for tests.
 const DefaultFailureAlertThreshold = 3
+
+// durationMs converts an elapsed duration to whole milliseconds, rounding up
+// so a real (sub-millisecond) run never reports a misleading 0.
+func durationMs(d time.Duration) int64 {
+	if d <= 0 {
+		return 0
+	}
+	ms := d.Milliseconds()
+	if ms == 0 {
+		return 1
+	}
+	return ms
+}
 
 // New wires all pipeline stages together.
 // pub and st may be nil; when nil those stages are skipped.
@@ -71,6 +86,10 @@ func New(
 		st:     st,
 		cfg:    cfg,
 		logger: logger,
+		filter: filter.New(
+			filter.SplitKeywords(cfg.KeywordWhitelistRaw),
+			filter.SplitKeywords(cfg.KeywordBlacklistRaw),
+		),
 	}
 }
 
@@ -101,6 +120,16 @@ func (s *Scheduler) WithFailureAlert(failureThreshold int, cb func(consecutiveFa
 
 // Run executes the full pipeline for the configured default categories.
 // Returns a RunResult; RunResult.FatalError != nil signals exit 1.
+// SourceHealth exposes the fetcher manager's per-source health snapshot for
+// the management API and /metrics. Nil-safe: returns nil when no manager is
+// wired (manager is a required dependency in practice).
+func (s *Scheduler) SourceHealth() []fetcher.HealthSnapshot {
+	if s.mgr == nil {
+		return nil
+	}
+	return s.mgr.Health()
+}
+
 func (s *Scheduler) Run(ctx context.Context) models.RunResult {
 	return s.RunForCategories(ctx, s.cfg.DefaultCategories)
 }
@@ -148,7 +177,7 @@ func (s *Scheduler) runPipeline(ctx context.Context, categories []models.Categor
 	items, abort := s.fetchStage(ctx, categories, runID, fire)
 	if abort {
 		result.FatalError = fmt.Errorf("fetch stage failed")
-		result.DurationMs = time.Since(start).Milliseconds()
+		result.DurationMs = durationMs(time.Since(start))
 		metrics.App.RunsCompleted.Add(1)
 		metrics.App.RunsFailed.Add(1)
 		s.trackFailure(&result)
@@ -158,12 +187,12 @@ func (s *Scheduler) runPipeline(ctx context.Context, categories []models.Categor
 
 	// ---- Extract stage (full text from original pages, best-effort) ----
 	if len(items) > 0 {
-		s.extractStage(ctx, items, runID, fire)
+		result.TotalExtracted = s.extractStage(ctx, items, runID, fire)
 	}
 
 	if len(items) == 0 {
 		s.logger.Info("no new items fetched; run complete", slog.String("run_id", runID))
-		result.DurationMs = time.Since(start).Milliseconds()
+		result.DurationMs = durationMs(time.Since(start))
 		metrics.App.RunsCompleted.Add(1)
 		fire(models.ProgressEvent{Stage: "done", Status: "done", RunID: runID, Message: "任务完成（无新内容）"})
 		s.trackFailure(&result)
@@ -183,7 +212,7 @@ func (s *Scheduler) runPipeline(ctx context.Context, categories []models.Categor
 	// ---- Publish stage ----
 	s.publishStage(ctx, passing, runID, &result, fire)
 
-	result.DurationMs = time.Since(start).Milliseconds()
+	result.DurationMs = durationMs(time.Since(start))
 
 	// ---- Log run summary ----
 	s.logRunSummary(ctx, &result, start)
@@ -259,6 +288,22 @@ func (s *Scheduler) fetchStage(ctx context.Context, categories []models.Category
 	}
 	items = dedupedItems
 
+	// Keyword subscription filter — prune noise before it reaches the LLM.
+	// Pass-through (and zero metric) when no keywords are configured.
+	if s.filter.Enabled() {
+		var filteredRemoved int
+		items, filteredRemoved = s.filter.Apply(items)
+		metrics.App.ItemsKeywordFiltered.Add(int64(filteredRemoved))
+		if filteredRemoved > 0 {
+			s.logger.Info("stage_complete",
+				slog.String("stage", "keyword_filter"),
+				slog.String("run_id", runID),
+				slog.Int("items_removed", filteredRemoved),
+				slog.Int("items_remaining", len(items)),
+			)
+		}
+	}
+
 	s.logger.Info("stage_complete",
 		slog.String("stage", "fetch"),
 		slog.String("run_id", runID),
@@ -284,9 +329,9 @@ func (s *Scheduler) fetchStage(ctx context.Context, categories []models.Category
 // pages. Best-effort: failures inside the extractor degrade to the feed
 // content and never abort the run. Skipped entirely when no extractor is
 // wired (FULLTEXT_ENABLED=false).
-func (s *Scheduler) extractStage(ctx context.Context, items []models.RawItem, runID string, fire func(models.ProgressEvent)) {
+func (s *Scheduler) extractStage(ctx context.Context, items []models.RawItem, runID string, fire func(models.ProgressEvent)) int {
 	if s.ext == nil {
-		return
+		return 0
 	}
 	fire(models.ProgressEvent{Stage: "extract", Status: "running", Message: "正在提取正文…"})
 	extStart := time.Now()
@@ -306,6 +351,7 @@ func (s *Scheduler) extractStage(ctx context.Context, items []models.RawItem, ru
 		Count:   extracted,
 		Message: fmt.Sprintf("正文提取完成：%d/%d 条", extracted, len(items)),
 	})
+	return extracted
 }
 
 // processStage sends items through AI processing.
@@ -449,6 +495,7 @@ func (s *Scheduler) logRunSummary(ctx context.Context, result *models.RunResult,
 	_ = s.st.SaveRunLog(ctx, models.RunLogRow{
 		RunID:          result.RunID,
 		TotalFetched:   result.TotalFetched,
+		TotalExtracted: result.TotalExtracted,
 		TotalProcessed: result.TotalProcessed,
 		TotalSaved:     result.TotalSaved,
 		TotalPublished: result.TotalPublished,

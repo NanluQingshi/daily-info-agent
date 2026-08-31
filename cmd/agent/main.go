@@ -43,6 +43,7 @@ import (
 	"github.com/user/daily-info-agent/internal/notifier"
 	"github.com/user/daily-info-agent/internal/processor"
 	"github.com/user/daily-info-agent/internal/publisher"
+	"github.com/user/daily-info-agent/internal/retention"
 	"github.com/user/daily-info-agent/internal/scheduler"
 	"github.com/user/daily-info-agent/internal/store"
 	"github.com/user/daily-info-agent/internal/verifier"
@@ -133,7 +134,7 @@ func main() {
 		aiClient,
 		cfg.LLMModelID,
 		logger.With(slog.String("component", "processor")),
-	)
+	).WithSummaryLang(cfg.SummaryLang)
 
 	// Optional local LLM fallback (e.g. Ollama) when the primary API is down.
 	if cfg.LLMFallbackBaseURL != "" && cfg.LLMFallbackModelID != "" {
@@ -187,19 +188,46 @@ func main() {
 		logger.Info("database persistence disabled (DATABASE_DSN not set)")
 	}
 
-	// ---- Build notifier (optional — schedule mode only) ----
-	var notif *notifier.Notifier
+	// ---- Build notification channels (optional — schedule mode only) ----
+	notifLogger := logger.With(slog.String("component", "notifier"))
+	var senders []notifier.Sender
 	if !cfg.DisableNotifier {
-		notif = notifier.New(
+		senders = append(senders, notifier.New(
 			cfg.SMTPHost, cfg.SMTPPort,
 			cfg.SMTPUser, cfg.SMTPPassword, cfg.SMTPFrom,
 			cfg.NotifyEmail,
-			logger.With(slog.String("component", "notifier")),
-		)
+			notifLogger,
+		))
 		logger.Info("email notifier enabled", slog.String("notify_email", cfg.NotifyEmail))
 	} else {
 		logger.Info("email notifier disabled (SMTP_HOST / SMTP_USER / SMTP_PASSWORD / NOTIFY_EMAIL not set)")
 	}
+
+	// IM webhook channels — each enables independently.
+	if cfg.TelegramBotToken != "" && cfg.TelegramChatID != "" {
+		senders = append(senders, notifier.NewWebhookSender(notifier.WebhookConfig{
+			Kind:  notifier.KindTelegram,
+			Token: cfg.TelegramBotToken,
+			Chat:  cfg.TelegramChatID,
+		}, notifLogger))
+		logger.Info("telegram notifier enabled")
+	}
+	if cfg.WeComWebhookURL != "" {
+		senders = append(senders, notifier.NewWebhookSender(notifier.WebhookConfig{
+			Kind: notifier.KindWeCom,
+			URL:  cfg.WeComWebhookURL,
+		}, notifLogger))
+		logger.Info("wecom notifier enabled")
+	}
+	if cfg.DingTalkToken != "" {
+		senders = append(senders, notifier.NewWebhookSender(notifier.WebhookConfig{
+			Kind:   notifier.KindDingTalk,
+			Token:  cfg.DingTalkToken,
+			Secret: cfg.DingTalkSecret,
+		}, notifLogger))
+		logger.Info("dingtalk notifier enabled")
+	}
+	multi := notifier.NewMulti(notifLogger, senders...)
 
 	// ---- Build full-text extractor (optional) ----
 	var extractor *extract.Extractor
@@ -211,9 +239,8 @@ func main() {
 			logger.With(slog.String("component", "extract")),
 		)
 		logger.Info("full-text extraction enabled",
-			slog.Int("max_items_per_run", cfg.FulltextMaxItems),
-			slog.Int("concurrency", cfg.FulltextConcurrency),
-		)
+			slog.Int("max_items", cfg.FulltextMaxItems),
+			slog.Int("concurrency", cfg.FulltextConcurrency))
 	} else {
 		logger.Info("full-text extraction disabled (FULLTEXT_ENABLED=false)")
 	}
@@ -221,7 +248,7 @@ func main() {
 	// ---- Dispatch mode ----
 	switch *modeFlag {
 	case "schedule":
-		runScheduleMode(cfg, mgr, proc, ver, pub, articleStore, notif, extractor, logger)
+		runScheduleMode(cfg, mgr, proc, ver, pub, articleStore, multi, extractor, logger)
 	case "server":
 		runServerMode(cfg, mgr, proc, ver, pub, articleStore, extractor, logger)
 	default:
@@ -238,16 +265,34 @@ func runScheduleMode(
 	ver *verifier.Verifier,
 	pub *publisher.Client,
 	st store.ArticleStore,
-	notif *notifier.Notifier,
+	notif *notifier.Multi,
 	extractor *extract.Extractor,
 	logger *slog.Logger,
 ) {
 	sched := scheduler.New(
 		mgr, proc, ver, pub, st, cfg,
 		logger.With(slog.String("component", "scheduler")),
-	).WithExtractor(extractor)
-	if notif != nil {
+	)
+	if extractor != nil {
+		sched.WithExtractor(extractor)
+	}
+	if notif != nil && notif.Len() > 0 {
 		sched.WithNotifier(notif)
+
+		// Consecutive-failure alert through every enabled channel.
+		threshold := cfg.FailureAlertThreshold
+		if threshold <= 0 {
+			threshold = scheduler.DefaultFailureAlertThreshold
+		}
+		sched.WithFailureAlert(threshold, func(consecutiveFailures int) {
+			alertCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			msg := fmt.Sprintf("⚠️ Daily Info Agent 管道连续失败 %d 次（阈值 %d），请检查服务日志与数据源状态。时间：%s",
+				consecutiveFailures, threshold, time.Now().Format("2006-01-02 15:04:05"))
+			if err := notif.SendAlert(alertCtx, msg); err != nil {
+				logger.Error("failure alert delivery failed", slog.String("error", err.Error()))
+			}
+		})
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
@@ -265,6 +310,10 @@ func runScheduleMode(
 		slog.Int("failed", result.TotalFailed),
 		slog.Int64("duration_ms", result.DurationMs),
 	)
+
+	// Data retention (#74): prune old rows after each scheduled run.
+	retention.New(cfg.RetentionDays, st,
+		logger.With(slog.String("component", "retention"))).Run(ctx)
 
 	if result.FatalError != nil {
 		logger.Error("fatal error in scheduled run",
@@ -299,7 +348,7 @@ func runServerMode(
 		st, // nil when DATABASE_DSN is not set; search_stored_articles is disabled
 		logger.With(slog.String("component", "agent")),
 		sessionPersist,
-	)
+	).WithReplyLang(cfg.SummaryLang)
 	chatHandler := chat.New(
 		agentRunner,
 		cfg.ChatAPIToken,
@@ -343,7 +392,7 @@ func runServerMode(
 	e.POST("/api/chat/stream", chatHandler.HandleStream)
 	e.DELETE("/api/sessions/:id", chatHandler.HandleDeleteSession)
 	e.GET("/health", healthHandler(version, st, startTime, cfg.CacheFilePath, cfg.LLMAPIKey != ""))
-	e.GET("/metrics", echo.WrapHandler(http.HandlerFunc(metricsHandler)))
+	e.GET("/metrics", echo.WrapHandler(metricsHandlerWithSources(mgr)))
 
 	// Article management API (database-dependent endpoints return clear
 	// errors when DATABASE_DSN is not configured).
@@ -356,6 +405,16 @@ func runServerMode(
 
 	// Serve React frontend static files
 	serveStaticFrontend(e)
+
+	// Data retention (#74): prune immediately, then daily until shutdown.
+	retentionCtx, retentionCancel := context.WithCancel(context.Background())
+	defer retentionCancel()
+	retRunner := retention.New(cfg.RetentionDays, st,
+		logger.With(slog.String("component", "retention")))
+	if retRunner.Enabled() {
+		logger.Info("data retention enabled", slog.Int("days", cfg.RetentionDays))
+	}
+	go retRunner.RunForever(retentionCtx)
 
 	go func() {
 		logger.Info("starting HTTP server", slog.String("addr", cfg.BindAddr))
@@ -529,6 +588,18 @@ func maskDSN(dsn string) string {
 // metricsHandler exposes Go runtime metrics and application counters in
 // a simple text/plain format. Compatible with Prometheus text format parsers.
 func metricsHandler(w http.ResponseWriter, r *http.Request) {
+	writeMetrics(w, r, nil)
+}
+
+// metricsHandlerWithSources additionally exposes per-source fetch health
+// gauges from the fetcher manager (nil manager skips that section).
+func metricsHandlerWithSources(mgr *fetcher.Manager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		writeMetrics(w, r, mgr)
+	}
+}
+
+func writeMetrics(w http.ResponseWriter, r *http.Request, mgr *fetcher.Manager) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 
 	var m runtime.MemStats
@@ -564,13 +635,9 @@ func metricsHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "# TYPE dia_items_deduped counter\n")
 	fmt.Fprintf(w, "dia_items_deduped %d\n", mc.ItemsDeduped.Load())
 
-	fmt.Fprintf(w, "# HELP dia_items_extracted Pages whose full text was extracted\n")
-	fmt.Fprintf(w, "# TYPE dia_items_extracted counter\n")
-	fmt.Fprintf(w, "dia_items_extracted %d\n", mc.ItemsExtracted.Load())
-
-	fmt.Fprintf(w, "# HELP dia_extract_failed Page extractions that failed (fell back to summary)\n")
-	fmt.Fprintf(w, "# TYPE dia_extract_failed counter\n")
-	fmt.Fprintf(w, "dia_extract_failed %d\n", mc.ExtractFailed.Load())
+	fmt.Fprintf(w, "# HELP dia_items_keyword_filtered Items removed by keyword filter\n")
+	fmt.Fprintf(w, "# TYPE dia_items_keyword_filtered counter\n")
+	fmt.Fprintf(w, "dia_items_keyword_filtered %d\n", mc.ItemsKeywordFiltered.Load())
 
 	fmt.Fprintf(w, "# HELP dia_items_processed Items through AI processing\n")
 	fmt.Fprintf(w, "# TYPE dia_items_processed counter\n")
@@ -608,6 +675,14 @@ func metricsHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "# TYPE dia_runs_completed counter\n")
 	fmt.Fprintf(w, "dia_runs_completed %d\n", mc.RunsCompleted.Load())
 
+	fmt.Fprintf(w, "# HELP dia_run_logs_pruned Run-log rows removed by retention\n")
+	fmt.Fprintf(w, "# TYPE dia_run_logs_pruned counter\n")
+	fmt.Fprintf(w, "dia_run_logs_pruned %d\n", mc.RunLogsPruned.Load())
+
+	fmt.Fprintf(w, "# HELP dia_articles_pruned Article rows removed by retention\n")
+	fmt.Fprintf(w, "# TYPE dia_articles_pruned counter\n")
+	fmt.Fprintf(w, "dia_articles_pruned %d\n", mc.ArticlesPruned.Load())
+
 	fmt.Fprintf(w, "# HELP dia_runs_failed Pipeline runs aborted\n")
 	fmt.Fprintf(w, "# TYPE dia_runs_failed counter\n")
 	fmt.Fprintf(w, "dia_runs_failed %d\n", mc.RunsFailed.Load())
@@ -619,4 +694,25 @@ func metricsHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "# HELP dia_feedback_down User down-ratings on AI output stored\n")
 	fmt.Fprintf(w, "# TYPE dia_feedback_down counter\n")
 	fmt.Fprintf(w, "dia_feedback_down %d\n", mc.FeedbackDown.Load())
+
+	// ── Per-source fetch health (manager in-memory state) ───────────────
+	if mgr != nil {
+		snaps := mgr.Health()
+		if len(snaps) > 0 {
+			fmt.Fprintf(w, "# HELP dia_source_consecutive_failures Consecutive fetch failures per source\n")
+			fmt.Fprintf(w, "# TYPE dia_source_consecutive_failures gauge\n")
+			for _, s := range snaps {
+				fmt.Fprintf(w, "dia_source_consecutive_failures{source=%q} %d\n", s.Source, s.ConsecutiveFailures)
+			}
+			fmt.Fprintf(w, "# HELP dia_source_disabled 1 when the source is auto-disabled after repeated failures\n")
+			fmt.Fprintf(w, "# TYPE dia_source_disabled gauge\n")
+			for _, s := range snaps {
+				v := 0
+				if s.Skipped {
+					v = 1
+				}
+				fmt.Fprintf(w, "dia_source_disabled{source=%q} %d\n", s.Source, v)
+			}
+		}
+	}
 }
