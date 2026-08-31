@@ -229,10 +229,26 @@ func main() {
 	}
 	multi := notifier.NewMulti(notifLogger, senders...)
 
+	// ---- Build full-text extractor (optional) ----
+	var extractor *extract.Extractor
+	if cfg.FulltextEnabled {
+		extractor = extract.New(
+			httpClient,
+			cfg.FulltextMaxItems,
+			cfg.FulltextConcurrency,
+			logger.With(slog.String("component", "extract")),
+		)
+		logger.Info("full-text extraction enabled",
+			slog.Int("max_items", cfg.FulltextMaxItems),
+			slog.Int("concurrency", cfg.FulltextConcurrency))
+	} else {
+		logger.Info("full-text extraction disabled (FULLTEXT_ENABLED=false)")
+	}
+
 	// ---- Dispatch mode ----
 	switch *modeFlag {
 	case "schedule":
-		runScheduleMode(cfg, mgr, proc, ver, pub, articleStore, multi, logger)
+		runScheduleMode(cfg, mgr, proc, ver, pub, articleStore, multi, extractor, logger)
 	case "server":
 		runServerMode(cfg, mgr, proc, ver, pub, articleStore, extractor, logger)
 	default:
@@ -250,12 +266,16 @@ func runScheduleMode(
 	pub *publisher.Client,
 	st store.ArticleStore,
 	notif *notifier.Multi,
+	extractor *extract.Extractor,
 	logger *slog.Logger,
 ) {
 	sched := scheduler.New(
 		mgr, proc, ver, pub, st, cfg,
 		logger.With(slog.String("component", "scheduler")),
 	)
+	if extractor != nil {
+		sched.WithExtractor(extractor)
+	}
 	if notif != nil && notif.Len() > 0 {
 		sched.WithNotifier(notif)
 

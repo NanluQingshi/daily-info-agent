@@ -67,6 +67,45 @@ export function listArticles(f: ArticleFilter = {}): Promise<ArticleListResponse
   return request(`/articles${buildQuery(f as Record<string, string | number | undefined>)}`);
 }
 
+/** Format of the article export download. "md" renders a readable archive. */
+export type ExportFormat = "csv" | "json" | "md";
+
+/** Triggers a browser download of the article export. */
+export async function exportArticles(filter: ArticleFilter, format: ExportFormat): Promise<void> {
+  // Export always covers every matching row: client-side pagination is
+  // intentionally not forwarded.
+  const params: Record<string, string | number | undefined> = {
+    category: filter.category,
+    status: filter.status,
+    date_from: filter.date_from,
+    date_to: filter.date_to,
+    q: filter.q,
+    format,
+  };
+  const res = await fetch(BASE + "/articles/export" + buildQuery(params), {
+    headers: withAuthHeaders(),
+  });
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`;
+    try {
+      const body = await res.json();
+      if (body.message) message = body.message;
+    } catch { /* keep status-based message */ }
+    throw new Error(message);
+  }
+  const blob = await res.blob();
+  const cd = res.headers.get("Content-Disposition") ?? "";
+  const m = /filename="?([^";]+)"?/.exec(cd);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = m?.[1] ?? `articles.${format}`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export function getArticle(id: number): Promise<ArticleRow> {
   return request(`/articles/${id}`);
 }
