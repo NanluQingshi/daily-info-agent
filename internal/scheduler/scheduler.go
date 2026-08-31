@@ -120,6 +120,16 @@ func (s *Scheduler) WithFailureAlert(failureThreshold int, cb func(consecutiveFa
 
 // Run executes the full pipeline for the configured default categories.
 // Returns a RunResult; RunResult.FatalError != nil signals exit 1.
+// SourceHealth exposes the fetcher manager's per-source health snapshot for
+// the management API and /metrics. Nil-safe: returns nil when no manager is
+// wired (manager is a required dependency in practice).
+func (s *Scheduler) SourceHealth() []fetcher.HealthSnapshot {
+	if s.mgr == nil {
+		return nil
+	}
+	return s.mgr.Health()
+}
+
 func (s *Scheduler) Run(ctx context.Context) models.RunResult {
 	return s.RunForCategories(ctx, s.cfg.DefaultCategories)
 }
@@ -177,7 +187,7 @@ func (s *Scheduler) runPipeline(ctx context.Context, categories []models.Categor
 
 	// ---- Extract stage (full text from original pages, best-effort) ----
 	if len(items) > 0 {
-		s.extractStage(ctx, items, runID, fire)
+		result.TotalExtracted = s.extractStage(ctx, items, runID, fire)
 	}
 
 	if len(items) == 0 {
@@ -319,9 +329,9 @@ func (s *Scheduler) fetchStage(ctx context.Context, categories []models.Category
 // pages. Best-effort: failures inside the extractor degrade to the feed
 // content and never abort the run. Skipped entirely when no extractor is
 // wired (FULLTEXT_ENABLED=false).
-func (s *Scheduler) extractStage(ctx context.Context, items []models.RawItem, runID string, fire func(models.ProgressEvent)) {
+func (s *Scheduler) extractStage(ctx context.Context, items []models.RawItem, runID string, fire func(models.ProgressEvent)) int {
 	if s.ext == nil {
-		return
+		return 0
 	}
 	fire(models.ProgressEvent{Stage: "extract", Status: "running", Message: "正在提取正文…"})
 	extStart := time.Now()
@@ -341,6 +351,7 @@ func (s *Scheduler) extractStage(ctx context.Context, items []models.RawItem, ru
 		Count:   extracted,
 		Message: fmt.Sprintf("正文提取完成：%d/%d 条", extracted, len(items)),
 	})
+	return extracted
 }
 
 // processStage sends items through AI processing.
@@ -484,6 +495,7 @@ func (s *Scheduler) logRunSummary(ctx context.Context, result *models.RunResult,
 	_ = s.st.SaveRunLog(ctx, models.RunLogRow{
 		RunID:          result.RunID,
 		TotalFetched:   result.TotalFetched,
+		TotalExtracted: result.TotalExtracted,
 		TotalProcessed: result.TotalProcessed,
 		TotalSaved:     result.TotalSaved,
 		TotalPublished: result.TotalPublished,

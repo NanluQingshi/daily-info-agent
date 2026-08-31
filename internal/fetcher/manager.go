@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sort"
 	"sync"
 	"time"
 
@@ -113,10 +114,16 @@ type Manager struct {
 // which a source is temporarily skipped.
 const maxConsecutiveFailures = 3
 
-// sourceHealth tracks consecutive failure count for a single source.
+// sourceHealth tracks fetch outcomes for a single source.
 type sourceHealth struct {
 	consecutiveFailures int
 	skipped             bool // temporarily disabled after too many failures
+	totalAttempts       int64
+	totalFailures       int64
+	lastOutcome         string // "ok" | "error"
+	lastError           string
+	lastAttemptAt       time.Time
+	lastSuccessAt       time.Time
 }
 
 // newManagerHealth initialises the health tracking map.
@@ -130,7 +137,7 @@ func (m *Manager) initHealth() {
 
 // recordFailure increments the consecutive failure count for a source and
 // disables it once the threshold is reached.
-func (m *Manager) recordFailure(source string) {
+func (m *Manager) recordFailure(source string, fetchErr error) {
 	m.healthMu.Lock()
 	defer m.healthMu.Unlock()
 	h := m.sourceHealth[source]
@@ -139,6 +146,13 @@ func (m *Manager) recordFailure(source string) {
 		m.sourceHealth[source] = h
 	}
 	h.consecutiveFailures++
+	h.totalAttempts++
+	h.totalFailures++
+	h.lastOutcome = "error"
+	h.lastAttemptAt = time.Now()
+	if fetchErr != nil {
+		h.lastError = fetchErr.Error()
+	}
 	if h.consecutiveFailures >= maxConsecutiveFailures {
 		h.skipped = true
 		m.logger.Warn("source temporarily disabled after consecutive failures",
@@ -152,10 +166,18 @@ func (m *Manager) recordFailure(source string) {
 func (m *Manager) recordSuccess(source string) {
 	m.healthMu.Lock()
 	defer m.healthMu.Unlock()
-	if h, ok := m.sourceHealth[source]; ok {
-		h.consecutiveFailures = 0
-		h.skipped = false
+	h, ok := m.sourceHealth[source]
+	if !ok {
+		h = &sourceHealth{}
+		m.sourceHealth[source] = h
 	}
+	h.consecutiveFailures = 0
+	h.skipped = false
+	h.totalAttempts++
+	h.lastOutcome = "ok"
+	h.lastError = ""
+	h.lastAttemptAt = time.Now()
+	h.lastSuccessAt = h.lastAttemptAt
 }
 
 // isSkipped reports whether a source is temporarily disabled.
@@ -173,10 +195,17 @@ type HealthSnapshot struct {
 	Source              string
 	ConsecutiveFailures int
 	Skipped             bool
+	TotalAttempts       int64
+	TotalFailures       int64
+	LastOutcome         string // "ok" | "error" | "" (never attempted)
+	LastError           string
+	LastAttemptAt       time.Time // zero value when never attempted
+	LastSuccessAt       time.Time // zero value when never succeeded
 }
 
-// Health returns the current health of every tracked source. Intended for
-// exposing via the /metrics endpoint.
+// Health returns the current health of every tracked source, sorted by
+// source name for stable display. Intended for exposing via the /metrics
+// endpoint and the management API.
 func (m *Manager) Health() []HealthSnapshot {
 	m.healthMu.Lock()
 	defer m.healthMu.Unlock()
@@ -186,8 +215,15 @@ func (m *Manager) Health() []HealthSnapshot {
 			Source:              src,
 			ConsecutiveFailures: h.consecutiveFailures,
 			Skipped:             h.skipped,
+			TotalAttempts:       h.totalAttempts,
+			TotalFailures:       h.totalFailures,
+			LastOutcome:         h.lastOutcome,
+			LastError:           h.lastError,
+			LastAttemptAt:       h.lastAttemptAt,
+			LastSuccessAt:       h.lastSuccessAt,
 		})
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Source < out[j].Source })
 	return out
 }
 
@@ -372,7 +408,7 @@ func (m *Manager) fetchConcurrent(ctx context.Context, cfgs []models.FetchConfig
 			defer wg.Done()
 			items, err := jj.fetcher.Fetch(ctx, jj.cfg)
 			if err != nil {
-				m.recordFailure(jj.cfg.URL)
+				m.recordFailure(jj.cfg.URL, err)
 			} else {
 				m.recordSuccess(jj.cfg.URL)
 			}

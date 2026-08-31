@@ -627,7 +627,7 @@ func TestGetRunLog_Success(t *testing.T) {
 			return &mockRow{
 				scanFunc: func(dest ...any) error {
 					vals := []any{
-						"run-1", 100, 80, 50, 30, 20, 10,
+						"run-1", 100, 70, 80, 50, 30, 20, 10,
 						int64(5000), "", now, now,
 					}
 					for i, v := range vals {
