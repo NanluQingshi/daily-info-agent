@@ -41,6 +41,29 @@ func New(host string, port int, user, password, from, to string, logger *slog.Lo
 	}
 }
 
+// Name identifies the channel in logs.
+func (n *Notifier) Name() string { return "email" }
+
+// SendAlert delivers a short alert email wrapped in <pre> (buildMIMEMessage
+// hardcodes a text/html body) so line breaks survive. It reuses sendSMTP with
+// the same context-bounded semantics as the daily digest.
+func (n *Notifier) SendAlert(ctx context.Context, message string) error {
+	subject := fmt.Sprintf("Daily Info Agent 告警 %s", time.Now().Format("2006-01-02 15:04"))
+	msg := buildMIMEMessage(n.from, n.to, subject, alertHTML(message))
+
+	if err := n.sendSMTP(ctx, msg); err != nil {
+		return err
+	}
+	n.logger.Info("alert email sent", slog.String("to", n.to))
+	return nil
+}
+
+// alertHTML wraps an alert message in a <pre> block with HTML escaping so the
+// message body cannot inject markup into the text/html email.
+func alertHTML(message string) string {
+	return `<pre style="font-family:monospace">` + template.HTMLEscapeString(message) + "</pre>"
+}
+
 type summaryData struct {
 	Date       string
 	Categories []categorySection

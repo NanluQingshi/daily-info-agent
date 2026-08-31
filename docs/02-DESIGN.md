@@ -551,9 +551,29 @@ Key design decisions:
 - Rolling 7-day window: entries expire by age
 - Thread-safe: mutex-protected for parallel fetch access
 
+### 4.3.1 `internal/filter` — Keyword Subscription Filter
+
+**Responsibility**: Prune fetched items by user keywords after fetch/dedup and before AI processing, so noise never reaches the LLM.
+
+```go
+package filter
+
+func New(whitelist, blacklist []string) *KeywordFilter
+func (f *KeywordFilter) Enabled() bool
+func (f *KeywordFilter) Apply(items []models.RawItem) (kept []models.RawItem, removed int)
+func SplitKeywords(raw string) []string // KEYWORD_WHITELIST / KEYWORD_BLACKLIST parsing
+```
+
+Key design decisions:
+- Whitelist keeps only matching items; blacklist drops matches; both set → whitelist first, blacklist prunes survivors
+- Case-insensitive substring match on title+description; CJK needs no segmentation ("芯片" matches "国产芯片量产")
+- `SplitKeywords` accepts ASCII `,` plus Chinese `，`/`、` separators
+- Zero-config = zero behaviour change (pass-through, no metric writes)
+- Wired in the scheduler fetch stage; removals counted in `dia_items_keyword_filtered`; a match-nothing run counts as a zero-fetch run (existing failure-tracking semantics)
+
 ### 4.4 `internal/processor` — AI Processing
 
-**Responsibility**: Send batches of `RawItem` to an OpenAI-compatible LLM API; return `ProcessedArticle` slices with category, Chinese summary, credibility score, and tags.
+**Responsibility**: Send batches of `RawItem` to an OpenAI-compatible LLM API; return `ProcessedArticle` slices with category, summary (language configurable via `SUMMARY_LANG=zh|en|auto`, default `zh`; `auto` follows each article's own language), credibility score, and tags.
 
 ```go
 package processor
@@ -668,24 +688,30 @@ Key design decisions:
 - Auto-run SQL migrations on startup (embedded via `//go:embed`)
 - Pagination support across all list queries
 
-### 4.8 `internal/notifier` — Email Digest
+### 4.8 `internal/notifier` — Multi-Channel Digest & Alerts
 
-**Responsibility**: Send a daily summary email via SMTP after the scheduled pipeline completes.
+**Responsibility**: Deliver the daily digest and failure alerts through every enabled channel — SMTP email plus optional IM webhooks (Telegram / WeCom / DingTalk).
 
 ```go
 package notifier
 
-type Notifier struct { /* unexported */ }
+type Sender interface {
+    Name() string
+    SendDailySummary(ctx context.Context, articles []models.ProcessedArticle, result models.RunResult) error
+    SendAlert(ctx context.Context, message string) error
+}
 
-func New(host string, port int, user, password, from, notifyEmail string, logger *slog.Logger) *Notifier
-
-func (n *Notifier) SendDailySummary(ctx context.Context, articles []models.ProcessedArticle, result models.RunResult) error
+func New(host string, port int, user, password, from, notifyEmail string, logger *slog.Logger) *Notifier // email channel
+func NewWebhookSender(cfg WebhookConfig, logger *slog.Logger) *WebhookSender                              // telegram | wecom | dingtalk
+func NewMulti(logger *slog.Logger, senders ...Sender) *Multi                                              // fan-out
 ```
 
 Key design decisions:
-- Uses `net/smtp` (stdlib, no external dependency)
-- STARTTLS on port 587; supports port 465 for SSL
-- Gracefully disabled when SMTP host/user/password/notify-email are empty
+- Email uses `net/smtp` (stdlib, no external dependency); STARTTLS on port 587
+- Webhook channels enable independently via env (`NOTIFY_TELEGRAM_BOT_TOKEN`+`CHAT_ID`, `NOTIFY_WECOM_WEBHOOK_URL`, `NOTIFY_DINGTALK_ACCESS_TOKEN`[+`SECRET`]); DingTalk signed robots get HMAC-SHA256 timestamps
+- `Multi` fans out to all channels; one channel failing never blocks the others — only total failure returns an error
+- IM digests are compact (top 3 per category, hard-capped under IM length limits)
+- Consecutive-failure alerts (`FAILURE_ALERT_THRESHOLD`, default 3) ride the same channels: the scheduler callback is wired in `cmd/agent/main.go`
 
 ### 4.9 `internal/chat` — Conversational HTTP Handler
 
@@ -725,6 +751,7 @@ func New(proc *processor.Processor, mgr *fetcher.Manager, sched *scheduler.Sched
 func (h *Handler) Register(g *echo.Group)
 // Registers:
 //   GET    /api/articles
+//   GET    /api/articles/export   (format=csv|json|markdown; same filters as list)
 //   GET    /api/articles/:id
 //   POST   /api/articles/:id/publish
 //   POST   /api/articles/:id/retry
@@ -733,10 +760,50 @@ func (h *Handler) Register(g *echo.Group)
 //   POST   /api/fetch/:category
 //   GET    /api/fetch/status/:runID
 //   GET    /api/fetch/stream
+//   PATCH  /api/articles/:id/flags (bookmark / read tracking)
+
+//   POST   /api/articles/:id/feedback (👍/👎 on summary/category)
+//   GET    /api/articles/:id/feedback
+//   GET    /api/feedback/stats
 //   POST   /api/articles/backfill-content (batch content_text backfill)
 //   GET    /api/stats
+//   GET    /api/sources/health
+//   GET    /api/runs
 ```
 
+Source health details (`GET /api/sources/health`):
+- Live half: `fetcher.Manager` in-memory state per source URL — consecutive failures, auto-disable flag, attempt/failure totals, last outcome/error/timestamps (resets on restart)
+- DB half: per-`source_domain` article count and latest `fetched_at` within a 7-day window (`store.SourceActivity`)
+- Merge key: hostname of the source URL (port stripped, case-normalised); DB-only domains appear as `unknown` (no live state, e.g. after a restart)
+- Status mapping: `disabled` (auto-skipped) → `warning` (≥1 consecutive failure) → `ok`; ordering disabled-first for stable display
+- Graceful degradation: missing scheduler or store still serves the other half; a DB error is logged and does not fail the request
+- `/metrics` additionally exposes `dia_source_consecutive_failures{source=...}` and `dia_source_disabled{source=...}` gauges
+
+Export details (`GET /api/articles/export`):
+- `format=csv` (default): UTF-8 BOM so Excel renders Chinese; `encoding/csv` escaping; tags joined with `|`; includes `content_text`
+- `format=json`: indented full `ArticleRow` array
+- `format=markdown` (alias `md`): one section per article with the complete field set; `content_text` falls back to `content`; leading heading/list markers escaped so field bodies cannot break the document structure
+- Client pagination (`page`/`page_size`) is ignored — exports cover every matching row, paged internally at 100 rows/query
+- Row cap 10 000: exceeding it returns 400 `export_limited` asking the user to narrow filters
+- `Content-Disposition: attachment; filename="articles-<UTC timestamp>.<ext>"`
+
+Run history details (`GET /api/runs?limit=N`, default 20, max 100):
+- Data source: the existing `run_logs` table, written by `logRunSummary` after every scheduled and manually triggered run
+- Migration 006 adds `total_extracted` so the full-text extraction stage is visible per run alongside fetch/process/save/publish/skip/fail
+- `RunResult.TotalExtracted` is collected from `extractStage` (0 when no extractor is wired) and flows into the persisted row
+- Empty database returns `{"runs": []}` — the frontend panel treats that as a first-run state, not an error
+
+Article flag details (bookmark & read, migration 007):
+- `articles.bookmarked BOOLEAN NOT NULL DEFAULT FALSE`, `articles.read_at TIMESTAMPTZ` (NULL = unread); partial index on bookmarked rows
+- `PATCH /api/articles/:id/flags` body `{bookmarked?, read?}` — nil fields untouched; `read: true` stamps NOW(), `read: false` clears (undo); idempotent; returns the updated article
+- List filters: `?bookmarked=true` (starred only), `?unread=true` (read_at IS NULL) — composable with category/status/date/FTS filters
+- Frontend: star toggle + "已读" action on ArticleCard (read articles render dimmed), 仅收藏/仅未读 toggles in FilterBar
+
+Feedback details (migration 008, `article_feedback` table):
+- Unique `(article_id, kind)` with `kind ∈ {summary, category}`, `rating ∈ {1, -1}`; upsert semantics — repeat clicks overwrite, latest rating wins (idempotent per #61)
+- `GET /api/articles/:id/feedback` returns the stored rows so the UI echoes back prior ratings across refreshes
+- `GET /api/feedback/stats` aggregates up/down per kind — the export channel for prompt tuning
+- `/metrics` exposes process-lifetime counters `dia_feedback_up` / `dia_feedback_down` (incremented on each stored upsert)
 Content backfill details (#56):
 - Target: articles with empty `content_text` and a non-empty `source_url` (saved before FULLTEXT shipped); oldest first
 - `POST /api/articles/backfill-content?limit=N` reuses `internal/extract` in batches of 20 (cap 200/call to bound latency); per-page failures leave stored data untouched and count into `failed`
