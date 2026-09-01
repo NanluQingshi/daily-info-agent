@@ -228,7 +228,7 @@ func TestDedupCache_Save_PrunesExpiredEntries(t *testing.T) {
 	c := &dedupCache{
 		Entries: map[string]time.Time{
 			oldKey:   time.Now().UTC().AddDate(0, 0, -10), // expired
-			freshKey: time.Now().UTC(),                      // fresh
+			freshKey: time.Now().UTC(),                    // fresh
 		},
 		path: path,
 	}
