@@ -120,6 +120,16 @@ func (s *Scheduler) WithFailureAlert(failureThreshold int, cb func(consecutiveFa
 
 // Run executes the full pipeline for the configured default categories.
 // Returns a RunResult; RunResult.FatalError != nil signals exit 1.
+// SourceHealth exposes the fetcher manager's per-source health snapshot for
+// the management API and /metrics. Nil-safe: returns nil when no manager is
+// wired (manager is a required dependency in practice).
+func (s *Scheduler) SourceHealth() []fetcher.HealthSnapshot {
+	if s.mgr == nil {
+		return nil
+	}
+	return s.mgr.Health()
+}
+
 func (s *Scheduler) Run(ctx context.Context) models.RunResult {
 	return s.RunForCategories(ctx, s.cfg.DefaultCategories)
 }

@@ -761,7 +761,16 @@ func (h *Handler) Register(g *echo.Group)
 //   GET    /api/fetch/status/:runID
 //   GET    /api/fetch/stream
 //   GET    /api/stats
+//   GET    /api/sources/health
 ```
+
+Source health details (`GET /api/sources/health`):
+- Live half: `fetcher.Manager` in-memory state per source URL — consecutive failures, auto-disable flag, attempt/failure totals, last outcome/error/timestamps (resets on restart)
+- DB half: per-`source_domain` article count and latest `fetched_at` within a 7-day window (`store.SourceActivity`)
+- Merge key: hostname of the source URL (port stripped, case-normalised); DB-only domains appear as `unknown` (no live state, e.g. after a restart)
+- Status mapping: `disabled` (auto-skipped) → `warning` (≥1 consecutive failure) → `ok`; ordering disabled-first for stable display
+- Graceful degradation: missing scheduler or store still serves the other half; a DB error is logged and does not fail the request
+- `/metrics` additionally exposes `dia_source_consecutive_failures{source=...}` and `dia_source_disabled{source=...}` gauges
 
 Export details (`GET /api/articles/export`):
 - `format=csv` (default): UTF-8 BOM so Excel renders Chinese; `encoding/csv` escaping; tags joined with `|`; includes `content_text`

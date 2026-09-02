@@ -72,3 +72,78 @@ func TestManager_Health_ResetOnSuccess(t *testing.T) {
 	assert.Equal(t, 0, health[0].ConsecutiveFailures)
 	assert.False(t, health[0].Skipped)
 }
+
+// ---------------------------------------------------------------------------
+// Extended snapshot fields (totals, timestamps, last error)
+// ---------------------------------------------------------------------------
+
+func TestHealthSnapshot_TracksTotalsAndErrors(t *testing.T) {
+	m := NewManager(nil, nil, nil, "", slog.Default())
+
+	boom := errors.New("boom: connection reset")
+	m.recordFailure("https://a.example/rss", boom)
+	m.recordFailure("https://a.example/rss", errors.New("second failure"))
+	m.recordSuccess("https://b.example/rss")
+	m.recordFailure("https://b.example/rss", boom)
+
+	snaps := m.Health()
+	require.Len(t, snaps, 2)
+
+	var a, b HealthSnapshot
+	for _, s := range snaps {
+		switch s.Source {
+		case "https://a.example/rss":
+			a = s
+		case "https://b.example/rss":
+			b = s
+		}
+	}
+
+	assert.Equal(t, 2, a.ConsecutiveFailures)
+	assert.Equal(t, int64(2), a.TotalAttempts)
+	assert.Equal(t, int64(2), a.TotalFailures)
+	assert.Equal(t, "error", a.LastOutcome)
+	assert.Equal(t, "second failure", a.LastError) // most recent error kept
+	assert.False(t, a.LastAttemptAt.IsZero())
+	assert.True(t, a.LastSuccessAt.IsZero(), "never succeeded")
+
+	assert.Equal(t, 1, b.ConsecutiveFailures)
+	assert.Equal(t, int64(2), b.TotalAttempts)
+	assert.Equal(t, int64(1), b.TotalFailures)
+	assert.False(t, b.LastSuccessAt.IsZero())
+}
+
+func TestHealthSnapshot_SuccessResetsButKeepsTotals(t *testing.T) {
+	m := NewManager(nil, nil, nil, "", slog.Default())
+
+	m.recordFailure("https://flaky.example/rss", errors.New("x"))
+	m.recordFailure("https://flaky.example/rss", errors.New("y"))
+	m.recordFailure("https://flaky.example/rss", errors.New("z")) // → skipped
+	require.True(t, m.isSkipped("https://flaky.example/rss"))
+
+	m.recordSuccess("https://flaky.example/rss") // recovery re-enables
+	require.False(t, m.isSkipped("https://flaky.example/rss"))
+
+	snaps := m.Health()
+	require.Len(t, snaps, 1)
+	s := snaps[0]
+	assert.Equal(t, 0, s.ConsecutiveFailures)
+	assert.False(t, s.Skipped)
+	assert.Equal(t, int64(4), s.TotalAttempts)
+	assert.Equal(t, int64(3), s.TotalFailures)
+	assert.Equal(t, "ok", s.LastOutcome)
+	assert.Empty(t, s.LastError)
+}
+
+func TestHealthSnapshot_SortedBySource(t *testing.T) {
+	m := NewManager(nil, nil, nil, "", slog.Default())
+	m.recordSuccess("https://z.example/rss")
+	m.recordSuccess("https://a.example/rss")
+	m.recordSuccess("https://m.example/rss")
+
+	snaps := m.Health()
+	require.Len(t, snaps, 3)
+	assert.Equal(t, "https://a.example/rss", snaps[0].Source)
+	assert.Equal(t, "https://m.example/rss", snaps[1].Source)
+	assert.Equal(t, "https://z.example/rss", snaps[2].Source)
+}
