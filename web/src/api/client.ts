@@ -4,7 +4,10 @@ import type {
   ArticleRow,
   ChatResponse,
   FetchTriggerResponse,
+  RunListResponse,
   SourceHealthResponse,
+  SourceListResponse,
+  SourceRow,
   StatsResult,
   StreamEvent,
 } from "../types";
@@ -54,17 +57,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
-function buildQuery(params: Record<string, string | number | undefined>): string {
+function buildQuery(params: Record<string, string | number | boolean | undefined>): string {
   const q = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
-    if (v !== undefined && v !== "") q.set(k, String(v));
+    if (v !== undefined && v !== false && v !== "") q.set(k, String(v));
   }
   const s = q.toString();
   return s ? "?" + s : "";
 }
 
 export function listArticles(f: ArticleFilter = {}): Promise<ArticleListResponse> {
-  return request(`/articles${buildQuery(f as Record<string, string | number | undefined>)}`);
+  return request(`/articles${buildQuery(f as Record<string, string | number | boolean | undefined>)}`);
 }
 
 /** Format of the article export download. "md" renders a readable archive. */
@@ -110,6 +113,46 @@ export function getArticle(id: number): Promise<ArticleRow> {
   return request(`/articles/${id}`);
 }
 
+/** Update bookmark / read flags; omitted fields keep their current value. */
+export function updateArticleFlags(
+  id: number,
+  flags: { bookmarked?: boolean; read?: boolean },
+): Promise<ArticleRow> {
+  return request(`/articles/${id}/flags`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(flags),
+  });
+}
+
+/** Rating kinds users can give feedback on. */
+export type FeedbackKind = "summary" | "category";
+
+export interface ArticleFeedbackRow {
+  id: number;
+  article_id: number;
+  kind: FeedbackKind;
+  rating: 1 | -1;
+  created_at: string;
+}
+
+/** Store a 👍/👎 for one aspect; repeat clicks overwrite (latest wins). */
+export function submitFeedback(
+  id: number,
+  kind: FeedbackKind,
+  rating: 1 | -1,
+): Promise<ArticleFeedbackRow> {
+  return request(`/articles/${id}/feedback`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kind, rating }),
+  });
+}
+
+/** Current feedback state of one article (for UI echo-back). */
+export function getFeedback(id: number): Promise<{ feedback: ArticleFeedbackRow[] }> {
+  return request(`/articles/${id}/feedback`);
+}
 export function publishArticle(id: number): Promise<{ published: boolean; external_id: number }> {
   return request(`/articles/${id}/publish`, { method: "POST" });
 }
@@ -134,9 +177,39 @@ export function triggerFetch(): Promise<FetchTriggerResponse> {
   return request("/fetch", { method: "POST" });
 }
 
+/** Recent pipeline runs for the run history panel. */
+export function getRuns(limit = 30): Promise<RunListResponse> {
+  return request<RunListResponse>(`/runs?limit=${limit}`);
+}
+
 /** Per-source fetch health for the source health panel. */
 export function getSourceHealth(): Promise<SourceHealthResponse> {
   return request<SourceHealthResponse>("/sources/health");
+}
+
+/** Managed RSS sources (issue #80): list / add / toggle / remove. */
+export function listSources(): Promise<SourceListResponse> {
+  return request<SourceListResponse>("/sources");
+}
+
+export function addSource(url: string): Promise<SourceRow> {
+  return request<SourceRow>("/sources", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url }),
+  });
+}
+
+export function setSourceEnabled(id: number, enabled: boolean): Promise<SourceRow> {
+  return request<SourceRow>(`/sources/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  });
+}
+
+export async function removeSource(id: number): Promise<void> {
+  await request(`/sources/${id}`, { method: "DELETE" });
 }
 
 export function getStats(since?: string): Promise<StatsResult> {

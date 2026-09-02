@@ -3,6 +3,7 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
+	"github.com/user/daily-info-agent/internal/extract"
 	"github.com/user/daily-info-agent/internal/publisher"
 	"github.com/user/daily-info-agent/internal/scheduler"
 	"github.com/user/daily-info-agent/internal/store"
@@ -30,6 +32,7 @@ type Handler struct {
 	publisher *publisher.Client // may be nil
 	cfg       *config.Config
 	logger    *slog.Logger
+	extractor Extractor
 
 	limiter *ratelimit.Limiter // nil when API rate limiting is disabled
 
@@ -87,6 +90,7 @@ func New(
 	sched *scheduler.Scheduler,
 	pub *publisher.Client,
 	cfg *config.Config,
+	ext *extract.Extractor,
 	logger *slog.Logger,
 ) *Handler {
 	h := &Handler{
@@ -95,16 +99,48 @@ func New(
 		publisher: pub,
 		cfg:       cfg,
 		logger:    logger,
-		runs:      make(map[string]models.RunResult),
+		// Keep the interface nil (not typed-nil) when extraction is disabled
+		// so BackfillContent's h.extractor == nil check works.
+		runs: make(map[string]models.RunResult),
 	}
 	if sched != nil {
 		h.sourceHealth = sched
 	}
 	// Optional per-IP rate limit for the management API.
+	if ext != nil {
+		h.extractor = ext
+	}
 	if cfg.APIRateLimitPerMin > 0 {
 		h.limiter = ratelimit.New(cfg.APIRateLimitPerMin, time.Minute/time.Duration(cfg.APIRateLimitPerMin))
 	}
 	return h
+}
+
+// tokenAuth rejects requests lacking a valid Bearer token when API_TOKEN
+// is configured. Unset (default) keeps the management API open for local
+// development. Auth runs before rate limiting so rejected requests do not
+// consume per-IP quota.
+func (h *Handler) tokenAuth(next echo.HandlerFunc) echo.HandlerFunc {
+	if h.cfg == nil || h.cfg.APIToken == "" {
+		return next
+	}
+	return func(c echo.Context) error {
+		const prefix = "Bearer "
+		auth := c.Request().Header.Get("Authorization")
+		token := strings.TrimPrefix(auth, prefix)
+		if !strings.HasPrefix(auth, prefix) ||
+			subtle.ConstantTimeCompare([]byte(token), []byte(h.cfg.APIToken)) != 1 {
+			return errJSON(c, http.StatusUnauthorized, "unauthorized",
+				"missing or invalid API token")
+		}
+		return next(c)
+	}
+}
+
+// Extractor is the extraction capability the API depends on; satisfied by
+// *extract.Extractor (nil when FULLTEXT_ENABLED=false).
+type Extractor interface {
+	Enrich(ctx context.Context, items []models.RawItem) int
 }
 
 // rateLimited wraps a handler with per-IP throttling when enabled.
@@ -134,6 +170,11 @@ func (h *Handler) requireStore(c echo.Context) error {
 
 // Register attaches all article management routes to the given Echo group.
 func (h *Handler) Register(g *echo.Group) {
+	// Group-level bearer auth when API_TOKEN is configured. Chat routes
+	// (/api/chat*) are registered on the root echo instance, not this
+	// group, and carry their own CHAT_API_TOKEN auth — both stay exempt.
+	g.Use(h.tokenAuth)
+
 	g.GET("/articles", h.rateLimited(h.ListArticles))
 	g.GET("/articles/export", h.rateLimited(h.ExportArticles))
 	g.GET("/articles/:id", h.rateLimited(h.GetArticle))
@@ -144,8 +185,18 @@ func (h *Handler) Register(g *echo.Group) {
 	g.POST("/fetch", h.rateLimited(h.TriggerFetch))
 	g.GET("/fetch/stream", h.rateLimited(h.StreamFetch))
 	g.GET("/fetch/:run_id", h.rateLimited(h.GetFetchStatus))
+	g.PATCH("/articles/:id/flags", h.rateLimited(h.UpdateArticleFlags))
+	g.POST("/articles/:id/feedback", h.rateLimited(h.SubmitFeedback))
+	g.GET("/articles/:id/feedback", h.rateLimited(h.GetFeedback))
+	g.GET("/feedback/stats", h.rateLimited(h.GetFeedbackStats))
+	g.POST("/articles/backfill-content", h.rateLimited(h.BackfillContent))
 	g.GET("/stats", h.rateLimited(h.GetStats))
 	g.GET("/sources/health", h.rateLimited(h.GetSourceHealth))
+	g.GET("/sources", h.rateLimited(h.ListSources))
+	g.POST("/sources", h.rateLimited(h.AddSource))
+	g.PATCH("/sources/:id", h.rateLimited(h.SetSourceEnabled))
+	g.DELETE("/sources/:id", h.rateLimited(h.RemoveSource))
+	g.GET("/runs", h.rateLimited(h.GetRuns))
 }
 
 // parseArticleFilter builds an ArticleFilter from query parameters shared by
@@ -207,6 +258,21 @@ func (h *Handler) ListArticles(c echo.Context) error {
 	f, ok := parseArticleFilter(c)
 	if !ok {
 		return nil
+	}
+
+	if v := c.QueryParam("bookmarked"); v != "" {
+		b, err := parseBoolFilter(v)
+		if err != nil {
+			return errJSON(c, http.StatusBadRequest, "invalid_param", "bookmarked must be true or false")
+		}
+		f.Bookmarked = b
+	}
+	if v := c.QueryParam("unread"); v != "" {
+		b, err := parseBoolFilter(v)
+		if err != nil {
+			return errJSON(c, http.StatusBadRequest, "invalid_param", "unread must be true or false")
+		}
+		f.Unread = b
 	}
 
 	articles, total, err := h.store.ListArticles(c.Request().Context(), f)

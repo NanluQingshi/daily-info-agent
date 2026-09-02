@@ -1,0 +1,125 @@
+# Migration validation against a real PostgreSQL (#75).
+#
+# golang-migrate only runs at deploy time in normal development, so a
+# broken migration (bad SQL, missing extension, irreversible down) is
+# usually discovered in the review environment. This workflow executes
+# the full up → assert → down → up cycle on a disposable database.
+#
+# The database image mirrors production:
+#   - docker/postgres-zhparser exists (PR #72+) → build it, zhparser
+#     preinstalled via initdb, Chinese-segmentation assertions active
+#   - plain postgres otherwise → base-schema validation only
+#
+# Runs only when migrations/, docker/ or this workflow change — Go/web
+# PRs are unaffected.
+
+name: migrations
+
+on:
+  pull_request:
+    paths:
+      - "migrations/**"
+      - "docker/**"
+      - ".github/workflows/migrations.yml"
+  push:
+    branches: [main]
+    paths:
+      - "migrations/**"
+      - "docker/**"
+      - ".github/workflows/migrations.yml"
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    env:
+      PG_PORT: "54329"
+      PG_USER: dia
+      PG_PASSWORD: citest
+      PG_DB: daily_info
+      MIGRATE_VERSION: v4.18.1
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Start PostgreSQL (zhparser image when present)
+        run: |
+          if [ -f docker/postgres-zhparser/Dockerfile ]; then
+            echo "::group::build zhparser image"
+            docker build -t dia-pg-zh docker/postgres-zhparser
+            echo "::endgroup::"
+            docker run -d --name pg \
+              -e POSTGRES_DB=$PG_DB -e POSTGRES_USER=$PG_USER -e POSTGRES_PASSWORD=$PG_PASSWORD \
+              -p $PG_PORT:5432 \
+              -v "$PWD/docker/postgres-zhparser/initdb:/docker-entrypoint-initdb.d:ro" \
+              dia-pg-zh
+          else
+            docker run -d --name pg \
+              -e POSTGRES_DB=$PG_DB -e POSTGRES_USER=$PG_USER -e POSTGRES_PASSWORD=$PG_PASSWORD \
+              -p $PG_PORT:5432 \
+              postgres:16-alpine
+          fi
+
+      - name: Wait for PostgreSQL
+        run: |
+          for i in $(seq 1 60); do
+            if docker exec pg pg_isready -U $PG_USER -d $PG_DB >/dev/null 2>&1; then
+              echo "postgres is ready"; exit 0
+            fi
+            sleep 2
+          done
+          docker logs pg
+          echo "postgres never became ready" >&2; exit 1
+
+      - name: Install golang-migrate
+        run: go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@$MIGRATE_VERSION
+
+      - name: Migrate up
+        run: |
+          DSN="postgres://$PG_USER:$PG_PASSWORD@127.0.0.1:$PG_PORT/$PG_DB?sslmode=disable"
+          migrate -path migrations -database "$DSN" up
+          echo "DSN=$DSN" >> "$GITHUB_ENV"
+
+      - name: Assert schema and indexes
+        run: |
+          psql() { docker exec pg psql -U $PG_USER -d $PG_DB -Atc "$1"; }
+          # Core tables and columns
+          [ "$(psql "SELECT COUNT(*) FROM information_schema.tables WHERE table_name='articles'")" = "1" ] || { echo "articles missing"; exit 1; }
+          [ "$(psql "SELECT COUNT(*) FROM information_schema.columns WHERE table_name='articles' AND column_name='search_tsv'")" = "1" ] || { echo "search_tsv missing"; exit 1; }
+          # GIN index on the tsvector
+          [ "$(psql "SELECT COUNT(*) FROM pg_indexes WHERE indexname='idx_articles_search_tsv' AND indexdef LIKE '%GIN%'")" = "1" ] || { echo "GIN index missing"; exit 1; }
+          echo "base schema assertions passed"
+
+      - name: Assert Chinese segmentation (when zhparser migration present)
+        if: hashFiles('migrations/*zhparser*') != ''
+        run: |
+          psql() { docker exec pg psql -U $PG_USER -d $PG_DB -Atc "$1"; }
+          [ "$(psql "SELECT COUNT(*) FROM pg_extension WHERE extname='zhparser'")" = "1" ] || { echo "zhparser extension not installed"; exit 1; }
+          [ "$(psql "SELECT COUNT(*) FROM pg_ts_config WHERE cfgname='zh'")" = "1" ] || { echo "text search config 'zh' missing"; exit 1; }
+          # 'simple' would emit one lexeme for the whole CJK string;
+          # proper segmentation must produce several.
+          LEXEMES=$(psql "SELECT count(*) FROM unnest(to_tsvector('zh', '人工智能正在改变世界的世界'))")
+          echo "zh lexemes: $LEXEMES"
+          [ "$LEXEMES" -gt 3 ] || { echo "Chinese text was not segmented"; exit 1; }
+          echo "zhparser segmentation assertions passed"
+
+      - name: Migrate fully down and back up (reversibility + idempotency)
+        run: |
+          N=$(ls migrations/*.up.sql | wc -l | tr -d ' ')
+          echo "stepping down $N migrations one by one"
+          for i in $(seq 1 $N); do
+            migrate -path migrations -database "$DSN" down 1 || { echo "down $i failed"; exit 1; }
+          done
+          # Schema must be empty again apart from golang-migrate's bookkeeping
+          LEFT=$(docker exec pg psql -U $PG_USER -d $PG_DB -Atc \
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name <> 'schema_migrations'")
+          [ "$LEFT" = "0" ] || { docker exec pg psql -U $PG_USER -d $PG_DB -c '\dt'; echo "down migration left tables behind"; exit 1; }
+          echo "re-up from empty"
+          migrate -path migrations -database "$DSN" up
+          echo "down/up cycle passed"

@@ -146,6 +146,10 @@ type Config struct {
 	// each scheduled run (and daily in server mode). 0 disables pruning.
 	RetentionDays int
 
+	// APIToken optionally protects all /api management endpoints with
+	// Bearer auth. Empty (default) keeps the API open for local dev.
+	APIToken string
+
 	// Chat rate limit: max requests per minute per client IP across the chat
 	// endpoints. 0 disables limiting.
 	ChatRateLimitPerMin int
@@ -221,6 +225,7 @@ func Load() (*Config, error) {
 
 	// Optional chat API auth token
 	cfg.ChatAPIToken = strings.TrimSpace(os.Getenv("CHAT_API_TOKEN"))
+	cfg.APIToken = strings.TrimSpace(os.Getenv("API_TOKEN"))
 
 	// Optional per-IP chat rate limit (requests per minute)
 	cfg.ChatRateLimitPerMin = parseIntOrDefault(os.Getenv("CHAT_RATE_LIMIT_PER_MIN"), 0)
