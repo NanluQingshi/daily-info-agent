@@ -134,6 +134,18 @@ export interface SourceHealthResponse {
   window_days: number;
 }
 
+/** Managed RSS source (GET/POST/PATCH/DELETE /api/sources, issue #80). */
+export interface SourceRow {
+  id: number;
+  url: string;
+  enabled: boolean;
+  created_at: string;
+}
+
+export interface SourceListResponse {
+  sources: SourceRow[];
+}
+
 export interface ArticleFilter {
   bookmarked?: boolean;
   unread?: boolean;

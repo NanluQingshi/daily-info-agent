@@ -772,6 +772,10 @@ func (h *Handler) Register(g *echo.Group)
 //   GET    /api/stats
 //   GET    /api/sources/health
 //   GET    /api/runs
+//   GET    /api/sources            (list managed RSS sources)
+//   POST   /api/sources            (add; 409 on duplicate URL)
+//   PATCH  /api/sources/:id        (enable / pause)
+//   DELETE /api/sources/:id        (remove; keeps articles & history)
 ```
 
 Source health details (`GET /api/sources/health`):
@@ -789,6 +793,13 @@ Export details (`GET /api/articles/export`):
 - Client pagination (`page`/`page_size`) is ignored — exports cover every matching row, paged internally at 100 rows/query
 - Row cap 10 000: exceeding it returns 400 `export_limited` asking the user to narrow filters
 - `Content-Disposition: attachment; filename="articles-<UTC timestamp>.<ext>"`
+
+Managed sources details (issue #80, migration 010 `sources` table):
+- `sources(id, url UNIQUE, enabled, created_at)`; first startup with a configured database seeds the static `RSS_FEEDS` list into the table once — from then on the DB is the single source of truth
+- The scheduler takes a `WithSourcesProvider` hook resolved at the start of every fetch stage: provider rows win, an empty-but-present list ("all paused") is respected, and a nil result (table empty / unset / DB error) falls back to the static config list so zero-config startup keeps working
+- `POST /api/sources {url}` validates absolute http(s) URLs and returns 409 on duplicates; `PATCH /api/sources/:id {enabled}` pauses without losing health history; `DELETE /api/sources/:id` removes only future fetching — stored articles stay
+- All four endpoints sit behind the shared management pipeline (rate limiting + optional `API_TOKEN` Bearer auth)
+- Frontend: 数据源管理 panel above the health panel (add / pause / remove with toasts); refreshes the health view after changes
 
 Run history details (`GET /api/runs?limit=N`, default 20, max 100):
 - Data source: the existing `run_logs` table, written by `logRunSummary` after every scheduled and manually triggered run

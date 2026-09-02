@@ -182,6 +182,7 @@ Notify (email digest)
 | FR-MGT-008 | The service MUST expose SSE `GET /api/fetch/stream` for real-time fetch progress. | Client receives progress events as fetching and processing proceed. |
 | FR-MGT-009 | The service MUST expose `GET /api/articles/export?format=csv\|json\|markdown` to download the filtered article list. | CSV (Excel-friendly BOM, escaped fields, content_text column), JSON (full rows), or Markdown (readable archive); accepts the same category/status/date/q filters as the list endpoint; capped at 10 000 rows per export. |
 | FR-MGT-016 | Database migrations MUST be validated against a real PostgreSQL in CI. | PRs touching `migrations/` or `docker/` run the full up → assertions → down → up cycle; Chinese segmentation asserted when the zhparser migration is present. |
+| FR-MGT-017 | RSS sources MUST be manageable at runtime without a restart. | `sources` table (migration 010) seeded once from `RSS_FEEDS`; `GET/POST /api/sources` + `PATCH/DELETE /api/sources/:id` (token-protected); scheduler resolves enabled URLs from the DB each run — adding, pausing, or removing a source applies on the next run. |
 
 ### FR-Fetching: Data Source Adapters
 

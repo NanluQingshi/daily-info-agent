@@ -198,3 +198,21 @@ ON CONFLICT (session_id)
 DO UPDATE SET messages = EXCLUDED.messages, updated_at = NOW()`
 
 const sqlDeleteSession = `DELETE FROM sessions WHERE session_id = $1`
+
+const sqlListSources = `
+SELECT id, url, enabled, created_at
+FROM sources
+ORDER BY created_at, id`
+
+const sqlAddSource = `
+INSERT INTO sources (url)
+VALUES ($1)
+ON CONFLICT (url) DO NOTHING
+RETURNING id, url, enabled, created_at`
+
+const sqlSetSourceEnabled = `
+UPDATE sources SET enabled = $2
+WHERE id = $1
+RETURNING id, url, enabled, created_at`
+
+const sqlRemoveSource = `DELETE FROM sources WHERE id = $1`

@@ -258,6 +258,66 @@ func main() {
 }
 
 // runScheduleMode executes the full scheduled pipeline and exits with appropriate code.
+// seedSources performs the one-time import of the static RSS_FEEDS list
+// into the sources table (issue #80). Once the table holds rows the DB is
+// the single source of truth; before that (fresh deployment, or no DATABASE_
+// DSN) behaviour is unchanged.
+func seedSources(ctx context.Context, st store.ArticleStore, cfg *config.Config, logger *slog.Logger) {
+	if st == nil || len(cfg.RSSFeeds) == 0 {
+		return
+	}
+	existing, err := st.ListSources(ctx)
+	if err != nil {
+		logger.Warn("cannot read sources table; skipping seed (static RSS_FEEDS stays in effect)",
+			slog.String("error", err.Error()))
+		return
+	}
+	if len(existing) > 0 {
+		return // already seeded (or user-managed)
+	}
+	added := 0
+	for _, u := range cfg.RSSFeeds {
+		if _, err := st.AddSource(ctx, u); err != nil {
+			logger.Warn("seeding source failed", slog.String("url", u), slog.String("error", err.Error()))
+			continue
+		}
+		added++
+	}
+	logger.Info("seeded sources table from RSS_FEEDS", slog.Int("count", added))
+}
+
+// managedSourcesProvider resolves enabled source URLs from the sources
+// table for the scheduler. A nil slice (empty table) keeps the static
+// RSS_FEEDS list; errors degrade to the static list as well.
+func managedSourcesProvider(st store.ArticleStore, cfg *config.Config, logger *slog.Logger) func(context.Context) ([]string, error) {
+	return func(ctx context.Context) ([]string, error) {
+		rows, err := st.ListSources(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if len(rows) == 0 {
+			return nil, nil // not seeded yet -> static fallback
+		}
+		urls := make([]string, 0, len(rows))
+		for _, r := range rows {
+			if r.Enabled {
+				urls = append(urls, r.URL)
+			}
+		}
+		return urls, nil // possibly empty on purpose: all sources disabled
+	}
+}
+
+// wireManagedSources seeds the table once and returns the scheduler hook;
+// nil keeps the pre-#80 behaviour when no store is configured.
+func wireManagedSources(st store.ArticleStore, cfg *config.Config, logger *slog.Logger) func(context.Context) ([]string, error) {
+	if st == nil {
+		return nil
+	}
+	seedSources(context.Background(), st, cfg, logger)
+	return managedSourcesProvider(st, cfg, logger)
+}
+
 func runScheduleMode(
 	cfg *config.Config,
 	mgr *fetcher.Manager,
@@ -275,6 +335,9 @@ func runScheduleMode(
 	)
 	if extractor != nil {
 		sched.WithExtractor(extractor)
+	}
+	if provider := wireManagedSources(st, cfg, logger); provider != nil {
+		sched.WithSourcesProvider(provider)
 	}
 	if notif != nil && notif.Len() > 0 {
 		sched.WithNotifier(notif)
@@ -400,6 +463,9 @@ func runServerMode(
 		mgr, proc, ver, pub, st, cfg,
 		logger.With(slog.String("component", "scheduler")),
 	).WithExtractor(extractor)
+	if provider := wireManagedSources(st, cfg, logger); provider != nil {
+		sched.WithSourcesProvider(provider)
+	}
 	apiHandler := api.New(st, sched, pub, cfg, extractor, logger.With(slog.String("component", "api")))
 	apiHandler.Register(e.Group("/api"))
 

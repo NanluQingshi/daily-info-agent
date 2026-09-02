@@ -6,6 +6,8 @@ import type {
   FetchTriggerResponse,
   RunListResponse,
   SourceHealthResponse,
+  SourceListResponse,
+  SourceRow,
   StatsResult,
   StreamEvent,
 } from "../types";
@@ -183,6 +185,31 @@ export function getRuns(limit = 30): Promise<RunListResponse> {
 /** Per-source fetch health for the source health panel. */
 export function getSourceHealth(): Promise<SourceHealthResponse> {
   return request<SourceHealthResponse>("/sources/health");
+}
+
+/** Managed RSS sources (issue #80): list / add / toggle / remove. */
+export function listSources(): Promise<SourceListResponse> {
+  return request<SourceListResponse>("/sources");
+}
+
+export function addSource(url: string): Promise<SourceRow> {
+  return request<SourceRow>("/sources", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url }),
+  });
+}
+
+export function setSourceEnabled(id: number, enabled: boolean): Promise<SourceRow> {
+  return request<SourceRow>(`/sources/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  });
+}
+
+export async function removeSource(id: number): Promise<void> {
+  await request(`/sources/${id}`, { method: "DELETE" });
 }
 
 export function getStats(since?: string): Promise<StatsResult> {

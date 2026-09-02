@@ -284,6 +284,15 @@ type FeedbackStatsResponse struct {
 	Stats []FeedbackStat `json:"stats"`
 }
 
+// SourceRow is a managed RSS source (migration 010, issue #80). Rows here
+// take precedence over the static RSS_FEEDS env list once present.
+type SourceRow struct {
+	ID        int64     `json:"id"`
+	URL       string    `json:"url"`
+	Enabled   bool      `json:"enabled"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // -----------------------------------------------------------------------
 // Database / persistence types
 // -----------------------------------------------------------------------

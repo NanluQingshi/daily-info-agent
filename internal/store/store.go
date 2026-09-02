@@ -15,6 +15,10 @@ import (
 // ErrNotFound is returned when a requested record does not exist.
 var ErrNotFound = errors.New("store: record not found")
 
+// ErrConflict is returned when an insert violates a uniqueness constraint
+// (e.g. adding a source URL that already exists).
+var ErrConflict = errors.New("store: record already exists")
+
 // pool is the subset of *pgxpool.Pool methods used by PostgresStore.
 // Defined as an interface so tests can inject a mock.
 type pool interface {
@@ -49,6 +53,11 @@ type ArticleStore interface {
 	MarkPending(ctx context.Context, id int64) error
 	GetStats(ctx context.Context, since time.Time) (models.StatsResult, error)
 	SourceActivity(ctx context.Context, since time.Time) ([]models.SourceActivity, error)
+
+	ListSources(ctx context.Context) ([]models.SourceRow, error)
+	AddSource(ctx context.Context, url string) (models.SourceRow, error)
+	SetSourceEnabled(ctx context.Context, id int64, enabled bool) (models.SourceRow, error)
+	RemoveSource(ctx context.Context, id int64) error
 	UpdateArticlesTags(ctx context.Context, ids []int64, tags []string) (int, error)
 	Ping(ctx context.Context) error
 }
@@ -623,4 +632,66 @@ func (s *PostgresStore) SaveSession(ctx context.Context, sessionID string, messa
 func (s *PostgresStore) DeleteSession(ctx context.Context, sessionID string) error {
 	_, err := s.pool.Exec(ctx, sqlDeleteSession, sessionID)
 	return err
+}
+
+// scanSource scans one row of the sources table into a SourceRow.
+func scanSource(row pgx.Row) (models.SourceRow, error) {
+	var s models.SourceRow
+	if err := row.Scan(&s.ID, &s.URL, &s.Enabled, &s.CreatedAt); err != nil {
+		return models.SourceRow{}, err
+	}
+	return s, nil
+}
+
+// ListSources returns every managed source, disabled ones included, oldest
+// first. An empty table returns an empty slice (callers fall back to the
+// static RSS_FEEDS list in that case).
+func (s *PostgresStore) ListSources(ctx context.Context) ([]models.SourceRow, error) {
+	rows, err := s.pool.Query(ctx, sqlListSources)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]models.SourceRow, 0)
+	for rows.Next() {
+		var r models.SourceRow
+		if err := rows.Scan(&r.ID, &r.URL, &r.Enabled, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// AddSource inserts a new RSS source and returns the stored row. Adding a
+// URL that already exists yields ErrConflict.
+func (s *PostgresStore) AddSource(ctx context.Context, url string) (models.SourceRow, error) {
+	out, err := scanSource(s.pool.QueryRow(ctx, sqlAddSource, url))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return models.SourceRow{}, ErrConflict
+	}
+	return out, err
+}
+
+// SetSourceEnabled toggles fetching for one source. Unknown ids yield
+// ErrNotFound.
+func (s *PostgresStore) SetSourceEnabled(ctx context.Context, id int64, enabled bool) (models.SourceRow, error) {
+	out, err := scanSource(s.pool.QueryRow(ctx, sqlSetSourceEnabled, id, enabled))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return models.SourceRow{}, ErrNotFound
+	}
+	return out, err
+}
+
+// RemoveSource deletes one source. Unknown ids yield ErrNotFound.
+func (s *PostgresStore) RemoveSource(ctx context.Context, id int64) error {
+	tag, err := s.pool.Exec(ctx, sqlRemoveSource, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }

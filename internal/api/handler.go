@@ -192,6 +192,10 @@ func (h *Handler) Register(g *echo.Group) {
 	g.POST("/articles/backfill-content", h.rateLimited(h.BackfillContent))
 	g.GET("/stats", h.rateLimited(h.GetStats))
 	g.GET("/sources/health", h.rateLimited(h.GetSourceHealth))
+	g.GET("/sources", h.rateLimited(h.ListSources))
+	g.POST("/sources", h.rateLimited(h.AddSource))
+	g.PATCH("/sources/:id", h.rateLimited(h.SetSourceEnabled))
+	g.DELETE("/sources/:id", h.rateLimited(h.RemoveSource))
 	g.GET("/runs", h.rateLimited(h.GetRuns))
 }
 

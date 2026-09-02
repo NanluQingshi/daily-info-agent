@@ -69,6 +69,16 @@ type mockStore struct {
 		err  error
 	}
 
+	sourcesResp struct {
+		list    []models.SourceRow
+		added   models.SourceRow
+		updated models.SourceRow
+		err     error
+		addErr  error
+		updErr  error
+		delErr  error
+	}
+
 	deleteErr    error
 	markPubErr   error
 	markFailErr  error
@@ -194,6 +204,30 @@ func (m *mockStore) SetArticleFlags(_ context.Context, id int64, bookmarked, rea
 func (m *mockStore) PruneRunLogs(context.Context, time.Time) (int64, error) { return 0, nil }
 
 func (m *mockStore) PruneArticles(context.Context, time.Time) (int64, error) { return 0, nil }
+
+func (m *mockStore) ListSources(context.Context) ([]models.SourceRow, error) {
+	return m.sourcesResp.list, m.sourcesResp.err
+}
+
+func (m *mockStore) AddSource(_ context.Context, url string) (models.SourceRow, error) {
+	if m.sourcesResp.addErr != nil {
+		return models.SourceRow{}, m.sourcesResp.addErr
+	}
+	return m.sourcesResp.added, nil
+}
+
+func (m *mockStore) SetSourceEnabled(_ context.Context, id int64, enabled bool) (models.SourceRow, error) {
+	if m.sourcesResp.updErr != nil {
+		return models.SourceRow{}, m.sourcesResp.updErr
+	}
+	row := m.sourcesResp.updated
+	row.ID, row.Enabled = id, enabled
+	return row, nil
+}
+
+func (m *mockStore) RemoveSource(context.Context, int64) error {
+	return m.sourcesResp.delErr
+}
 
 func (m *mockStore) ListArticles(ctx context.Context, f models.ArticleFilter) ([]models.ArticleRow, int, error) {
 	if m.listFn != nil {

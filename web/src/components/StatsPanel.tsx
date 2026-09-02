@@ -6,6 +6,7 @@ import { getStats } from "../api/client";
 import { RunHistoryPanel } from "./RunHistoryPanel";
 import type { StatsResult } from "../types";
 import { SourceHealthPanel } from "./SourceHealthPanel";
+import { SourceManagerPanel } from "./SourceManagerPanel";
 
 // ── Color palette for categories ─────────────────────────────────────────
 
@@ -244,6 +245,7 @@ export function StatsPanel() {
       <RunHistoryPanel />
 
       {/* Source health */}
+      <SourceManagerPanel />
       <SourceHealthPanel />
     </div>
   );

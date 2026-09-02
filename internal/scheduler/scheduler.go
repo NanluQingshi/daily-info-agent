@@ -43,6 +43,11 @@ type Scheduler struct {
 	// nil disables the extract stage.
 	ext *extract.Extractor
 
+	// sourcesProvider overrides the static RSS_FEEDS list when set. It is
+	// queried at the start of every fetch stage; a nil return (empty table)
+	// falls back to the static config list.
+	sourcesProvider func(ctx context.Context) ([]string, error)
+
 	// Consecutive-failure alerting.
 	failureMu          sync.Mutex
 	consecutiveFail    int
@@ -100,6 +105,15 @@ func (s *Scheduler) WithExtractor(ext *extract.Extractor) *Scheduler {
 	return s
 }
 
+// WithSourcesProvider sets a callback that resolves the RSS source URLs to
+// fetch. It is called once per run, so management changes apply without a
+// restart. When the provider is nil, or it reports an error, or the backing
+// table is still empty (nil slice), the static cfg.RSSFeeds list is used.
+func (s *Scheduler) WithSourcesProvider(p func(ctx context.Context) ([]string, error)) *Scheduler {
+	s.sourcesProvider = p
+	return s
+}
+
 // WithNotifier sets an optional digest sender called after each scheduled run.
 func (s *Scheduler) WithNotifier(n DigestSender) *Scheduler {
 	s.notif = n
@@ -120,6 +134,27 @@ func (s *Scheduler) WithFailureAlert(failureThreshold int, cb func(consecutiveFa
 
 // Run executes the full pipeline for the configured default categories.
 // Returns a RunResult; RunResult.FatalError != nil signals exit 1.
+// resolveSourceURLs returns the RSS feed URLs for this run. The sources
+// provider (issue #80) wins when wired and healthy; an empty-but-present
+// result ("all sources disabled") is respected as an empty list, while a nil
+// result (table empty / provider unset / provider error) falls back to the
+// static config list so zero-config startup keeps working.
+func (s *Scheduler) resolveSourceURLs(ctx context.Context) []string {
+	if s.sourcesProvider == nil {
+		return s.cfg.RSSFeeds
+	}
+	urls, err := s.sourcesProvider(ctx)
+	if err != nil {
+		s.logger.Warn("resolving managed sources failed; falling back to RSS_FEEDS",
+			slog.String("error", err.Error()))
+		return s.cfg.RSSFeeds
+	}
+	if urls == nil {
+		return s.cfg.RSSFeeds
+	}
+	return urls
+}
+
 // SourceHealth exposes the fetcher manager's per-source health snapshot for
 // the management API and /metrics. Nil-safe: returns nil when no manager is
 // wired (manager is a required dependency in practice).
@@ -259,7 +294,7 @@ func (s *Scheduler) trackFailure(result *models.RunResult) {
 func (s *Scheduler) fetchStage(ctx context.Context, categories []models.Category, runID string, fire func(models.ProgressEvent)) ([]models.RawItem, bool) {
 	fire(models.ProgressEvent{Stage: "fetch", Status: "running", Message: "正在抓取新闻…"})
 	fetchStart := time.Now()
-	cfgs := s.buildFetchConfigs(categories)
+	cfgs := s.buildFetchConfigs(ctx, categories)
 
 	items, err := s.mgr.FetchAll(ctx, cfgs)
 	fetchDuration := time.Since(fetchStart)
@@ -532,11 +567,11 @@ func (s *Scheduler) notifyStage(ctx context.Context, passing []models.ProcessedA
 
 // buildFetchConfigs constructs the slice of FetchConfig from the app config and
 // the requested categories.
-func (s *Scheduler) buildFetchConfigs(categories []models.Category) []models.FetchConfig {
+func (s *Scheduler) buildFetchConfigs(ctx context.Context, categories []models.Category) []models.FetchConfig {
 	var cfgs []models.FetchConfig
 
-	// RSS feeds
-	for _, feedURL := range s.cfg.RSSFeeds {
+	// RSS feeds — managed DB sources take precedence over static config
+	for _, feedURL := range s.resolveSourceURLs(ctx) {
 		cfgs = append(cfgs, models.FetchConfig{
 			Type:       models.SourceTypeRSS,
 			URL:        feedURL,
