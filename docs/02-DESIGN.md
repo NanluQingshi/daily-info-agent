@@ -751,6 +751,7 @@ func New(proc *processor.Processor, mgr *fetcher.Manager, sched *scheduler.Sched
 func (h *Handler) Register(g *echo.Group)
 // Registers:
 //   GET    /api/articles
+//   GET    /api/articles/export   (format=csv|json|markdown; same filters as list)
 //   GET    /api/articles/:id
 //   POST   /api/articles/:id/publish
 //   POST   /api/articles/:id/retry
@@ -762,11 +763,13 @@ func (h *Handler) Register(g *echo.Group)
 //   GET    /api/stats
 ```
 
-Data retention (#74, `internal/retention`):
-- `RETENTION_DAYS` (default 0 = disabled) → `retention.Runner` prunes `run_logs` (by `started_at`) and `articles` (by `created_at`, any status — a pending article older than the cutoff is stale by definition); feedback/bookmark rows cascade via FK
-- schedule mode prunes after every run; server mode prunes at startup then every 24 h in a goroutine cancelled at shutdown
-- per-table failures are logged and do not abort the other table's prune
-- cumulative removals in `/metrics`: `dia_run_logs_pruned`, `dia_articles_pruned`
+Export details (`GET /api/articles/export`):
+- `format=csv` (default): UTF-8 BOM so Excel renders Chinese; `encoding/csv` escaping; tags joined with `|`; includes `content_text`
+- `format=json`: indented full `ArticleRow` array
+- `format=markdown` (alias `md`): one section per article with the complete field set; `content_text` falls back to `content`; leading heading/list markers escaped so field bodies cannot break the document structure
+- Client pagination (`page`/`page_size`) is ignored — exports cover every matching row, paged internally at 100 rows/query
+- Row cap 10 000: exceeding it returns 400 `export_limited` asking the user to narrow filters
+- `Content-Disposition: attachment; filename="articles-<UTC timestamp>.<ext>"`
 
 ### 4.11 `internal/agent` — LLM Agent Orchestration
 
