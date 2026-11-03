@@ -40,6 +40,7 @@ import (
 	"github.com/user/daily-info-agent/internal/chat"
 	"github.com/user/daily-info-agent/internal/extract"
 	"github.com/user/daily-info-agent/internal/fetcher"
+	"github.com/user/daily-info-agent/internal/health"
 	"github.com/user/daily-info-agent/internal/notifier"
 	"github.com/user/daily-info-agent/internal/processor"
 	"github.com/user/daily-info-agent/internal/publisher"
@@ -341,27 +342,51 @@ func runScheduleMode(
 	}
 	if notif != nil && notif.Len() > 0 {
 		sched.WithNotifier(notif)
-
-		// Consecutive-failure alert through every enabled channel.
-		threshold := cfg.FailureAlertThreshold
-		if threshold <= 0 {
-			threshold = scheduler.DefaultFailureAlertThreshold
-		}
-		sched.WithFailureAlert(threshold, func(consecutiveFailures int) {
-			alertCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			msg := fmt.Sprintf("⚠️ Daily Info Agent 管道连续失败 %d 次（阈值 %d），请检查服务日志与数据源状态。时间：%s",
-				consecutiveFailures, threshold, time.Now().Format("2006-01-02 15:04:05"))
-			if err := notif.SendAlert(alertCtx, msg); err != nil {
-				logger.Error("failure alert delivery failed", slog.String("error", err.Error()))
-			}
-		})
 	}
+
+	runHealth := health.NewStore(health.StoreFile)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 
 	result := sched.Run(ctx)
+
+	startedAt := time.Now().Add(-time.Duration(result.DurationMs) * time.Millisecond)
+	result.StartedAt = startedAt
+	result.FinishedAt = time.Now()
+	snap, healthErr := runHealth.Record(result, cfg.MinExpectedItems)
+	if healthErr != nil {
+		logger.Error("failed to persist run health",
+			slog.String("error", healthErr.Error()),
+		)
+	} else {
+		logger.Info("run health recorded",
+			slog.String("outcome", snap.LastOutcome),
+			slog.Int("consecutive_failure", snap.ConsecutiveFailure),
+		)
+	}
+
+	// Alert on the first failure, and again whenever the streak crosses a
+	// configured threshold. The previous in-memory counter reset on every
+	// GitHub Actions process, so it never actually fired in production.
+	if snap.LastOutcome != "success" && notif != nil && notif.Len() > 0 {
+		threshold := cfg.FailureAlertThreshold
+		if threshold <= 0 {
+			threshold = scheduler.DefaultFailureAlertThreshold
+		}
+		if snap.ConsecutiveFailure == 1 || snap.ConsecutiveFailure%threshold == 0 {
+			alertCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			msg := fmt.Sprintf("⚠️ Daily Info Agent 运行异常：%s；连续失败 %d 次。run_id=%s，请检查 GitHub Actions 日志与数据源状态。时间：%s",
+				snap.LastOutcome, snap.ConsecutiveFailure, result.RunID, time.Now().Format("2006-01-02 15:04:05"))
+			if snap.LastFatalError != "" {
+				msg += "；fatal_error=" + snap.LastFatalError
+			}
+			if err := notif.SendAlert(alertCtx, msg); err != nil {
+				logger.Error("failure alert delivery failed", slog.String("error", err.Error()))
+			}
+		}
+	}
 
 	logger.Info("scheduled run finished",
 		slog.String("run_id", result.RunID),
@@ -377,6 +402,24 @@ func runScheduleMode(
 	// Data retention (#74): prune old rows after each scheduled run.
 	retention.New(cfg.RetentionDays, st,
 		logger.With(slog.String("component", "retention"))).Run(ctx)
+
+	// Freshness gate: even when the agent exits 0, fail the workflow if the
+	// persisted signal says the last successful non-empty run is stale. This
+	// is the last line of defence against a green checkmark with no output.
+	report, err := runHealth.Check(24 * time.Hour)
+	if err != nil {
+		logger.Error("run-health check failed",
+			slog.String("error", err.Error()),
+		)
+		os.Exit(1)
+	}
+	if !report.Healthy {
+		logger.Error("freshness check failed",
+			slog.String("reason", report.Reason),
+			slog.String("last_outcome", report.LastOutcome),
+		)
+		os.Exit(1)
+	}
 
 	if result.FatalError != nil {
 		logger.Error("fatal error in scheduled run",
@@ -454,7 +497,7 @@ func runServerMode(
 	e.POST("/api/chat", chatHandler.Handle)
 	e.POST("/api/chat/stream", chatHandler.HandleStream)
 	e.DELETE("/api/sessions/:id", chatHandler.HandleDeleteSession)
-	e.GET("/health", healthHandler(version, st, startTime, cfg.CacheFilePath, cfg.LLMAPIKey != ""))
+	e.GET("/health", healthHandler(version, st, startTime, cfg.CacheFilePath, cfg.LLMAPIKey != "", health.NewStore(health.StoreFile)))
 	e.GET("/metrics", echo.WrapHandler(metricsHandlerWithSources(mgr)))
 
 	// Article management API (database-dependent endpoints return clear
@@ -553,31 +596,40 @@ func runMigrations(dsn string, logger *slog.Logger) error {
 	return nil
 }
 
-// healthHandler returns a /health endpoint that reports process status,
-// database connectivity, LLM configuration, and the dedup cache file state.
-func healthHandler(ver string, st store.ArticleStore, startTime time.Time, cacheFilePath string, llmKeySet bool) echo.HandlerFunc {
+// healthHandler reports process status, database connectivity, LLM
+// configuration, dedup cache state, and the persisted run-health signal.
+// It returns 503 when the last successful non-empty run is stale or when a
+// dependency is unhealthy, so GitHub Actions can fail closed instead of
+// treating "exit 0 with no output" as success.
+func healthHandler(ver string, st store.ArticleStore, startTime time.Time, cacheFilePath string, llmKeySet bool, runHealth *health.Store) echo.HandlerFunc {
 	return func(c echo.Context) error {
+		status := "ok"
 		body := map[string]interface{}{
-			"status":  "ok",
+			"status":  status,
 			"version": ver,
 			"time":    time.Now().UTC().Format(time.RFC3339),
 			"uptime":  time.Since(startTime).String(),
 		}
+
 		if st != nil {
 			if err := st.Ping(c.Request().Context()); err != nil {
 				body["db"] = "error: " + err.Error()
+				status = "degraded"
 			} else {
 				body["db"] = "ok"
 			}
 		} else {
 			body["db"] = "disabled"
 		}
+
 		// LLM configuration status (no live call — that would add latency).
 		if llmKeySet {
 			body["llm"] = "configured"
 		} else {
 			body["llm"] = "missing_key"
+			status = "degraded"
 		}
+
 		// Dedup cache file state.
 		if info, err := os.Stat(cacheFilePath); err == nil {
 			body["cache"] = map[string]interface{}{
@@ -589,8 +641,21 @@ func healthHandler(ver string, st store.ArticleStore, startTime time.Time, cache
 			body["cache"] = map[string]interface{}{"status": "empty", "path": cacheFilePath}
 		} else {
 			body["cache"] = map[string]interface{}{"status": "error", "path": cacheFilePath, "error": err.Error()}
+			status = "degraded"
 		}
-		return c.JSON(http.StatusOK, body)
+
+		report, healthErr := runHealth.Check(24 * time.Hour)
+		body["freshness"] = report
+		if healthErr != nil || !report.Healthy {
+			status = "degraded"
+		}
+
+		body["status"] = status
+		code := http.StatusOK
+		if status != "ok" {
+			code = http.StatusServiceUnavailable
+		}
+		return c.JSON(code, body)
 	}
 }
 

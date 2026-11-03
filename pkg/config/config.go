@@ -132,6 +132,12 @@ type Config struct {
 	// alert through every enabled channel (0 → scheduler default of 3).
 	FailureAlertThreshold int
 
+	// MinExpectedItems is the minimum number of items a scheduled run must
+	// fetch to count as a real success. 0 keeps the legacy "any fetch counts"
+	// behaviour; a value above 0 turns a suspiciously thin run into an "empty"
+	// outcome so it can alert and fail the freshness gate.
+	MinExpectedItems int
+
 	// HTTP server
 	BindAddr string // default: "127.0.0.1:8080"
 
@@ -251,6 +257,11 @@ func Load() (*Config, error) {
 	if raw := os.Getenv("FAILURE_ALERT_THRESHOLD"); raw != "" {
 		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
 			cfg.FailureAlertThreshold = v
+		}
+	}
+	if raw := os.Getenv("MIN_EXPECTED_ITEMS"); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v >= 0 {
+			cfg.MinExpectedItems = v
 		}
 	}
 

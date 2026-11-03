@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Contract RSS Feed</title>
+    <link>https://rss.example.com/</link>
+    <description>Fixture feed for contract regression tests</description>
+    <language>en</language>
+    <item>
+      <title>RSS Item Alpha</title>
+      <link>https://rss.example.com/alpha</link>
+      <description>Alpha summary text.</description>
+      <pubDate>Mon, 06 Jan 2026 09:00:00 +0000</pubDate>
+      <guid>alpha-guid</guid>
+    </item>
+    <item>
+      <title>RSS Item Beta</title>
+      <link>https://rss.example.com/beta</link>
+      <description>Beta summary text.</description>
+      <pubDate>Tue, 07 Jan 2026 09:00:00 +0000</pubDate>
+      <guid>beta-guid</guid>
+    </item>
+  </channel>
+</rss>

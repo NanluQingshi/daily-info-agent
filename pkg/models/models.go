@@ -260,6 +260,8 @@ type RunResult struct {
 	TotalFailed    int
 	DurationMs     int64
 	FatalError     error // non-nil causes exit 1
+	StartedAt      time.Time
+	FinishedAt     time.Time
 }
 
 // ArticleFeedbackRow is a persisted 👍/👎 on one aspect (summary/category)

@@ -1,0 +1,26 @@
+{
+  "status": "ok",
+  "totalResults": 2,
+  "articles": [
+    {
+      "source": { "id": "contract-source", "name": "Contract Source" },
+      "author": "Ada Lovelace",
+      "title": "NewsAPI Item Alpha",
+      "description": "Alpha description from NewsAPI.",
+      "url": "https://newsapi.example.com/alpha",
+      "urlToImage": "https://newsapi.example.com/alpha.png",
+      "publishedAt": "2026-01-06T09:00:00Z",
+      "content": "Alpha full content."
+    },
+    {
+      "source": { "id": "contract-source", "name": "Contract Source" },
+      "author": "Grace Hopper",
+      "title": "NewsAPI Item Beta",
+      "description": "Beta description from NewsAPI.",
+      "url": "https://newsapi.example.com/beta",
+      "urlToImage": "https://newsapi.example.com/beta.png",
+      "publishedAt": "2026-01-07T09:00:00Z",
+      "content": "Beta full content."
+    }
+  ]
+}
