@@ -27,8 +27,8 @@ type PublishOutcome string
 
 const (
 	OutcomePublished     PublishOutcome = "published"
-	OutcomeDuplicate     PublishOutcome = "duplicate"      // HTTP 409
-	OutcomePermanentFail PublishOutcome = "permanent_fail" // 4xx (non-409)
+	OutcomeDuplicate     PublishOutcome = "duplicate"       // HTTP 409
+	OutcomePermanentFail PublishOutcome = "permanent_fail"  // 4xx (non-409)
 	OutcomeMaxRetriesHit PublishOutcome = "max_retries_hit" // 5xx after 3 attempts
 )
 
@@ -37,8 +37,8 @@ type PublishResult struct {
 	Outcome    PublishOutcome
 	ArticleURL string
 	Attempts   int
-	StatusCode int    // final HTTP status code; 0 on network error
-	RemoteID   int64  // populated on OutcomePublished
+	StatusCode int   // final HTTP status code; 0 on network error
+	RemoteID   int64 // populated on OutcomePublished
 	Err        error
 }
 

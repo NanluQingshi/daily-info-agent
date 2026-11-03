@@ -45,6 +45,16 @@ export function ArticleList() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Merge an updated article (bookmark/read flags) into list + detail views.
+  const handleFlagsUpdated = (updated: ArticleRow) => {
+    setData((prev) =>
+      prev
+        ? { ...prev, articles: prev.articles.map((a) => (a.id === updated.id ? { ...a, ...updated } : a)) }
+        : prev
+    );
+    setSelected((prev) => (prev && prev.id === updated.id ? { ...prev, ...updated } : prev));
+  };
+
   const handleDeleted = (id: number) => {
     setData((prev) =>
       prev ? { ...prev, articles: prev.articles.filter((a) => a.id !== id), total: prev.total - 1 } : prev
@@ -231,6 +241,7 @@ export function ArticleList() {
                 onDeleted={handleDeleted}
                 onPublished={handlePublished}
                 onRetried={handleRetried}
+                onFlagsUpdated={handleFlagsUpdated}
                 onClick={setSelected}
                 onToggleSelect={() => toggleChecked(a.id)}
                 checked={checkedIds.has(a.id)}

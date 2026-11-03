@@ -162,9 +162,9 @@ func TestExtractText_Nested(t *testing.T) {
 func TestFindSnippet_InAnchor(t *testing.T) {
 	// <a class="result__snippet">snippet text</a>
 	n := &html.Node{
-		Type: html.ElementNode,
-		Data: "a",
-		Attr: []html.Attribute{{Key: "class", Val: "result__snippet"}},
+		Type:       html.ElementNode,
+		Data:       "a",
+		Attr:       []html.Attribute{{Key: "class", Val: "result__snippet"}},
 		FirstChild: &html.Node{Type: html.TextNode, Data: "snippet text"},
 	}
 	assert.Equal(t, "snippet text", findSnippet(n))
@@ -172,9 +172,9 @@ func TestFindSnippet_InAnchor(t *testing.T) {
 
 func TestFindSnippet_InSpan(t *testing.T) {
 	n := &html.Node{
-		Type: html.ElementNode,
-		Data: "span",
-		Attr: []html.Attribute{{Key: "class", Val: "result__snippet"}},
+		Type:       html.ElementNode,
+		Data:       "span",
+		Attr:       []html.Attribute{{Key: "class", Val: "result__snippet"}},
 		FirstChild: &html.Node{Type: html.TextNode, Data: "span snippet"},
 	}
 	assert.Equal(t, "span snippet", findSnippet(n))
@@ -182,8 +182,8 @@ func TestFindSnippet_InSpan(t *testing.T) {
 
 func TestFindSnippet_NotFound(t *testing.T) {
 	n := &html.Node{
-		Type: html.ElementNode,
-		Data: "div",
+		Type:       html.ElementNode,
+		Data:       "div",
 		FirstChild: &html.Node{Type: html.TextNode, Data: "no snippet here"},
 	}
 	assert.Empty(t, findSnippet(n))
@@ -200,54 +200,54 @@ func TestParseSearchResults_EmptyDoc(t *testing.T) {
 }
 
 func TestParseSearchResults_WithResults(t *testing.T) {
-  // Build a minimal DuckDuckGo-like HTML structure
-  // <html><body><div><h2 class="result__title">
-  //   <a class="result__a" href="...">Test Title</a>
-  // </h2><a class="result__snippet">Test snippet</a></div></body></html>
-  snippet := &html.Node{
-   Type: html.ElementNode, Data: "a",
-   Attr: []html.Attribute{{Key: "class", Val: "result__snippet"}},
-   FirstChild: &html.Node{Type: html.TextNode, Data: "Test snippet content"},
-  }
+	// Build a minimal DuckDuckGo-like HTML structure
+	// <html><body><div><h2 class="result__title">
+	//   <a class="result__a" href="...">Test Title</a>
+	// </h2><a class="result__snippet">Test snippet</a></div></body></html>
+	snippet := &html.Node{
+		Type: html.ElementNode, Data: "a",
+		Attr:       []html.Attribute{{Key: "class", Val: "result__snippet"}},
+		FirstChild: &html.Node{Type: html.TextNode, Data: "Test snippet content"},
+	}
 
-  link := &html.Node{
-   Type: html.ElementNode, Data: "a",
-   Attr: []html.Attribute{
-    {Key: "class", Val: "result__a"},
-    {Key: "href", Val: "//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Farticle"},
-   },
-   FirstChild: &html.Node{Type: html.TextNode, Data: "Test Article Title"},
-  }
+	link := &html.Node{
+		Type: html.ElementNode, Data: "a",
+		Attr: []html.Attribute{
+			{Key: "class", Val: "result__a"},
+			{Key: "href", Val: "//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Farticle"},
+		},
+		FirstChild: &html.Node{Type: html.TextNode, Data: "Test Article Title"},
+	}
 
-  h2 := &html.Node{Type: html.ElementNode, Data: "h2"}
-  h2.Attr = []html.Attribute{{Key: "class", Val: "result__title"}}
-  h2.FirstChild = link
-  link.Parent = h2
-  h2.NextSibling = snippet
-  snippet.Parent = h2.Parent
+	h2 := &html.Node{Type: html.ElementNode, Data: "h2"}
+	h2.Attr = []html.Attribute{{Key: "class", Val: "result__title"}}
+	h2.FirstChild = link
+	link.Parent = h2
+	h2.NextSibling = snippet
+	snippet.Parent = h2.Parent
 
-  div := &html.Node{Type: html.ElementNode, Data: "div"}
-  div.FirstChild = h2
-  h2.Parent = div
+	div := &html.Node{Type: html.ElementNode, Data: "div"}
+	div.FirstChild = h2
+	h2.Parent = div
 
-  body := &html.Node{Type: html.ElementNode, Data: "body"}
-  body.FirstChild = div
-  div.Parent = body
+	body := &html.Node{Type: html.ElementNode, Data: "body"}
+	body.FirstChild = div
+	div.Parent = body
 
-  htmlNode := &html.Node{Type: html.ElementNode, Data: "html"}
-  htmlNode.FirstChild = body
-  body.Parent = htmlNode
+	htmlNode := &html.Node{Type: html.ElementNode, Data: "html"}
+	htmlNode.FirstChild = body
+	body.Parent = htmlNode
 
-  doc := &html.Node{Type: html.DocumentNode}
-  doc.FirstChild = htmlNode
-  htmlNode.Parent = doc
+	doc := &html.Node{Type: html.DocumentNode}
+	doc.FirstChild = htmlNode
+	htmlNode.Parent = doc
 
-  results := parseSearchResults(doc, "test query", nil)
-  require.Len(t, results, 1)
-  assert.Equal(t, "https://example.com/article", results[0].URL)
-  assert.Equal(t, "Test Article Title", results[0].Title)
-  assert.Contains(t, results[0].Description, "Test snippet content")
- }
+	results := parseSearchResults(doc, "test query", nil)
+	require.Len(t, results, 1)
+	assert.Equal(t, "https://example.com/article", results[0].URL)
+	assert.Equal(t, "Test Article Title", results[0].Title)
+	assert.Contains(t, results[0].Description, "Test snippet content")
+}
 
 // ---------------------------------------------------------------------------
 // Fetch with mock HTTP server
@@ -297,23 +297,23 @@ func TestSearchFetcher_Fetch_NonOKStatus(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFindSnippetAround_Found(t *testing.T) {
-  // Create a structure where the snippet is a sibling of the parent
-  // <h2><a>link</a></h2><a class="result__snippet">found snippet</a>
-  snippet := &html.Node{
-   Type: html.ElementNode, Data: "a",
-   Attr: []html.Attribute{{Key: "class", Val: "result__snippet"}},
-   FirstChild: &html.Node{Type: html.TextNode, Data: "found snippet"},
-  }
+	// Create a structure where the snippet is a sibling of the parent
+	// <h2><a>link</a></h2><a class="result__snippet">found snippet</a>
+	snippet := &html.Node{
+		Type: html.ElementNode, Data: "a",
+		Attr:       []html.Attribute{{Key: "class", Val: "result__snippet"}},
+		FirstChild: &html.Node{Type: html.TextNode, Data: "found snippet"},
+	}
 
-  link := &html.Node{Type: html.ElementNode, Data: "a"}
-  parent := &html.Node{Type: html.ElementNode, Data: "h2"}
-  parent.FirstChild = link
-  link.Parent = parent
-  parent.NextSibling = snippet
+	link := &html.Node{Type: html.ElementNode, Data: "a"}
+	parent := &html.Node{Type: html.ElementNode, Data: "h2"}
+	parent.FirstChild = link
+	link.Parent = parent
+	parent.NextSibling = snippet
 
-  result := findSnippetAround(link)
-  assert.Equal(t, "found snippet", result)
- }
+	result := findSnippetAround(link)
+	assert.Equal(t, "found snippet", result)
+}
 
 func TestFindSnippetAround_NotFound(t *testing.T) {
 	link := &html.Node{Type: html.ElementNode, Data: "a"}

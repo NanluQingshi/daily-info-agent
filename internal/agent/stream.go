@@ -33,13 +33,13 @@ const (
 
 // StreamEvent is one unit pushed over SSE.
 type StreamEvent struct {
-	Type       EventType        `json:"type"`
-	Content    string           `json:"content,omitempty"`  // delta text or error message
-	ToolName   string           `json:"tool,omitempty"`     // tool event: which tool
-	SessionID  string           `json:"session_id,omitempty"`
+	Type       EventType           `json:"type"`
+	Content    string              `json:"content,omitempty"` // delta text or error message
+	ToolName   string              `json:"tool,omitempty"`    // tool event: which tool
+	SessionID  string              `json:"session_id,omitempty"`
 	Sources    []models.ChatSource `json:"sources,omitempty"`
-	ToolCalled bool             `json:"tool_called,omitempty"`
-	LatencyMs  int64            `json:"latency_ms,omitempty"`
+	ToolCalled bool                `json:"tool_called,omitempty"`
+	LatencyMs  int64               `json:"latency_ms,omitempty"`
 }
 
 // Sender is a function that pushes one event toward the client.

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Contract RSSHub Feed</title>
+    <link>https://rsshub.example.com/</link>
+    <description>Fixture RSSHub route for contract regression tests</description>
+    <item>
+      <title>RSSHub Item Alpha</title>
+      <link>https://rsshub.example.com/alpha</link>
+      <description>Alpha RSSHub summary.</description>
+      <pubDate>Wed, 07 Jan 2026 09:00:00 +0000</pubDate>
+    </item>
+  </channel>
+</rss>

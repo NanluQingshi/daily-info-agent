@@ -185,9 +185,9 @@ func TestVerifier_Verify_MixedBatch_CorrectlyClassified(t *testing.T) {
 	v := newVerifier(defaultTrustedDomains, false)
 
 	articles := []models.ProcessedArticle{
-		makeArticle("reuters.com", 0.0),       // whitelist → pass
-		makeArticle("unknown-blog.io", 0.8),   // high score → pass
-		makeArticle("suspect-site.net", 0.3),  // low score → skip
+		makeArticle("reuters.com", 0.0),      // whitelist → pass
+		makeArticle("unknown-blog.io", 0.8),  // high score → pass
+		makeArticle("suspect-site.net", 0.3), // low score → skip
 	}
 
 	results := v.Verify(articles)

@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
+	openai "github.com/sashabaranov/go-openai"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	openai "github.com/sashabaranov/go-openai"
 )
 
 // mockPersistence is an in-memory SessionPersistence for tests.

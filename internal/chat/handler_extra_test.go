@@ -13,8 +13,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/user/daily-info-agent/internal/agent"
-	"github.com/user/daily-info-agent/internal/fetcher"
 	"github.com/user/daily-info-agent/internal/chat"
+	"github.com/user/daily-info-agent/internal/fetcher"
 	"github.com/user/daily-info-agent/pkg/models"
 )
 

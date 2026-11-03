@@ -15,6 +15,10 @@ import (
 // ErrNotFound is returned when a requested record does not exist.
 var ErrNotFound = errors.New("store: record not found")
 
+// ErrConflict is returned when an insert violates a uniqueness constraint
+// (e.g. adding a source URL that already exists).
+var ErrConflict = errors.New("store: record already exists")
+
 // pool is the subset of *pgxpool.Pool methods used by PostgresStore.
 // Defined as an interface so tests can inject a mock.
 type pool interface {
@@ -31,8 +35,16 @@ type ArticleStore interface {
 	SaveArticles(ctx context.Context, articles []models.ProcessedArticle, runID string) (int, error)
 	SaveRunLog(ctx context.Context, log models.RunLogRow) error
 	GetRunLog(ctx context.Context, runID string) (models.RunLogRow, error)
+	ListRunLogs(ctx context.Context, limit int) ([]models.RunLogRow, error)
 	ListArticles(ctx context.Context, f models.ArticleFilter) ([]models.ArticleRow, int, error)
 	GetArticle(ctx context.Context, id int64) (models.ArticleRow, error)
+	ArticlesMissingContentText(ctx context.Context, limit int) ([]ArticleContentRef, int, error)
+	UpdateArticleContentText(ctx context.Context, id int64, contentText string) error
+
+	UpsertArticleFeedback(ctx context.Context, articleID int64, kind string, rating int16) (models.ArticleFeedbackRow, error)
+	GetArticleFeedback(ctx context.Context, articleID int64) ([]models.ArticleFeedbackRow, error)
+	FeedbackStats(ctx context.Context) ([]models.FeedbackStat, error)
+	SetArticleFlags(ctx context.Context, id int64, bookmarked, read *bool) (models.ArticleRow, error)
 	PruneRunLogs(ctx context.Context, before time.Time) (int64, error)
 	PruneArticles(ctx context.Context, before time.Time) (int64, error)
 	DeleteArticle(ctx context.Context, id int64) error
@@ -41,6 +53,11 @@ type ArticleStore interface {
 	MarkPending(ctx context.Context, id int64) error
 	GetStats(ctx context.Context, since time.Time) (models.StatsResult, error)
 	SourceActivity(ctx context.Context, since time.Time) ([]models.SourceActivity, error)
+
+	ListSources(ctx context.Context) ([]models.SourceRow, error)
+	AddSource(ctx context.Context, url string) (models.SourceRow, error)
+	SetSourceEnabled(ctx context.Context, id int64, enabled bool) (models.SourceRow, error)
+	RemoveSource(ctx context.Context, id int64) error
 	UpdateArticlesTags(ctx context.Context, ids []int64, tags []string) (int, error)
 	Ping(ctx context.Context) error
 }
@@ -174,6 +191,7 @@ func (s *PostgresStore) SaveRunLog(ctx context.Context, log models.RunLogRow) er
 	_, err := s.pool.Exec(ctx, sqlInsertRunLog,
 		log.RunID,
 		log.TotalFetched,
+		log.TotalExtracted,
 		log.TotalProcessed,
 		log.TotalSaved,
 		log.TotalPublished,
@@ -194,6 +212,7 @@ func (s *PostgresStore) GetRunLog(ctx context.Context, runID string) (models.Run
 	err := row.Scan(
 		&r.RunID,
 		&r.TotalFetched,
+		&r.TotalExtracted,
 		&r.TotalProcessed,
 		&r.TotalSaved,
 		&r.TotalPublished,
@@ -208,6 +227,36 @@ func (s *PostgresStore) GetRunLog(ctx context.Context, runID string) (models.Run
 		return models.RunLogRow{}, ErrNotFound
 	}
 	return r, err
+}
+
+// ListRunLogs returns the most recent run logs, newest first. limit is
+// clamped to [1, 100].
+func (s *PostgresStore) ListRunLogs(ctx context.Context, limit int) ([]models.RunLogRow, error) {
+	if limit < 1 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	rows, err := s.pool.Query(ctx, sqlListRunLogs, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]models.RunLogRow, 0, limit)
+	for rows.Next() {
+		var r models.RunLogRow
+		if err := rows.Scan(
+			&r.RunID, &r.TotalFetched, &r.TotalExtracted, &r.TotalProcessed,
+			&r.TotalSaved, &r.TotalPublished, &r.TotalSkipped, &r.TotalFailed,
+			&r.DurationMs, &r.FatalError, &r.StartedAt, &r.FinishedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 // ListArticles returns a paginated, filtered list of articles and total count.
@@ -233,6 +282,8 @@ func (s *PostgresStore) ListArticles(ctx context.Context, f models.ArticleFilter
 		queryParam,
 		pageSize,
 		offset,
+		f.Bookmarked,
+		f.Unread,
 	)
 	if err != nil {
 		return nil, 0, err
@@ -252,7 +303,7 @@ func (s *PostgresStore) ListArticles(ctx context.Context, f models.ArticleFilter
 	}
 
 	var total int
-	err = s.pool.QueryRow(ctx, sqlCountArticles, catParam, f.Status, f.DateFrom, f.DateTo, queryParam).Scan(&total)
+	err = s.pool.QueryRow(ctx, sqlCountArticles, catParam, f.Status, f.DateFrom, f.DateTo, queryParam, f.Bookmarked, f.Unread).Scan(&total)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -263,6 +314,120 @@ func (s *PostgresStore) ListArticles(ctx context.Context, f models.ArticleFilter
 // GetArticle returns a single article by primary key.
 func (s *PostgresStore) GetArticle(ctx context.Context, id int64) (models.ArticleRow, error) {
 	rows, err := s.pool.Query(ctx, sqlGetArticle, id)
+	if err != nil {
+		return models.ArticleRow{}, err
+	}
+	defer rows.Close()
+
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return models.ArticleRow{}, err
+		}
+		return models.ArticleRow{}, ErrNotFound
+	}
+	return scanArticle(rows)
+}
+
+// ArticleContentRef identifies an article whose extracted full text is
+// still missing; used by the content backfill endpoint (#56).
+type ArticleContentRef struct {
+	ID        int64
+	SourceURL string
+}
+
+// ArticlesMissingContentText returns up to limit articles whose content_text
+// is empty, oldest first, plus the total number still missing.
+func (s *PostgresStore) ArticlesMissingContentText(ctx context.Context, limit int) ([]ArticleContentRef, int, error) {
+	if limit < 1 {
+		limit = 20
+	}
+	rows, err := s.pool.Query(ctx, sqlArticlesMissingContent, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	out := make([]ArticleContentRef, 0, limit)
+	for rows.Next() {
+		var r ArticleContentRef
+		if err := rows.Scan(&r.ID, &r.SourceURL); err != nil {
+			return nil, 0, err
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	var total int
+	if err := s.pool.QueryRow(ctx, sqlCountArticlesMissingContent).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	return out, total, nil
+}
+
+// UpdateArticleContentText stores an extracted full text for one article.
+func (s *PostgresStore) UpdateArticleContentText(ctx context.Context, id int64, contentText string) error {
+	_, err := s.pool.Exec(ctx, sqlUpdateArticleContentText, id, contentText)
+	return err
+}
+
+// UpsertArticleFeedback stores a 👍/👎 for one aspect of an article.
+// The (article_id, kind) pair is unique — repeat clicks overwrite, making
+// the call idempotent and the latest rating authoritative.
+func (s *PostgresStore) UpsertArticleFeedback(ctx context.Context, articleID int64, kind string, rating int16) (models.ArticleFeedbackRow, error) {
+	var f models.ArticleFeedbackRow
+	err := s.pool.QueryRow(ctx, sqlUpsertArticleFeedback, articleID, kind, rating).
+		Scan(&f.ID, &f.ArticleID, &f.Kind, &f.Rating, &f.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return models.ArticleFeedbackRow{}, ErrNotFound
+	}
+	return f, err
+}
+
+// GetArticleFeedback returns all feedback rows of one article.
+func (s *PostgresStore) GetArticleFeedback(ctx context.Context, articleID int64) ([]models.ArticleFeedbackRow, error) {
+	rows, err := s.pool.Query(ctx, sqlGetArticleFeedback, articleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]models.ArticleFeedbackRow, 0, 2)
+	for rows.Next() {
+		var f models.ArticleFeedbackRow
+		if err := rows.Scan(&f.ID, &f.ArticleID, &f.Kind, &f.Rating, &f.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+// FeedbackStats aggregates up/down counts per feedback kind.
+func (s *PostgresStore) FeedbackStats(ctx context.Context) ([]models.FeedbackStat, error) {
+	rows, err := s.pool.Query(ctx, sqlFeedbackStats)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]models.FeedbackStat, 0, 2)
+	for rows.Next() {
+		var st models.FeedbackStat
+		if err := rows.Scan(&st.Kind, &st.Up, &st.Down); err != nil {
+			return nil, err
+		}
+		out = append(out, st)
+	}
+	return out, rows.Err()
+}
+
+// SetArticleFlags updates bookmark/read flags on one article. Nil pointers
+// leave the corresponding flag untouched; ReadAt is set to NOW() when Read
+// is true and cleared when false. Returns the updated row.
+func (s *PostgresStore) SetArticleFlags(ctx context.Context, id int64, bookmarked, read *bool) (models.ArticleRow, error) {
+	rows, err := s.pool.Query(ctx, sqlSetArticleFlags, id, bookmarked, read)
 	if err != nil {
 		return models.ArticleRow{}, err
 	}
@@ -421,7 +586,7 @@ func scanArticle(rows pgx.Rows) (models.ArticleRow, error) {
 		&a.CredibilityScore, &a.Tags, &a.Language, &a.DetectedLanguage,
 		&a.AgentVersion, &a.VerificationPass, &skipReason, &a.DomainHit,
 		&a.Status, &a.ExternalID, &a.PublishedAt, &a.FetchedAt,
-		&a.CreatedAt, &a.UpdatedAt,
+		&a.CreatedAt, &a.UpdatedAt, &a.Bookmarked, &a.ReadAt,
 	)
 	if err != nil {
 		return models.ArticleRow{}, err
@@ -467,4 +632,66 @@ func (s *PostgresStore) SaveSession(ctx context.Context, sessionID string, messa
 func (s *PostgresStore) DeleteSession(ctx context.Context, sessionID string) error {
 	_, err := s.pool.Exec(ctx, sqlDeleteSession, sessionID)
 	return err
+}
+
+// scanSource scans one row of the sources table into a SourceRow.
+func scanSource(row pgx.Row) (models.SourceRow, error) {
+	var s models.SourceRow
+	if err := row.Scan(&s.ID, &s.URL, &s.Enabled, &s.CreatedAt); err != nil {
+		return models.SourceRow{}, err
+	}
+	return s, nil
+}
+
+// ListSources returns every managed source, disabled ones included, oldest
+// first. An empty table returns an empty slice (callers fall back to the
+// static RSS_FEEDS list in that case).
+func (s *PostgresStore) ListSources(ctx context.Context) ([]models.SourceRow, error) {
+	rows, err := s.pool.Query(ctx, sqlListSources)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]models.SourceRow, 0)
+	for rows.Next() {
+		var r models.SourceRow
+		if err := rows.Scan(&r.ID, &r.URL, &r.Enabled, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// AddSource inserts a new RSS source and returns the stored row. Adding a
+// URL that already exists yields ErrConflict.
+func (s *PostgresStore) AddSource(ctx context.Context, url string) (models.SourceRow, error) {
+	out, err := scanSource(s.pool.QueryRow(ctx, sqlAddSource, url))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return models.SourceRow{}, ErrConflict
+	}
+	return out, err
+}
+
+// SetSourceEnabled toggles fetching for one source. Unknown ids yield
+// ErrNotFound.
+func (s *PostgresStore) SetSourceEnabled(ctx context.Context, id int64, enabled bool) (models.SourceRow, error) {
+	out, err := scanSource(s.pool.QueryRow(ctx, sqlSetSourceEnabled, id, enabled))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return models.SourceRow{}, ErrNotFound
+	}
+	return out, err
+}
+
+// RemoveSource deletes one source. Unknown ids yield ErrNotFound.
+func (s *PostgresStore) RemoveSource(ctx context.Context, id int64) error {
+	tag, err := s.pool.Exec(ctx, sqlRemoveSource, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }

@@ -1,5 +1,7 @@
 export interface ArticleRow {
   id: number;
+  bookmarked: boolean;
+  read_at?: string;
   run_id: string;
   source_url: string;
   title: string;
@@ -37,6 +39,7 @@ export interface ArticleListResponse {
 export interface RunLogRow {
   run_id: string;
   total_fetched: number;
+  total_extracted: number;
   total_processed: number;
   total_saved: number;
   total_published: number;
@@ -46,6 +49,10 @@ export interface RunLogRow {
   fatal_error: string;
   started_at: string;
   finished_at: string;
+}
+
+export interface RunListResponse {
+  runs: RunLogRow[];
 }
 
 export interface DayStat {
@@ -127,7 +134,21 @@ export interface SourceHealthResponse {
   window_days: number;
 }
 
+/** Managed RSS source (GET/POST/PATCH/DELETE /api/sources, issue #80). */
+export interface SourceRow {
+  id: number;
+  url: string;
+  enabled: boolean;
+  created_at: string;
+}
+
+export interface SourceListResponse {
+  sources: SourceRow[];
+}
+
 export interface ArticleFilter {
+  bookmarked?: boolean;
+  unread?: boolean;
   category?: string;
   status?: string;
   date_from?: string;

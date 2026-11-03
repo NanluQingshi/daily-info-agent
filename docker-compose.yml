@@ -11,7 +11,11 @@
 services:
   # ── PostgreSQL ─────────────────────────────────────────────────────────
   postgres:
-    image: postgres:16-alpine
+    # Custom image bundling the zhparser extension for Chinese full-text
+    # search (#55); built from docker/postgres-zhparser on first `up`.
+    build:
+      context: ./docker/postgres-zhparser
+    image: dia-postgres-zhparser:16
     container_name: dia-postgres
     restart: unless-stopped
     environment:
@@ -22,6 +26,8 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      # Installs the zhparser extension (as superuser) on first volume init.
+      - ./docker/postgres-zhparser/initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U dia -d daily_info"]
       interval: 10s

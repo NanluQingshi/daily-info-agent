@@ -12,9 +12,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - `make help` target with auto-documented targets
 - `make docker-build`, `make db-drop`, `make db-connect`, `make web-lint` targets
 - `CORS_ORIGINS` env var now correctly parsed in `config.Load()`
+- `internal/health` package: persisted run-health signal
+  (`cache/run-health.json`) shared across GitHub Actions runs, with
+  `success`/`empty`/`failure` outcomes, consecutive-failure counting, and a
+  24h freshness check
+- `MIN_EXPECTED_ITEMS` env var: a run fetching fewer items than this is
+  classified as `empty` instead of `success`
+- First-failure and threshold-multiple alerts in scheduled mode, replacing
+  the in-memory counter that reset on every Actions process
+- Freshness gate in `schedule` mode: exit 1 when the last successful
+  non-empty run is stale, even if the current run exits 0
+- `freshness` object in the `/health` response (503 when unhealthy)
 
 ### Fixed
 - `docker-compose.yml` env var `CHAT_RATE_LIMIT` → `CHAT_RATE_LIMIT_PER_MIN` to match actual config
+- GitHub Actions cache now covers `cache/` (not just `cache/dedup.json`),
+  so the run-health signal survives between scheduled runs
 
 ## [2.0.0] — 2026-07-08
 

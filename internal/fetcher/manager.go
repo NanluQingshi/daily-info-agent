@@ -8,8 +8,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -100,14 +100,14 @@ type fetchResult struct {
 // Manager orchestrates parallel fetching across all configured sources and
 // applies URL-based deduplication using a local cache file.
 type Manager struct {
-	fetchers      []Fetcher
-	rssFeeds      []string // RSS feed URLs used by FetchForTopic
-	rssHubRoutes  []string // RSSHub route paths used by FetchForTopic
-	cache         *dedupCache
-	logger        *slog.Logger
+	fetchers     []Fetcher
+	rssFeeds     []string // RSS feed URLs used by FetchForTopic
+	rssHubRoutes []string // RSSHub route paths used by FetchForTopic
+	cache        *dedupCache
+	logger       *slog.Logger
 
-	healthMu      sync.Mutex
-	sourceHealth  map[string]*sourceHealth // key: source URL or route
+	healthMu     sync.Mutex
+	sourceHealth map[string]*sourceHealth // key: source URL or route
 }
 
 // maxConsecutiveFailures is the number of consecutive fetch failures after
@@ -277,10 +277,10 @@ const newsAPIEverythingURL = "https://newsapi.org/v2/everything"
 
 // FetchForTopic fetches items relevant to the given keywords across all sources.
 //
-// - RSS: fetches every feed in m.rssFeeds in parallel, then post-filters by keyword.
-// - NewsAPI: queries /v2/everything with the keywords joined by OR for best recall,
-//   sorted by relevancy.
-// - RSSHub: skipped (requires explicit route configuration).
+//   - RSS: fetches every feed in m.rssFeeds in parallel, then post-filters by keyword.
+//   - NewsAPI: queries /v2/everything with the keywords joined by OR for best recall,
+//     sorted by relevancy.
+//   - RSSHub: skipped (requires explicit route configuration).
 //
 // Unlike FetchAll (used by the scheduler), FetchForTopic does NOT apply the
 // deduplication cache — chat-mode queries should always return fresh results

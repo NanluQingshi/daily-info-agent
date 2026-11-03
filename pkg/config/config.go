@@ -132,6 +132,12 @@ type Config struct {
 	// alert through every enabled channel (0 → scheduler default of 3).
 	FailureAlertThreshold int
 
+	// MinExpectedItems is the minimum number of items a scheduled run must
+	// fetch to count as a real success. 0 keeps the legacy "any fetch counts"
+	// behaviour; a value above 0 turns a suspiciously thin run into an "empty"
+	// outcome so it can alert and fail the freshness gate.
+	MinExpectedItems int
+
 	// HTTP server
 	BindAddr string // default: "127.0.0.1:8080"
 
@@ -145,6 +151,10 @@ type Config struct {
 	// RetentionDays prunes run_logs and articles older than N days after
 	// each scheduled run (and daily in server mode). 0 disables pruning.
 	RetentionDays int
+
+	// APIToken optionally protects all /api management endpoints with
+	// Bearer auth. Empty (default) keeps the API open for local dev.
+	APIToken string
 
 	// Chat rate limit: max requests per minute per client IP across the chat
 	// endpoints. 0 disables limiting.
@@ -221,6 +231,7 @@ func Load() (*Config, error) {
 
 	// Optional chat API auth token
 	cfg.ChatAPIToken = strings.TrimSpace(os.Getenv("CHAT_API_TOKEN"))
+	cfg.APIToken = strings.TrimSpace(os.Getenv("API_TOKEN"))
 
 	// Optional per-IP chat rate limit (requests per minute)
 	cfg.ChatRateLimitPerMin = parseIntOrDefault(os.Getenv("CHAT_RATE_LIMIT_PER_MIN"), 0)
@@ -246,6 +257,11 @@ func Load() (*Config, error) {
 	if raw := os.Getenv("FAILURE_ALERT_THRESHOLD"); raw != "" {
 		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
 			cfg.FailureAlertThreshold = v
+		}
+	}
+	if raw := os.Getenv("MIN_EXPECTED_ITEMS"); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v >= 0 {
+			cfg.MinExpectedItems = v
 		}
 	}
 

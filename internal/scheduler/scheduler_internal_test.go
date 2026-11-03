@@ -1,6 +1,9 @@
 package scheduler
 
 import (
+	"context"
+	"errors"
+	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -56,7 +59,7 @@ func TestCategoryToSearchQuery_UnknownCategory(t *testing.T) {
 
 func TestBuildFetchConfigs_EmptyCategories(t *testing.T) {
 	s := &Scheduler{cfg: &config.Config{}}
-	cfgs := s.buildFetchConfigs(nil)
+	cfgs := s.buildFetchConfigs(context.Background(), nil)
 	assert.Empty(t, cfgs)
 }
 
@@ -66,7 +69,7 @@ func TestBuildFetchConfigs_WithRSSFeeds(t *testing.T) {
 			RSSFeeds: []string{"https://feeds.example.com/rss"},
 		},
 	}
-	cfgs := s.buildFetchConfigs([]models.Category{models.CategoryFinance})
+	cfgs := s.buildFetchConfigs(context.Background(), []models.Category{models.CategoryFinance})
 	assert.NotEmpty(t, cfgs)
 }
 
@@ -76,6 +79,41 @@ func TestBuildFetchConfigs_WithSearchEngine(t *testing.T) {
 			SearchEngineEnabled: true,
 		},
 	}
-	cfgs := s.buildFetchConfigs([]models.Category{models.CategoryTechAI})
+	cfgs := s.buildFetchConfigs(context.Background(), []models.Category{models.CategoryTechAI})
 	assert.NotEmpty(t, cfgs)
+}
+
+func TestResolveSourceURLs_ProviderPrecedence(t *testing.T) {
+	staticList := []string{"https://static.example/rss"}
+
+	t.Run("provider unset falls back to config", func(t *testing.T) {
+		s := &Scheduler{cfg: &config.Config{RSSFeeds: staticList}, logger: slog.Default()}
+		assert.Equal(t, staticList, s.resolveSourceURLs(context.Background()))
+	})
+
+	t.Run("provider rows win", func(t *testing.T) {
+		s := &Scheduler{cfg: &config.Config{RSSFeeds: staticList}, logger: slog.Default()}
+		s.WithSourcesProvider(func(context.Context) ([]string, error) {
+			return []string{"https://managed.example/rss"}, nil
+		})
+		assert.Equal(t, []string{"https://managed.example/rss"}, s.resolveSourceURLs(context.Background()))
+	})
+
+	t.Run("nil result falls back to config", func(t *testing.T) {
+		s := &Scheduler{cfg: &config.Config{RSSFeeds: staticList}, logger: slog.Default()}
+		s.WithSourcesProvider(func(context.Context) ([]string, error) { return nil, nil })
+		assert.Equal(t, staticList, s.resolveSourceURLs(context.Background()))
+	})
+
+	t.Run("empty non-nil result is respected (all disabled)", func(t *testing.T) {
+		s := &Scheduler{cfg: &config.Config{RSSFeeds: staticList}, logger: slog.Default()}
+		s.WithSourcesProvider(func(context.Context) ([]string, error) { return []string{}, nil })
+		assert.Empty(t, s.resolveSourceURLs(context.Background()))
+	})
+
+	t.Run("provider error falls back to config", func(t *testing.T) {
+		s := &Scheduler{cfg: &config.Config{RSSFeeds: staticList}, logger: slog.Default()}
+		s.WithSourcesProvider(func(context.Context) ([]string, error) { return nil, errors.New("db down") })
+		assert.Equal(t, staticList, s.resolveSourceURLs(context.Background()))
+	})
 }

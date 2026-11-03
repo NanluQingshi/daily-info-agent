@@ -7,6 +7,7 @@ import { Separator } from "@/components/ui/separator";
 import { deleteArticle, publishArticle, retryArticle } from "../api/client";
 import type { ArticleRow } from "../types";
 import { showToast } from "./Toast";
+import { FeedbackButtons } from "./FeedbackButtons";
 
 interface Props {
   article: ArticleRow;
@@ -116,6 +117,9 @@ export function ArticleDetail({ article, onClose, onPublished, onDeleted, onRetr
               {article.domain_hit && <Badge variant="outline" className="text-green-700 border-green-200 bg-green-50">白名单</Badge>}
             </div>
 
+            {/* Category feedback */}
+            <FeedbackButtons articleId={article.id} kind="category" />
+
             {/* Credibility */}
             <div>
               <div className="flex items-center justify-between mb-1.5">
@@ -132,6 +136,9 @@ export function ArticleDetail({ article, onClose, onPublished, onDeleted, onRetr
               <div>
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5">AI 摘要</p>
                 <p className="text-sm leading-relaxed">{article.summary}</p>
+                <div className="mt-2">
+                  <FeedbackButtons articleId={article.id} kind="summary" />
+                </div>
               </div>
             )}
 
