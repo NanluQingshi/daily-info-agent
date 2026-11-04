@@ -16,15 +16,20 @@
 结果，专门堵这个洞：
 
 - **三种结果**：`success`（正常抓到内容）、`empty`（零抓取或低于
-  `MIN_EXPECTED_ITEMS`）、`failure`（fatal error）。
+  `MIN_EXPECTED_ITEMS`）、`failure`（fatal error，或所有条目都没拿到 AI 结果）。
 - **连续失败计数**：空跑和报错都算失败，连续失败达到
   `FAILURE_ALERT_THRESHOLD` 时通过所有已启用渠道告警。第一次失败也会立即告警。
-- **新鲜度闸门**：即使本次运行退出 0，只要距上次成功非空运行超过 24 小时，
-  进程仍会以退出码 1 结束，让 GitHub Actions 变红。
+- **新鲜度闸门**：本次运行没有产出（`empty`/`failure`）时，即使进程退出 0 也会
+  以退出码 1 结束；距上次成功非空运行超过 24 小时同样失败。新鲜度基线
+  （`last_success_finished_at`）不会被失败运行覆盖，所以一次空跑不会让后续
+  运行永久卡死——下一次成功会正常重置计数。
 - **跨进程持久化**：GitHub Actions 的 cache 同时缓存 `cache/dedup.json` 与
   `cache/run-health.json`，否则每次都是新进程、计数永远归零。
 - **`/health` 端点**：返回 503 表示不健康，`freshness` 字段给出最近一次
   成功运行的时间与连续失败次数。
+- **分阶段计数**：`run_logs` 的 `total_llm_skipped` 单独统计 AI 没有返回结果的
+  条目；源抓取失败计入 `total_failed`。「抓取挂了」「AI 挂了」「验证没过」
+  三种故障不会混成一个数字。
 
 相关环境变量见 `.env.example` 的 `FAILURE_ALERT_THRESHOLD` 与
 `MIN_EXPECTED_ITEMS`。

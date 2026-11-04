@@ -220,6 +220,18 @@ func (s *Scheduler) runPipeline(ctx context.Context, categories []models.Categor
 	}
 	result.TotalFetched = len(items)
 
+	// Surface source-level outages. A run can still succeed overall while
+	// several feeds are dead; without this, TotalFailed stays 0 and the
+	// outage is invisible in run logs and health checks.
+	if attempted, failed := s.mgr.RunFailures(); attempted > 0 && failed > 0 {
+		result.TotalFailed += failed
+		s.logger.Warn("source failures during fetch",
+			slog.String("run_id", runID),
+			slog.Int("sources_attempted", attempted),
+			slog.Int("sources_failed", failed),
+		)
+	}
+
 	// ---- Extract stage (full text from original pages, best-effort) ----
 	if len(items) > 0 {
 		result.TotalExtracted = s.extractStage(ctx, items, runID, fire)
@@ -428,6 +440,7 @@ func (s *Scheduler) verifyStage(articles []models.ProcessedArticle, result *mode
 	var passing []models.ProcessedArticle
 	for _, a := range articles {
 		if a.LLMSkipped {
+			result.TotalLLMSkipped++
 			result.TotalSkipped++
 			continue
 		}
@@ -528,23 +541,25 @@ func (s *Scheduler) logRunSummary(ctx context.Context, result *models.RunResult,
 		fatalErrStr = result.FatalError.Error()
 	}
 	_ = s.st.SaveRunLog(ctx, models.RunLogRow{
-		RunID:          result.RunID,
-		TotalFetched:   result.TotalFetched,
-		TotalExtracted: result.TotalExtracted,
-		TotalProcessed: result.TotalProcessed,
-		TotalSaved:     result.TotalSaved,
-		TotalPublished: result.TotalPublished,
-		TotalSkipped:   result.TotalSkipped,
-		TotalFailed:    result.TotalFailed,
-		DurationMs:     result.DurationMs,
-		FatalError:     fatalErrStr,
-		StartedAt:      start,
-		FinishedAt:     time.Now(),
+		RunID:           result.RunID,
+		TotalFetched:    result.TotalFetched,
+		TotalExtracted:  result.TotalExtracted,
+		TotalProcessed:  result.TotalProcessed,
+		TotalSaved:      result.TotalSaved,
+		TotalPublished:  result.TotalPublished,
+		TotalSkipped:    result.TotalSkipped,
+		TotalFailed:     result.TotalFailed,
+		TotalLLMSkipped: result.TotalLLMSkipped,
+		DurationMs:      result.DurationMs,
+		FatalError:      fatalErrStr,
+		StartedAt:       start,
+		FinishedAt:      time.Now(),
 	})
 	s.logger.Info("scheduler run complete",
 		slog.String("run_id", result.RunID),
 		slog.Int("total_fetched", result.TotalFetched),
 		slog.Int("total_processed", result.TotalProcessed),
+		slog.Int("total_llm_skipped", result.TotalLLMSkipped),
 		slog.Int("total_saved", result.TotalSaved),
 		slog.Int("total_published", result.TotalPublished),
 		slog.Int("total_skipped", result.TotalSkipped),

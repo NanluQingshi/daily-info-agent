@@ -197,11 +197,11 @@ func TestLoad_DefaultRSSFeeds_FallbackBuiltin(t *testing.T) {
 	// Check that at least one well-known default feed is present.
 	var found bool
 	for _, f := range cfg.RSSFeeds {
-		if f == "https://36kr.com/feed" {
+		if f == "https://www.36kr.com/feed" {
 			found = true
 		}
 	}
-	assert.True(t, found, "default RSS feeds should include 36kr feed")
+	assert.True(t, found, "default RSS feeds should include the www. 36kr feed")
 }
 
 func TestLoad_DefaultTrustedDomains_FallbackBuiltin(t *testing.T) {

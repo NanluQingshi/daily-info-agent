@@ -47,6 +47,14 @@ type Snapshot struct {
 	LastFatalError     string    `json:"last_fatal_error,omitempty"`
 	ConsecutiveSuccess int       `json:"consecutive_success"`
 	ConsecutiveFailure int       `json:"consecutive_failure"`
+	// LastSuccessFinishedAt is when the most recent successful non-empty run
+	// finished. It is the freshness baseline and must survive failures:
+	// otherwise a single empty run permanently marks the system unhealthy and
+	// the pipeline can never recover.
+	LastSuccessFinishedAt time.Time `json:"last_success_finished_at,omitempty"`
+	TotalFetched          int       `json:"total_fetched"`
+	TotalLLMSkipped       int       `json:"total_llm_skipped"`
+	SourceFailed          int       `json:"source_failed"`
 }
 
 // Read loads the persisted snapshot. It returns ErrNotFound when the file is
@@ -89,6 +97,9 @@ func (s *Store) Record(result models.RunResult, minExpected int) (Snapshot, erro
 		LastOutcome:    outcome,
 		LastFatalError: fatalMessage(result),
 	}
+	snap.TotalFetched = result.TotalFetched
+	snap.TotalLLMSkipped = result.TotalLLMSkipped
+	snap.SourceFailed = result.TotalFailed
 
 	switch outcome {
 	case "success":
@@ -111,6 +122,15 @@ func (s *Store) Record(result models.RunResult, minExpected int) (Snapshot, erro
 		snap.LastFinishedAt = result.FinishedAt.UTC()
 	} else {
 		snap.LastFinishedAt = previous.LastFinishedAt
+	}
+
+	// The freshness baseline must survive failed runs. Without this, the gate
+	// reads the failing run's own timestamp and a single empty run locks the
+	// pipeline out permanently — every later run fails against its own record.
+	if outcome == "success" {
+		snap.LastSuccessFinishedAt = snap.LastFinishedAt
+	} else {
+		snap.LastSuccessFinishedAt = previous.LastSuccessFinishedAt
 	}
 
 	if err := s.write(snap); err != nil {
@@ -143,7 +163,7 @@ func (s *Store) Check(maxAge time.Duration) (Report, error) {
 		}, nil
 	}
 
-	if previous.LastFinishedAt.IsZero() {
+	if previous.LastSuccessFinishedAt.IsZero() {
 		return Report{
 			Healthy:     false,
 			Reason:      "last successful run has no finish timestamp",
@@ -151,14 +171,14 @@ func (s *Store) Check(maxAge time.Duration) (Report, error) {
 		}, nil
 	}
 
-	age := time.Since(previous.LastFinishedAt)
+	age := time.Since(previous.LastSuccessFinishedAt)
 	if age > maxAge {
 		return Report{
 			Healthy:            false,
 			Reason:             fmt.Sprintf("last successful run is %s old (limit %s)", age.Round(time.Minute), maxAge),
 			LastOutcome:        previous.LastOutcome,
 			ConsecutiveFailure: previous.ConsecutiveFailure,
-			LastFinishedAt:     previous.LastFinishedAt,
+			LastFinishedAt:     previous.LastSuccessFinishedAt,
 		}, nil
 	}
 
@@ -166,7 +186,7 @@ func (s *Store) Check(maxAge time.Duration) (Report, error) {
 		Healthy:            true,
 		LastOutcome:        previous.LastOutcome,
 		ConsecutiveFailure: previous.ConsecutiveFailure,
-		LastFinishedAt:     previous.LastFinishedAt,
+		LastFinishedAt:     previous.LastSuccessFinishedAt,
 	}, nil
 }
 
@@ -202,6 +222,11 @@ func classify(result models.RunResult, minExpected int) string {
 	}
 	if result.TotalFetched == 0 || (minExpected > 0 && result.TotalFetched < minExpected) {
 		return "empty"
+	}
+	// Every item reached the LLM and came back empty: the pipeline moved
+	// bytes but produced nothing. That is an outage, not a success.
+	if result.TotalLLMSkipped > 0 && result.TotalLLMSkipped >= result.TotalFetched {
+		return "failure"
 	}
 	return "success"
 }

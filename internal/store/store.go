@@ -197,6 +197,7 @@ func (s *PostgresStore) SaveRunLog(ctx context.Context, log models.RunLogRow) er
 		log.TotalPublished,
 		log.TotalSkipped,
 		log.TotalFailed,
+		log.TotalLLMSkipped,
 		log.DurationMs,
 		log.FatalError,
 		log.StartedAt,
@@ -218,6 +219,7 @@ func (s *PostgresStore) GetRunLog(ctx context.Context, runID string) (models.Run
 		&r.TotalPublished,
 		&r.TotalSkipped,
 		&r.TotalFailed,
+		&r.TotalLLMSkipped,
 		&r.DurationMs,
 		&r.FatalError,
 		&r.StartedAt,
@@ -250,6 +252,7 @@ func (s *PostgresStore) ListRunLogs(ctx context.Context, limit int) ([]models.Ru
 		if err := rows.Scan(
 			&r.RunID, &r.TotalFetched, &r.TotalExtracted, &r.TotalProcessed,
 			&r.TotalSaved, &r.TotalPublished, &r.TotalSkipped, &r.TotalFailed,
+			&r.TotalLLMSkipped,
 			&r.DurationMs, &r.FatalError, &r.StartedAt, &r.FinishedAt,
 		); err != nil {
 			return nil, err

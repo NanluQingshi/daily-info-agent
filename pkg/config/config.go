@@ -12,16 +12,12 @@ import (
 )
 
 // defaultRSSFeeds is the built-in list used when RSS_FEEDS is not set.
-// defaultRSSFeeds is the built-in list used when RSS_FEEDS is not set.
-// All feeds have been verified accessible from mainland China (2026-06).
+// All feeds have been verified accessible from mainland China (2026-11).
 var defaultRSSFeeds = []string{
-	"https://36kr.com/feed",                     // 36氪 — 科技/创投
+	"https://www.36kr.com/feed",                 // 36氪 — 科技/创投（注意 www. 前缀，裸域返回 HTML）
 	"https://sspai.com/feed",                    // 少数派 — 科技/效率
 	"https://www.ifanr.com/feed",                // 爱范儿 — 科技消费
-	"https://feeds.feedburner.com/cnbeta",       // cnBeta — 科技资讯
 	"https://rss.huxiu.com/",                    // 虎嗅 — 科技深度
-	"https://www.guancha.cn/rss.xml",            // 观察者网 — 国际/政治
-	"https://www.pingwest.com/feed",             // PingWest — 科技（双语）
 	"http://www.people.com.cn/rss/politics.xml", // 人民日报 — 政治
 	"http://www.people.com.cn/rss/finance.xml",  // 人民日报 — 财经
 }

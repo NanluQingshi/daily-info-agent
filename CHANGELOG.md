@@ -23,11 +23,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Freshness gate in `schedule` mode: exit 1 when the last successful
   non-empty run is stale, even if the current run exits 0
 - `freshness` object in the `/health` response (503 when unhealthy)
+- `total_llm_skipped` column in `run_logs` (migration 011): items the AI never
+  returned a result for are counted separately from genuinely enriched items,
+  so an LLM outage is visible in run logs
+- Source-level fetch failures are now counted in `RunResult.TotalFailed`;
+  previously a run could report `failed=0` while several feeds were dead
+- The freshness baseline (`last_success_finished_at`) survives failed runs, so
+  a single empty run no longer locks the pipeline out permanently
 
 ### Fixed
 - `docker-compose.yml` env var `CHAT_RATE_LIMIT` → `CHAT_RATE_LIMIT_PER_MIN` to match actual config
 - GitHub Actions cache now covers `cache/` (not just `cache/dedup.json`),
   so the run-health signal survives between scheduled runs
+- Trusted-domain matching now accepts subdomains: feeds publish from dedicated
+  hosts (`rss.huxiu.com`), and exact-match-only comparison was silently
+  dropping trusted sources
+- 36kr feed URL corrected to the `www.` host; cnBeta, PingWest and 观察者网
+  feeds removed after they started returning HTML instead of XML
 
 ## [2.0.0] — 2026-07-08
 

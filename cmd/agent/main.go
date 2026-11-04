@@ -403,27 +403,42 @@ func runScheduleMode(
 	retention.New(cfg.RetentionDays, st,
 		logger.With(slog.String("component", "retention"))).Run(ctx)
 
-	// Freshness gate: even when the agent exits 0, fail the workflow if the
-	// persisted signal says the last successful non-empty run is stale. This
-	// is the last line of defence against a green checkmark with no output.
-	report, err := runHealth.Check(24 * time.Hour)
-	if err != nil {
-		logger.Error("run-health check failed",
-			slog.String("error", err.Error()),
-		)
-		os.Exit(1)
-	}
-	if !report.Healthy {
-		logger.Error("freshness check failed",
-			slog.String("reason", report.Reason),
-			slog.String("last_outcome", report.LastOutcome),
+	if result.FatalError != nil {
+		logger.Error("fatal error in scheduled run",
+			slog.String("error", result.FatalError.Error()),
 		)
 		os.Exit(1)
 	}
 
-	if result.FatalError != nil {
-		logger.Error("fatal error in scheduled run",
-			slog.String("error", result.FatalError.Error()),
+	// Freshness gate: fail the workflow when the just-finished run did not
+	// produce output, even if the process itself exited 0. This is the last
+	// line of defence against a green checkmark with no data.
+	//
+	// The check is evaluated against THIS run's recorded outcome rather than
+	// a persisted "healthy" flag: a previous success must not mask a current
+	// empty run, and a single empty run must not permanently lock the next
+	// run out — the streak counter and alerting already cover persistence.
+	if snap.LastOutcome != "success" {
+		logger.Error("run produced no usable output",
+			slog.String("outcome", snap.LastOutcome),
+			slog.Int("fetched", result.TotalFetched),
+			slog.Int("consecutive_failure", snap.ConsecutiveFailure),
+		)
+		os.Exit(1)
+	}
+
+	// A healthy run should also not be stale relative to the previous success
+	// baseline. This catches a pipeline that has been silently empty for days
+	// while each individual run still exits 0.
+	if report, err := runHealth.Check(24 * time.Hour); err != nil {
+		logger.Error("run-health check failed",
+			slog.String("error", err.Error()),
+		)
+		os.Exit(1)
+	} else if !report.Healthy {
+		logger.Error("freshness check failed",
+			slog.String("reason", report.Reason),
+			slog.String("last_outcome", report.LastOutcome),
 		)
 		os.Exit(1)
 	}

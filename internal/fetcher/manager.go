@@ -108,6 +108,14 @@ type Manager struct {
 
 	healthMu     sync.Mutex
 	sourceHealth map[string]*sourceHealth // key: source URL or route
+
+	// lastRunFailures counts source-level failures from the most recent
+	// fetchConcurrent call. Scheduled runs read it right after FetchAll so
+	// source outages surface in RunResult instead of being invisible when at
+	// least one source still succeeds.
+	lastRunMu        sync.Mutex
+	lastRunFailures  int
+	lastRunAttempted int
 }
 
 // maxConsecutiveFailures is the number of consecutive fetch failures after
@@ -250,7 +258,7 @@ func NewManager(fetchers []Fetcher, rssFeeds []string, rssHubRoutes []string, ca
 // All source errors are logged as warnings; the method returns an error only if
 // ALL sources fail.
 func (m *Manager) FetchAll(ctx context.Context, cfgs []models.FetchConfig) ([]models.RawItem, error) {
-	items, err := m.fetchConcurrent(ctx, cfgs, true)
+	items, _, err := m.fetchConcurrent(ctx, cfgs, true)
 	if err != nil {
 		return nil, err
 	}
@@ -351,16 +359,17 @@ func (m *Manager) FetchForTopic(ctx context.Context, keywords []string, maxItems
 // fetchRaw is like FetchAll but never reads or writes the dedup cache.
 // Used by FetchForTopic so chat queries always see fresh articles.
 func (m *Manager) fetchRaw(ctx context.Context, cfgs []models.FetchConfig) ([]models.RawItem, error) {
-	return m.fetchConcurrent(ctx, cfgs, false)
+	items, _, err := m.fetchConcurrent(ctx, cfgs, false)
+	return items, err
 }
 
 // fetchConcurrent is the shared implementation behind FetchAll and fetchRaw.
 // When useCache is true, the persistent dedup cache is consulted (and items
 // seen there are skipped); the caller is responsible for marking newly fetched
 // URLs and persisting. When false, only in-run deduplication applies.
-func (m *Manager) fetchConcurrent(ctx context.Context, cfgs []models.FetchConfig, useCache bool) ([]models.RawItem, error) {
+func (m *Manager) fetchConcurrent(ctx context.Context, cfgs []models.FetchConfig, useCache bool) ([]models.RawItem, int, error) {
 	if len(cfgs) == 0 {
-		return nil, nil
+		return nil, 0, nil
 	}
 
 	type job struct {
@@ -442,9 +451,31 @@ func (m *Manager) fetchConcurrent(ctx context.Context, cfgs []models.FetchConfig
 	}
 
 	if errCount > 0 && len(allItems) == 0 && errCount == len(jobs) {
-		return nil, fmt.Errorf("all %d sources failed", errCount)
+		return nil, errCount, fmt.Errorf("all %d sources failed", errCount)
 	}
-	return allItems, nil
+	m.setRunOutcome(len(jobs), errCount)
+	return allItems, errCount, nil
+}
+
+// setRunOutcome records how many sources failed in the most recent fetch.
+func (m *Manager) setRunOutcome(attempted, failed int) {
+	m.lastRunMu.Lock()
+	defer m.lastRunMu.Unlock()
+	m.lastRunAttempted = attempted
+	m.lastRunFailures = failed
+}
+
+// RunFailures returns the source failure counts from the most recent fetch.
+// attempted is the number of sources that were actually queried, failed the
+// number that returned an error. A run where failed == attempted and
+// attempted > 0 had every source down.
+func (m *Manager) RunFailures() (attempted, failed int) {
+	if m == nil {
+		return 0, 0
+	}
+	m.lastRunMu.Lock()
+	defer m.lastRunMu.Unlock()
+	return m.lastRunAttempted, m.lastRunFailures
 }
 
 // filterByKeywords returns items whose title or description contains at least

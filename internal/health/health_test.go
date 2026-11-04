@@ -194,3 +194,69 @@ func TestRecord_ThresholdDoesNotAffectFatal(t *testing.T) {
 	assert.Equal(t, "failure", snap.LastOutcome)
 	assert.Equal(t, 1, snap.ConsecutiveFailure)
 }
+
+func TestRecord_AllLLMSkippedIsFailure(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "run-health.json"))
+
+	// The pipeline fetched items but the AI never returned anything for them.
+	// That is a provider outage, not a successful run.
+	snap, err := store.Record(models.RunResult{
+		RunID:           "run-llm-down",
+		TotalFetched:    200,
+		TotalLLMSkipped: 200,
+	}, 0)
+	require.NoError(t, err)
+
+	assert.Equal(t, "failure", snap.LastOutcome)
+	assert.Equal(t, 1, snap.ConsecutiveFailure)
+}
+
+func TestRecord_SnapshotCarriesPipelineCounters(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "run-health.json"))
+
+	snap, err := store.Record(models.RunResult{
+		RunID:           "run-counters",
+		TotalFetched:    200,
+		TotalLLMSkipped: 5,
+		TotalFailed:     4,
+	}, 0)
+	require.NoError(t, err)
+
+	assert.Equal(t, 200, snap.TotalFetched)
+	assert.Equal(t, 5, snap.TotalLLMSkipped)
+	assert.Equal(t, 4, snap.SourceFailed)
+}
+
+// A failed run must not destroy the freshness baseline. If it did, a single
+// empty run would mark every later run unhealthy and the pipeline could never
+// recover, because the next run would fail against its own failed record.
+func TestRecord_FailurePreservesSuccessBaseline(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "run-health.json"))
+
+	first, err := store.Record(models.RunResult{
+		RunID: "run-ok", TotalFetched: 50,
+		StartedAt: time.Now().Add(-time.Hour), FinishedAt: time.Now().Add(-time.Hour),
+	}, 10)
+	require.NoError(t, err)
+	require.False(t, first.LastSuccessFinishedAt.IsZero())
+
+	second, err := store.Record(models.RunResult{
+		RunID: "run-empty", TotalFetched: 0,
+		StartedAt: time.Now(), FinishedAt: time.Now(),
+	}, 10)
+	require.NoError(t, err)
+	assert.Equal(t, "empty", second.LastOutcome)
+	assert.Equal(t, 1, second.ConsecutiveFailure)
+	assert.Equal(t, first.LastSuccessFinishedAt, second.LastSuccessFinishedAt,
+		"the freshness baseline must survive a failed run")
+
+	// A later success must reset the streak normally.
+	third, err := store.Record(models.RunResult{
+		RunID: "run-ok-2", TotalFetched: 60,
+		StartedAt: time.Now(), FinishedAt: time.Now(),
+	}, 10)
+	require.NoError(t, err)
+	assert.Equal(t, "success", third.LastOutcome)
+	assert.Equal(t, 0, third.ConsecutiveFailure)
+	assert.Equal(t, 1, third.ConsecutiveSuccess)
+}

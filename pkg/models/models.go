@@ -258,10 +258,15 @@ type RunResult struct {
 	TotalPublished int
 	TotalSkipped   int
 	TotalFailed    int
-	DurationMs     int64
-	FatalError     error // non-nil causes exit 1
-	StartedAt      time.Time
-	FinishedAt     time.Time
+	// TotalLLMSkipped counts items the AI never returned a result for (e.g.
+	// DeepSeek was unavailable). They are included in TotalProcessed but
+	// carry no category or summary and are never published, so lumping them
+	// in with genuinely processed items hides an LLM outage.
+	TotalLLMSkipped int
+	DurationMs      int64
+	FatalError      error // non-nil causes exit 1
+	StartedAt       time.Time
+	FinishedAt      time.Time
 }
 
 // ArticleFeedbackRow is a persisted 👍/👎 on one aspect (summary/category)
@@ -367,18 +372,19 @@ type BatchTagsResponse struct {
 
 // RunLogRow maps to the run_logs table.
 type RunLogRow struct {
-	RunID          string    `json:"run_id"`
-	TotalFetched   int       `json:"total_fetched"`
-	TotalExtracted int       `json:"total_extracted"`
-	TotalProcessed int       `json:"total_processed"`
-	TotalSaved     int       `json:"total_saved"`
-	TotalPublished int       `json:"total_published"`
-	TotalSkipped   int       `json:"total_skipped"`
-	TotalFailed    int       `json:"total_failed"`
-	DurationMs     int64     `json:"duration_ms"`
-	FatalError     string    `json:"fatal_error"`
-	StartedAt      time.Time `json:"started_at"`
-	FinishedAt     time.Time `json:"finished_at"`
+	RunID           string    `json:"run_id"`
+	TotalFetched    int       `json:"total_fetched"`
+	TotalExtracted  int       `json:"total_extracted"`
+	TotalProcessed  int       `json:"total_processed"`
+	TotalSaved      int       `json:"total_saved"`
+	TotalPublished  int       `json:"total_published"`
+	TotalSkipped    int       `json:"total_skipped"`
+	TotalFailed     int       `json:"total_failed"`
+	TotalLLMSkipped int       `json:"total_llm_skipped"`
+	DurationMs      int64     `json:"duration_ms"`
+	FatalError      string    `json:"fatal_error"`
+	StartedAt       time.Time `json:"started_at"`
+	FinishedAt      time.Time `json:"finished_at"`
 }
 
 // SourceActivity is per-domain article activity from the database, used by

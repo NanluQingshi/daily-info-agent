@@ -164,6 +164,35 @@ func TestManager_FetchAll_AllFetchersError_ReturnsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "all")
 }
 
+// A run can succeed overall while several sources are down. Those outages
+// must still be countable, otherwise RunResult.TotalFailed stays 0 and the
+// degradation is invisible in run logs and health checks.
+func TestManager_RunFailures_ReportsPartialOutage(t *testing.T) {
+	goodItem := makeItem("http://good.example.com/article", "good.example.com", models.SourceTypeNewsAPI)
+
+	mgr := newTestManager(t, []fetcher.Fetcher{
+		&mockFetcher{name: "rss", err: errors.New("feed gone")},
+		&mockFetcher{name: "newsapi", items: []models.RawItem{goodItem}},
+	})
+
+	_, err := mgr.FetchAll(context.Background(), []models.FetchConfig{
+		{Type: models.SourceTypeRSS},
+		{Type: models.SourceTypeNewsAPI},
+	})
+	require.NoError(t, err)
+
+	attempted, failed := mgr.RunFailures()
+	assert.Equal(t, 2, attempted)
+	assert.Equal(t, 1, failed)
+}
+
+func TestManager_RunFailures_ZeroWhenNothingFetched(t *testing.T) {
+	mgr := newTestManager(t, nil)
+	attempted, failed := mgr.RunFailures()
+	assert.Equal(t, 0, attempted)
+	assert.Equal(t, 0, failed)
+}
+
 func TestManager_FetchAll_NoFetcherForSourceType_ItemsSkipped(t *testing.T) {
 	// Register only an RSS fetcher but request RSSHub source type.
 	rssFetcher := &mockFetcher{

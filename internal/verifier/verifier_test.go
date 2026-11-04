@@ -61,8 +61,13 @@ func TestVerifier_IsTrustedDomain_TableDriven(t *testing.T) {
 		{"unknown-blog.io", false},
 		{"fake-news.ru", false},
 		{"", false},
-		// Subdomain of trusted domain is NOT trusted (only exact match).
-		{"subdomain.reuters.com", false},
+		// Subdomains of a trusted domain ARE trusted: feeds publish from
+		// dedicated hosts (e.g. rss.huxiu.com) rather than the bare domain.
+		{"subdomain.reuters.com", true},
+		{"rss.reuters.com", true},
+		// Suffix spoofing must still fail: the label boundary has to line up.
+		{"evilreuters.com", false},
+		{"notreuters.com", false},
 	}
 
 	for _, tc := range tests {

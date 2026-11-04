@@ -138,9 +138,9 @@ WHERE id = $1`
 const sqlInsertRunLog = `
 INSERT INTO run_logs (
     run_id, total_fetched, total_extracted, total_processed, total_saved,
-    total_published, total_skipped, total_failed,
+    total_published, total_skipped, total_failed, total_llm_skipped,
     duration_ms, fatal_error, started_at, finished_at
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 ON CONFLICT (run_id) DO NOTHING`
 
 const sqlStatsByDay = `
@@ -174,7 +174,7 @@ LIMIT 10`
 
 const sqlListRunLogs = `
 SELECT run_id, total_fetched, total_extracted, total_processed, total_saved,
-       total_published, total_skipped, total_failed,
+       total_published, total_skipped, total_failed, total_llm_skipped,
        duration_ms, fatal_error, started_at, finished_at
 FROM run_logs
 ORDER BY started_at DESC
@@ -182,7 +182,7 @@ LIMIT $1`
 
 const sqlGetRunLog = `
 SELECT run_id, total_fetched, total_extracted, total_processed, total_saved,
-       total_published, total_skipped, total_failed,
+       total_published, total_skipped, total_failed, total_llm_skipped,
        duration_ms, fatal_error, started_at, finished_at
 FROM run_logs
 WHERE run_id = $1`

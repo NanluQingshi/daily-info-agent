@@ -89,9 +89,28 @@ func (v *Verifier) verify(article *models.ProcessedArticle) models.VerificationR
 // IsTrustedDomain reports whether the given registered domain is in the whitelist.
 // The input is normalised before comparison.
 func (v *Verifier) IsTrustedDomain(domain string) bool {
-	d := normaliseDomain(domain)
-	_, ok := v.trustedDomains[d]
-	return ok
+	return v.matchDomain(normaliseDomain(domain))
+}
+
+// matchDomain reports whether d is listed in the whitelist, either exactly or
+// as a subdomain of a listed domain. Feeds frequently publish from a
+// dedicated host (rss.huxiu.com, feeds.example.com) rather than the bare
+// domain, so an exact-only comparison silently drops trusted sources.
+// Matching is constrained to proper subdomains: evilhuxiu.com does not match
+// huxiu.com because the label boundary must line up.
+func (v *Verifier) matchDomain(d string) bool {
+	if d == "" {
+		return false
+	}
+	if _, ok := v.trustedDomains[d]; ok {
+		return true
+	}
+	for domain := range v.trustedDomains {
+		if strings.HasSuffix(d, "."+domain) {
+			return true
+		}
+	}
+	return false
 }
 
 // normaliseDomain lowercases and strips leading "www." from a domain string.
